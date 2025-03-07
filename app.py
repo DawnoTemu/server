@@ -158,7 +158,9 @@ def list_stories():
                 stories.append({
                     'id': story_data.get('id'),
                     'title': story_data.get('title'),
-                    'author': story_data.get('author')
+                    'author': story_data.get('author'),
+                    'content': story_data.get('content'),
+                    'description': story_data.get('description'),
                 })
         return jsonify(stories), 200
     except Exception as e:
@@ -207,7 +209,6 @@ def get_audio(voice_id, story_id):
     response.headers['Content-Disposition'] = f'attachment; filename={story_id}.mp3'
     return response
 
-
 @app.route('/api/audio/exists/<string:voice_id>/<int:story_id>')
 def check_audio_exists(voice_id, story_id):
     try:
@@ -216,6 +217,23 @@ def check_audio_exists(voice_id, story_id):
     except ClientError as e:
         if e.response['Error']['Code'] == '404':
             return jsonify({"exists": False}), 200
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/stories/<int:story_id>/cover.png')
+def get_story_cover(story_id):
+    """Get story cover image"""
+    try:
+        # Convert Path object to string for Flask compatibility
+        stories_dir = str(CONFIG["STORIES_DIR"])
+        return send_from_directory(
+            stories_dir,
+            f'cover{story_id}.png',
+            mimetype='image/png'
+        )
+    except FileNotFoundError:
+        # Return a default image or 404
+        return jsonify({"error": "Cover image not found"}), 404
+    except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/synthesize', methods=['POST'])
