@@ -1,0 +1,102 @@
+# .gitignore for StoryVoice Heroku Deployment
+
+# Python specific
+__pycache__/
+*.py[cod]
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+*.pickle
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+venv/
+env/
+ENV/
+.ipython/
+celerybeat-schedule
+celerybeat.pid
+
+# Application generated content
+/uploads/
+/generated_audio/
+/instance/
+/logs/
+/tmp/
+/cache/
+/.webassets-cache/
+/.cache/
+*.pid
+*.state
+*.socket
+*.pot
+*.mo
+
+# Environment variables
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+.env.*.local
+
+# IDE & editor configs
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime*
+*.un~
+*.orig
+
+# OS metadata
+.DS_Store
+.AppleDouble
+.LSOverride
+[Tt]humbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.directory
+*~
+
+# Build/compilation artifacts
+dist/
+build/
+node_modules/
+*.mo
+*.pot
+
+# Archives and packages
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.zip
+*.tgz
+
+# Log files
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.python-version
+
+# Test results
+test-results/
+junit.xml
+coverage.xml
+
+# Flask specific
+instance/
+migrations/
+
+# Custom application temp files
+/temp_audio/
+/voice_samples/
+/story_cache/
