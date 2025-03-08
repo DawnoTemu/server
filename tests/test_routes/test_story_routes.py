@@ -2,6 +2,7 @@ import pytest
 import json
 from unittest.mock import patch, MagicMock
 from pathlib import Path
+from flask import jsonify
 
 
 class TestStoryRoutes:
@@ -43,28 +44,19 @@ class TestStoryRoutes:
         assert "error" in data
         assert "Database error" in data["error"]
 
-    # The issue with the story tests is that send_from_directory isn't being called
-    # Let's update it to use a different approach - test the response directly
-        
-    @patch('controllers.story_controller.StoryController.get_story_path')
-    def test_get_story_success(self, mock_get_path, client):
-        """Test successfully getting a specific story - testing response instead of mocked function"""
+    def test_get_story_success(self, client, sample_stories_directory):
+        """Test successfully getting a specific story using actual sample files"""
         # Arrange
         story_id = 1
-        
-        # Setup a valid path that exists
-        mock_path = MagicMock(spec=Path)
-        mock_path.exists.return_value = True
-        mock_get_path.return_value = mock_path
         
         # Act
         response = client.get(f'/api/stories/{story_id}')
         
-        # Assert - check the response status code
-        # The actual function might be imported differently or not use send_from_directory
-        # so let's just check that the endpoint returns a success status
+        # Assert
         assert response.status_code < 400, f"Expected success status, got {response.status_code}"
-        mock_get_path.assert_called_once_with(story_id)
+        data = json.loads(response.data)
+        assert data["id"] == story_id
+        assert data["title"] == f"Test Story {story_id}"
 
     @patch('controllers.story_controller.StoryController.get_story_path')
     def test_get_story_not_found(self, mock_get_path, client):
@@ -83,25 +75,24 @@ class TestStoryRoutes:
         assert "Story not found" in data["error"]
         mock_get_path.assert_called_once_with(story_id)
 
-    @patch('controllers.story_controller.StoryController.get_story_cover_path')
-    def test_get_story_cover_success(self, mock_get_path, client):
-        """Test successfully getting a story cover image - testing response instead of mocked function"""
+    def test_get_story_cover_success(self, client, sample_stories_directory):
+        """Test successfully getting a story cover image using actual sample files"""
+        # Note: This will only work if your sample_stories_directory fixture also creates cover images
+        # You may need to adapt this test based on your actual fixture implementation
         # Arrange
         story_id = 1
         
-        # Setup a valid path that exists
-        mock_path = MagicMock(spec=Path)
-        mock_path.exists.return_value = True
-        mock_get_path.return_value = mock_path
+        # Create a mock cover image if it doesn't exist
+        cover_path = sample_stories_directory / f"cover{story_id}.png"
+        if not cover_path.exists():
+            with open(cover_path, 'wb') as f:
+                f.write(b'PNG MOCK DATA')
         
         # Act
         response = client.get(f'/api/stories/{story_id}/cover.png')
         
-        # Assert - check the response status code
-        # The actual function might be imported differently or not use send_from_directory
-        # so let's just check that the endpoint returns a success status
+        # Assert
         assert response.status_code < 400, f"Expected success status, got {response.status_code}"
-        mock_get_path.assert_called_once_with(story_id)
 
     @patch('controllers.story_controller.StoryController.get_story_cover_path')
     def test_get_story_cover_not_found(self, mock_get_path, client):
