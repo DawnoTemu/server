@@ -4,8 +4,3 @@ requests==2.31.0
 python-dotenv==1.0.0
 elevenlabs==0.2.21
 boto3==1.34.1
-psycopg2-binary==2.9.9  # PostgreSQL adapter
-SQLAlchemy==2.0.26      # SQL ORM
-Flask-SQLAlchemy==3.1.1 # Flask integration for SQLAlchemy
-Flask-Migrate==4.0.5    # For database migrations
-Pillow==10.2.0          # For image processing
