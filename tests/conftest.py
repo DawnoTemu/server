@@ -84,9 +84,11 @@ def sample_audio_file():
 
 
 @pytest.fixture
-def sample_stories_directory():
-    """Create sample story files for testing"""
-    stories_dir = Path("stories")
+def sample_stories_directory(tmp_path, monkeypatch):
+    """Create sample story files for testing in a temporary directory"""
+    # Create a test stories directory inside the temp directory
+    test_stories_dir = tmp_path / "stories"
+    test_stories_dir.mkdir()
     
     # Create test story files
     for i in range(1, 3):
@@ -98,16 +100,13 @@ def sample_stories_directory():
             "content": f"Content for Test Story {i}"
         }
         
-        with open(stories_dir / f"{i}.json", 'w') as f:
+        with open(test_stories_dir / f"{i}.json", 'w') as f:
             json.dump(story_data, f)
     
-    yield stories_dir
+    # Patch the Config.STORIES_DIR to use our test directory
+    monkeypatch.setattr('config.Config.STORIES_DIR', test_stories_dir)
     
-    # Clean up test story files
-    for i in range(1, 3):
-        story_file = stories_dir / f"{i}.json"
-        if story_file.exists():
-            story_file.unlink()
+    yield test_stories_dir
 
 
 @pytest.fixture

@@ -45,7 +45,7 @@ class TestStoryRoutes:
         assert "Database error" in data["error"]
 
     def test_get_story_success(self, client, sample_stories_directory):
-        """Test successfully getting a specific story using actual sample files"""
+        """Test successfully getting a specific story using sample files in test directory"""
         # Arrange
         story_id = 1
         
