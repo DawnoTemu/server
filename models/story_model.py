@@ -21,12 +21,14 @@ class StoryModel:
                     
                 with open(file, 'r', encoding='utf-8') as f:
                     story_data = json.load(f)
+                    story_id = story_data.get('id')
                     stories.append({
-                        'id': story_data.get('id'),
+                        'id': story_id,
                         'title': story_data.get('title'),
                         'author': story_data.get('author'),
                         'description': story_data.get('description'),
-                        'content': story_data.get('content')
+                        'content': story_data.get('content'),
+                        'cover_path':  '/stories/' + str(story_id) + '/cover.png'
                     })
             return stories
         except Exception as e:
