@@ -4,6 +4,7 @@ from config import Config
 from routes import register_blueprints
 from flask_cors import CORS
 from database import init_db
+from admin import init_admin
 
 is_development = os.getenv('FLASK_ENV', 'production').lower() == 'development' or \
                  os.getenv('FLASK_DEBUG', 'False').lower() == 'true'
@@ -18,8 +19,12 @@ app = Flask(__name__, static_folder='static', static_url_path='/')
 app.config['SQLALCHEMY_DATABASE_URI'] = Config.SQLALCHEMY_DATABASE_URI
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = Config.SQLALCHEMY_TRACK_MODIFICATIONS
 
+# Set secret key for session management
+app.secret_key = os.getenv('SECRET_KEY')
+
 # Initialize database
 init_db(app)
+init_admin(app)
 
 if is_development:
     # In development mode, allow all origins
