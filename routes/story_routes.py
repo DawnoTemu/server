@@ -13,18 +13,9 @@ def list_stories():
 @story_bp.route('/stories/<int:story_id>')
 def get_story(story_id):
     """API endpoint to get a specific story"""
-    # Here we're returning the raw JSON file instead of processing the data
-    story_path = StoryController.get_story_path(story_id)
+    success, result, status_code = StoryController.get_story(story_id)
     
-    if not story_path:
-        return jsonify({"error": "Story not found"}), 404
-        
-    # Convert Path object to string for Flask compatibility
-    return send_from_directory(
-        str(Config.STORIES_DIR),
-        f'{story_id}.json',
-        mimetype='application/json'
-    )
+    return jsonify(result), status_code
 
 @story_bp.route('/stories/<int:story_id>/cover.png')
 def get_story_cover(story_id):
@@ -37,6 +28,6 @@ def get_story_cover(story_id):
     # Convert Path object to string for Flask compatibility
     return send_from_directory(
         str(Config.STORIES_DIR),
-        f'cover{story_id}.png',
+        cover_path.name,
         mimetype='image/png'
     )

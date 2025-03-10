@@ -8,6 +8,30 @@ load_dotenv()
 
 # Configuration class
 class Config:
+    # Database configuration
+    DATABASE_URL = os.getenv("DATABASE_URL")
+    
+    # If DATABASE_URL is provided, use it; otherwise use default
+    # Use postgresql+psycopg for psycopg3 (instead of postgresql+psycopg2)
+    if DATABASE_URL and not DATABASE_URL.startswith('postgresql+psycopg://'):
+        # If it starts with postgresql:// or postgres://, replace with postgresql+psycopg://
+        if DATABASE_URL.startswith(('postgresql://', 'postgres://')):
+            # Handle potential Heroku style URLs
+            if DATABASE_URL.startswith('postgres://'):
+                DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
+            # Add +psycopg dialect
+            DATABASE_URL = DATABASE_URL.replace('postgresql://', 'postgresql+psycopg://', 1)
+    
+    SQLALCHEMY_DATABASE_URI = DATABASE_URL if DATABASE_URL else "postgresql+psycopg://postgres:postgres@localhost:5432/storyvoice"
+    SQLALCHEMY_TRACK_MODIFICATIONS = False
+    
+    # Additional psycopg3 specific configuration
+    SQLALCHEMY_ENGINE_OPTIONS = {
+        "pool_pre_ping": True,  # Verify connections before using them
+        "pool_size": 5,         # Max number of connections in the pool
+        "max_overflow": 10,     # Max number of connections that can be created beyond pool_size
+    }
+    
     # AWS and S3 configuration
     AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
     AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
@@ -36,6 +60,7 @@ class Config:
                   if not k.startswith('__') and 
                   v is None and 
                   k != "VOICE_NAME" and
+                  k != "DATABASE_URL" and  # DATABASE_URL can be None, will use default
                   not callable(v)]
         if missing:
             raise EnvironmentError(f"Missing environment variables: {', '.join(missing)}")

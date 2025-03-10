@@ -41,20 +41,6 @@ class StoryController:
             return False, {"error": str(e)}, 500
     
     @staticmethod
-    def get_story_path(story_id):
-        """
-        Get file path for a story
-        
-        Args:
-            story_id: ID of the story
-            
-        Returns:
-            Path or None: Path object if story exists, None otherwise
-        """
-        path = StoryModel.get_story_path(story_id)
-        return path if path.exists() else None
-    
-    @staticmethod
     def get_story_cover_path(story_id):
         """
         Get file path for a story's cover image
