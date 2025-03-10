@@ -28,7 +28,7 @@ class StoryModel:
                         'author': story_data.get('author'),
                         'description': story_data.get('description'),
                         'content': story_data.get('content'),
-                        'cover_path':  '/api/stories/' + str(story_id) + '/cover.png'
+                        'cover_path':  '/stories/' + str(story_id) + '/cover.png'
                     })
             return stories
         except Exception as e:
