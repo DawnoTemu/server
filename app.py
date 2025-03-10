@@ -17,6 +17,14 @@ if is_development:
     # In development mode, allow all origins
     CORS(app)
     print("CORS configured for development: allowing all origins")
+else:
+    # In production, restrict CORS to allowed origins.
+    # The regex below matches any HTTPS subdomain of dawnotemu.app
+    allowed_origins = [
+        r"^https:\/\/(?:[a-z0-9-]+\.)?dawnotemu\.app$",  # Matches e.g. https://www.dawnotemu.app or https://api.dawnotemu.app
+    ]
+    CORS(app, origins=allowed_origins)
+    print("CORS configured for production with allowed origins:", allowed_origins)
 
 # Register blueprints
 register_blueprints(app)
