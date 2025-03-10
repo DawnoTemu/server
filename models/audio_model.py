@@ -51,7 +51,7 @@ class AudioModel:
     @staticmethod
     def store_audio(audio_data, voice_id, story_id):
         """
-        Store audio data in S3
+        Store audio data in S3 with caching headers
         
         Args:
             audio_data: BytesIO object containing audio data
@@ -65,12 +65,16 @@ class AudioModel:
             s3_client = Config.get_s3_client()
             s3_key = f"{voice_id}/{story_id}.mp3"
             
-            # Upload to S3
+            # Upload to S3 with enhanced settings
             s3_client.upload_fileobj(
                 audio_data,
                 Config.S3_BUCKET,
                 s3_key,
-                ExtraArgs={'ContentType': 'audio/mpeg'}
+                ExtraArgs={
+                    'ContentType': 'audio/mpeg',
+                    'CacheControl': 'max-age=86400',  # Cache for 24 hours
+                    'ContentDisposition': f'attachment; filename="{story_id}.mp3"'
+                }
             )
             
             return True, "Audio stored successfully"
@@ -143,6 +147,46 @@ class AudioModel:
             return False, str(e), None
         except Exception as e:
             return False, str(e), None
+    
+    @staticmethod
+    def get_audio_presigned_url(voice_id, story_id, expires_in=3600):
+        """
+        Generate a presigned URL for direct S3 access
+        
+        Args:
+            voice_id: Voice ID
+            story_id: Story ID
+            expires_in: URL expiration time in seconds (default: 1 hour)
+            
+        Returns:
+            tuple: (success, url/error message)
+        """
+        try:
+            # First check if the audio file exists
+            if not AudioModel.check_audio_exists(voice_id, story_id):
+                return False, "Audio file does not exist"
+                
+            # Generate presigned URL
+            s3_client = Config.get_s3_client()
+            s3_key = f"{voice_id}/{story_id}.mp3"
+            
+            presigned_url = s3_client.generate_presigned_url(
+                'get_object',
+                Params={
+                    'Bucket': Config.S3_BUCKET,
+                    'Key': s3_key,
+                    'ResponseContentType': 'audio/mpeg',
+                    'ResponseContentDisposition': f'attachment; filename="{story_id}.mp3"'
+                },
+                ExpiresIn=expires_in
+            )
+            
+            return True, presigned_url
+            
+        except ClientError as e:
+            return False, str(e)
+        except Exception as e:
+            return False, str(e)
     
     @staticmethod
     def delete_voice_audio(voice_id):

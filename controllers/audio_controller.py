@@ -47,6 +47,33 @@ class AudioController:
         return True, data, status_code, extra
     
     @staticmethod
+    def get_audio_presigned_url(voice_id, story_id, expires_in=3600):
+        """
+        Get a presigned URL for direct S3 access
+        
+        Args:
+            voice_id: Voice ID
+            story_id: Story ID
+            expires_in: URL expiration time in seconds (default: 1 hour)
+            
+        Returns:
+            tuple: (success, data/error message, status_code)
+        """
+        # First check if audio exists
+        exists_result = AudioController.check_audio_exists(voice_id, story_id)
+        
+        if not exists_result[0] or not exists_result[1].get('exists', False):
+            return False, {"error": "Audio not found"}, 404
+            
+        # Generate presigned URL
+        success, result = AudioModel.get_audio_presigned_url(voice_id, story_id, expires_in)
+        
+        if not success:
+            return False, {"error": f"Failed to generate presigned URL: {result}"}, 500
+            
+        return True, {"url": result}, 200
+
+    @staticmethod
     def synthesize_audio(voice_id, story_id):
         """
         Synthesize audio for a story with a given voice
@@ -83,16 +110,12 @@ class AudioController:
                 return False, {"error": f"Storage failed: {message}"}, 500
                 
             # Generate presigned URL for the audio
-            s3_client = Config.get_s3_client()
-            s3_key = f"{voice_id}/{story_id}.mp3"
+            presigned_success, presigned_url = AudioModel.get_audio_presigned_url(voice_id, story_id)
             
-            url = s3_client.generate_presigned_url(
-                'get_object',
-                Params={'Bucket': Config.S3_BUCKET, 'Key': s3_key},
-                ExpiresIn=3600
-            )
-            
-            return True, {"status": "success", "url": url}, 200
+            if not presigned_success:
+                return False, {"error": f"Failed to generate URL: {presigned_url}"}, 500
+                
+            return True, {"status": "success", "url": presigned_url}, 200
             
         except Exception as e:
             return False, {"error": str(e)}, 500
