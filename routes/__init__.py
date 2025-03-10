@@ -1,9 +1,9 @@
 from flask import Blueprint
 
 # Create blueprints
-voice_bp = Blueprint('voice', __name__, url_prefix='/api')
-story_bp = Blueprint('story', __name__, url_prefix='/api')
-audio_bp = Blueprint('audio', __name__, url_prefix='/api')
+voice_bp = Blueprint('voice', __name__)
+story_bp = Blueprint('story', __name__)
+audio_bp = Blueprint('audio', __name__)
 static_bp = Blueprint('static', __name__)
 
 # Import routes to register with blueprints
