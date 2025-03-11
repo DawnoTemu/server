@@ -14,6 +14,7 @@ class Story(db.Model):
     description = db.Column(db.Text, nullable=True)
     content = db.Column(db.Text, nullable=False)
     cover_filename = db.Column(db.String(255), nullable=True)
+    s3_cover_key = db.Column(db.String(512), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -28,7 +29,7 @@ class Story(db.Model):
             'author': self.author,
             'description': self.description,
             'content': self.content,
-            'cover_path': f'/api/stories/{self.id}/cover.png' if self.cover_filename else None,
+            'cover_path': f'/stories/{self.id}/cover',
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
         }
@@ -89,3 +90,90 @@ class StoryModel:
         if story and story.cover_filename:
             return Config.STORIES_DIR / story.cover_filename
         return Config.STORIES_DIR / f"cover{story_id}.png"  # Fallback to old pattern
+    
+    @staticmethod
+    def get_story_cover_s3_key(story_id):
+        """
+        Get the S3 key for a story's cover image
+        
+        Args:
+            story_id: ID of the story
+            
+        Returns:
+            str: S3 key for the cover image or None if not found
+        """
+        story = Story.query.get(story_id)
+        if story and story.s3_cover_key:
+            return story.s3_cover_key
+        return None
+    
+    @staticmethod
+    def generate_cover_presigned_url(story_id, expires_in=3600):
+        """
+        Generate a presigned URL for the story cover
+        
+        Args:
+            story_id: ID of the story
+            expires_in: URL expiration time in seconds (default: 1 hour)
+            
+        Returns:
+            tuple: (success, url/error message)
+        """
+        try:
+            s3_key = StoryModel.get_story_cover_s3_key(story_id)
+            
+            if not s3_key:
+                return False, "Cover image not found in S3"
+                
+            s3_client = Config.get_s3_client()
+            
+            presigned_url = s3_client.generate_presigned_url(
+                'get_object',
+                Params={
+                    'Bucket': Config.S3_BUCKET,
+                    'Key': s3_key,
+                    # Use the appropriate content type based on the file extension
+                    'ResponseContentType': StoryModel._get_content_type_from_key(s3_key),
+                },
+                ExpiresIn=expires_in
+            )
+            
+            return True, presigned_url
+            
+        except Exception as e:
+            return False, str(e)
+    
+    @staticmethod
+    def _get_content_type_from_key(s3_key):
+        """
+        Determine the content type based on file extension in S3 key
+        
+        Args:
+            s3_key: S3 object key
+            
+        Returns:
+            str: Content type
+        """
+        import mimetypes
+        import os
+        
+        # Get file extension from S3 key
+        file_ext = os.path.splitext(s3_key)[1].lower()
+        content_type = mimetypes.guess_type(s3_key)[0]
+        
+        # Default to appropriate image type if not detected
+        if not content_type:
+            if file_ext == '.jpg' or file_ext == '.jpeg':
+                content_type = 'image/jpeg'
+            elif file_ext == '.png':
+                content_type = 'image/png'
+            elif file_ext == '.gif':
+                content_type = 'image/gif'
+            elif file_ext == '.webp':
+                content_type = 'image/webp'
+            elif file_ext == '.svg':
+                content_type = 'image/svg+xml'
+            else:
+                content_type = 'application/octet-stream'
+                
+        return content_type

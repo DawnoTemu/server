@@ -41,9 +41,23 @@ class StoryController:
             return False, {"error": str(e)}, 500
     
     @staticmethod
+    def get_story_path(story_id):
+        """
+        Get file path for a story
+        
+        Args:
+            story_id: ID of the story
+            
+        Returns:
+            Path or None: Path object if story exists, None otherwise
+        """
+        path = StoryModel.get_story_path(story_id)
+        return path if path.exists() else None
+    
+    @staticmethod
     def get_story_cover_path(story_id):
         """
-        Get file path for a story's cover image
+        Get file path for a story's cover image (local file)
         
         Args:
             story_id: ID of the story
@@ -53,3 +67,17 @@ class StoryController:
         """
         path = StoryModel.get_story_cover_path(story_id)
         return path if path.exists() else None
+    
+    @staticmethod
+    def get_story_cover_presigned_url(story_id, expires_in=3600):
+        """
+        Get presigned URL for a story's cover image from S3
+        
+        Args:
+            story_id: ID of the story
+            expires_in: URL expiration time in seconds
+            
+        Returns:
+            tuple: (success, url/error message)
+        """
+        return StoryModel.generate_cover_presigned_url(story_id, expires_in)

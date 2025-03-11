@@ -94,7 +94,6 @@ coverage.xml
 
 # Flask specific
 instance/
-migrations/
 
 # Custom application temp files
 /temp_audio/
