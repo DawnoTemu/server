@@ -2,151 +2,283 @@ import os
 import uuid
 import mimetypes
 from functools import wraps
+from datetime import datetime, timedelta
 
 from flask import redirect, url_for, request, flash, session
 from flask_admin import Admin, AdminIndexView, expose
 from flask_admin.contrib.sqla import ModelView
 from flask_admin.form import FileUploadField
 from werkzeug.utils import secure_filename
+from werkzeug.security import check_password_hash
 
 from database import db
 from models.story_model import Story
 from config import Config
 
-# Use environment variable for admin password or default for development
-ADMIN_PASSWORD = os.getenv('ADMIN_PASSWORD', 'storyvoice_admin')
+# Constants
+DEFAULT_SESSION_TIMEOUT = 3600  # 1 hour in seconds
+MAX_LOGIN_ATTEMPTS = 5
+LOGIN_COOLDOWN = 300  # 5 minutes in seconds
+ALLOWED_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg']
+S3_COVERS_PREFIX = "covers/"
+
+# Get admin password from environment with no default
+ADMIN_PASSWORD = os.getenv('ADMIN_PASSWORD')
+if not ADMIN_PASSWORD:
+    raise ValueError("ADMIN_PASSWORD environment variable must be set")
+
+# Optional support for hashed password
+ADMIN_PASSWORD_HASH = os.getenv('ADMIN_PASSWORD_HASH')
+
+# Store login attempts
+login_attempts = {}
+
 
 def is_authenticated():
-    return session.get('admin_authenticated', False)
+    """Check if the current session is authenticated and not expired."""
+    if not session.get('admin_authenticated', False):
+        return False
+    
+    # Check session expiration
+    last_activity = session.get('last_activity')
+    if not last_activity or (datetime.utcnow() - datetime.fromisoformat(last_activity) > 
+                            timedelta(seconds=int(os.getenv('SESSION_TIMEOUT', DEFAULT_SESSION_TIMEOUT)))):
+        session.pop('admin_authenticated', None)
+        return False
+    
+    # Update last activity time
+    session['last_activity'] = datetime.utcnow().isoformat()
+    return True
+
 
 def login_required(f):
+    """Decorator to require admin login for views."""
     @wraps(f)
-    def decorated_function(*args, **kwargs):
+    def wrapper(*args, **kwargs):
         if not is_authenticated():
             return redirect(url_for('admin.login_view'))
         return f(*args, **kwargs)
-    return decorated_function
+    return wrapper
 
-def get_content_type(filename):
-    file_ext = os.path.splitext(filename)[1].lower()
-    content_type = mimetypes.guess_type(filename)[0]
-    if not content_type:
-        mapping = {
-            '.jpg': 'image/jpeg',
-            '.jpeg': 'image/jpeg',
-            '.png': 'image/png',
-            '.gif': 'image/gif',
-            '.webp': 'image/webp',
-            '.svg': 'image/svg+xml'
-        }
-        content_type = mapping.get(file_ext, 'application/octet-stream')
-    return content_type
+
+def check_rate_limit(ip_address):
+    """Check if the IP has exceeded the login attempt rate limit."""
+    now = datetime.utcnow()
+    
+    # Clear old attempts
+    for ip in list(login_attempts.keys()):
+        if (now - login_attempts[ip]['timestamp']).total_seconds() > LOGIN_COOLDOWN:
+            del login_attempts[ip]
+    
+    # Check current IP
+    if ip_address in login_attempts:
+        attempts = login_attempts[ip_address]
+        if attempts['count'] >= MAX_LOGIN_ATTEMPTS:
+            time_diff = (now - attempts['timestamp']).total_seconds()
+            if time_diff < LOGIN_COOLDOWN:
+                return False
+            # Reset if cooldown period has passed
+            login_attempts[ip_address] = {'count': 1, 'timestamp': now}
+        else:
+            login_attempts[ip_address]['count'] += 1
+    else:
+        login_attempts[ip_address] = {'count': 1, 'timestamp': now}
+    
+    return True
+
+
+def upload_to_s3(file_stream, bucket, key, content_type, extra_args=None):
+    """Upload a file to an S3 bucket with proper error handling."""
+    if extra_args is None:
+        extra_args = {}
+    
+    # Ensure ContentType is set
+    if 'ContentType' not in extra_args:
+        extra_args['ContentType'] = content_type
+    
+    try:
+        # CRITICAL FIX: Reset the file pointer to the beginning
+        file_stream.seek(0)
+        
+        # Debug: Check file size
+        initial_position = file_stream.tell()
+        file_stream.seek(0, os.SEEK_END)
+        file_size = file_stream.tell()
+        file_stream.seek(0)  # Reset again for upload
+        
+        print(f"Debug - Initial position: {initial_position}, File size: {file_size} bytes")
+        
+        if file_size == 0:
+            print("Warning: File stream is empty")
+            return False
+            
+        s3_client = Config.get_s3_client()
+        s3_client.upload_fileobj(
+            file_stream,
+            bucket,
+            key,
+            ExtraArgs=extra_args
+        )
+        
+        # Verify upload success by checking if the object exists
+        try:
+            s3_client.head_object(Bucket=bucket, Key=key)
+            print(f"Successfully uploaded file to {key}")
+            return True
+        except Exception:
+            print(f"Upload appeared to succeed but object not found in S3")
+            return False
+            
+    except Exception as e:
+        # Enhanced error logging
+        import traceback
+        print(f"Error uploading file to S3: {str(e)}")
+        print(f"Traceback: {traceback.format_exc()}")
+        return False
+
 
 class SecureModelView(ModelView):
+    """Base model view with security controls."""
     def is_accessible(self):
         return is_authenticated()
-    
+
     def inaccessible_callback(self, name, **kwargs):
         return redirect(url_for('admin.login_view'))
 
+
 class StoryModelView(SecureModelView):
+    """Admin view for managing stories."""
     column_list = ('id', 'title', 'author', 'created_at', 'updated_at')
     column_searchable_list = ('title', 'author', 'content')
     column_filters = ('author', 'created_at')
-    form_excluded_columns = ('created_at', 'updated_at')
+    form_excluded_columns = ('created_at', 'updated_at', 's3_cover_key')
     
-    # Temporary upload directory for file uploads
-    temp_upload_path = os.path.join(os.path.dirname(__file__), 'temp_uploads')
-    os.makedirs(temp_upload_path, exist_ok=True)
-    
-    form_extra_fields = {
-        'cover_upload': FileUploadField('Cover Image', 
-                                        base_path=temp_upload_path,
-                                        allowed_extensions=['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'])
+    # Add preview of cover image
+    column_formatters = {
+        'cover_filename': lambda v, c, m, p: f'<img src="{Config.get_s3_url(m.s3_cover_key)}" width="100">' 
+                                             if m.s3_cover_key else ''
     }
     
+    column_formatters_args = {
+        'cover_filename': {'allow_html': True},
+    }
+
+    # No base_path since we use in-memory uploads
+    form_extra_fields = {
+        'cover_upload': FileUploadField(
+            'Cover Image',
+            base_path='/tmp',
+            allowed_extensions=ALLOWED_EXTENSIONS
+        )
+    }
+
     form_widget_args = {
         'content': {'rows': 20},
         'description': {'rows': 5}
     }
-    
+
     def on_model_change(self, form, model, is_created):
-        if form.cover_upload.data:
-            file_storage = form.cover_upload.data
-            original_filename = secure_filename(file_storage.filename)
-            unique_filename = f"{uuid.uuid4()}_{original_filename}"
-            file_path = os.path.join(self.temp_upload_path, unique_filename)
-            
-            # Save file locally
-            file_storage.save(file_path)
-            
-            # Prepare S3 upload details
-            s3_key = f"covers/{unique_filename}"
-            content_type = get_content_type(original_filename)
-            
+        """Handle model changes including file uploads."""
+        file_storage = form.cover_upload.data
+        if file_storage and file_storage.filename:
             try:
-                s3_client = Config.get_s3_client()
-                with open(file_path, 'rb') as file_obj:
-                    s3_client.upload_fileobj(
-                        file_obj,
-                        Config.S3_BUCKET,
-                        s3_key,
-                        ExtraArgs={'ContentType': content_type}
-                    )
-                # Update model with S3 info
-                model.cover_filename = unique_filename
-                model.s3_cover_key = s3_key
-                os.remove(file_path)
+                # Process and upload the file
+                original_filename = secure_filename(file_storage.filename)
+                unique_filename = f"{uuid.uuid4()}_{original_filename}"
+                s3_key = f"{S3_COVERS_PREFIX}{unique_filename}"
+                
+                # Determine content type
+                content_type = mimetypes.guess_type(original_filename)[0] or 'application/octet-stream'
+                
+                # IMPORTANT: Reset the file stream position to the beginning
+                file_storage.stream.seek(0)
+                
+                # Get file size to verify it's not empty
+                file_storage.stream.seek(0, os.SEEK_END)
+                size = file_storage.stream.tell()
+                file_storage.stream.seek(0)  # Reset again after checking size
+                
+                if size == 0:
+                    flash("Error: File appears to be empty", 'error')
+                    return
+                
+                # Upload to S3
+                upload_success = upload_to_s3(
+                    file_storage.stream,
+                    Config.S3_BUCKET,
+                    s3_key,
+                    content_type
+                )
+                
+                if upload_success:
+                    model.cover_filename = unique_filename
+                    model.s3_cover_key = s3_key
+                else:
+                    flash("Failed to upload cover image", 'error')
             except Exception as e:
-                flash(f"Error uploading file to S3: {str(e)}", 'error')
+                flash(f"Error processing cover image: {str(e)}", 'error')
+                print(f"Error details: {e}")  # Add more detailed logging
+                db.session.rollback()
                 raise
 
+
 class CustomAdminIndexView(AdminIndexView):
+    """Custom admin index view with authentication."""
     @expose('/')
     def index(self):
         if not is_authenticated():
             return redirect(url_for('.login_view'))
-        return super(CustomAdminIndexView, self).index()
-    
+        return super().index()
+
     @expose('/login', methods=['GET', 'POST'])
     def login_view(self):
+        """Handle admin login with rate limiting."""
         if request.method == 'POST':
-            if request.form.get('password') == ADMIN_PASSWORD:
+            # Check rate limiting
+            if not check_rate_limit(request.remote_addr):
+                flash('Too many login attempts. Please try again later.', 'error')
+                return self.render('admin/login.html')
+            
+            # Verify password
+            password = request.form.get('password', '')
+            authenticated = False
+            
+            if ADMIN_PASSWORD_HASH:
+                # Use hashed password if available
+                authenticated = check_password_hash(ADMIN_PASSWORD_HASH, password)
+            else:
+                # Fallback to plain text password
+                authenticated = password == ADMIN_PASSWORD
+            
+            if authenticated:
                 session['admin_authenticated'] = True
+                session['last_activity'] = datetime.utcnow().isoformat()
                 flash('Login successful', 'success')
                 return redirect(url_for('.index'))
-            else:
-                flash('Invalid password', 'error')
+            
+            flash('Invalid password', 'error')
+        
         return self.render('admin/login.html')
-    
+
     @expose('/logout')
     def logout_view(self):
+        """Handle admin logout."""
         session.pop('admin_authenticated', None)
+        session.pop('last_activity', None)
         flash('You have been logged out', 'success')
         return redirect(url_for('.login_view'))
 
-def init_admin(app):
-    admin = Admin(app, 
-                  name='StoryVoice Admin', 
-                  template_mode='bootstrap4',
-                  index_view=CustomAdminIndexView())
-    
-    admin.add_view(StoryModelView(Story, db.session, name='Stories'))
-    
-    # Ensure the admin template directory exists
+
+def create_login_template(app):
+    """Create login template if it doesn't exist."""
     admin_templates_dir = os.path.join(app.root_path, 'templates', 'admin')
     os.makedirs(admin_templates_dir, exist_ok=True)
-    
-    # Ensure the temporary uploads folder exists
-    temp_uploads_dir = os.path.join(app.root_path, 'temp_uploads')
-    os.makedirs(temp_uploads_dir, exist_ok=True)
-    
-    # Create a default login template if it doesn't exist
+
     login_template_path = os.path.join(admin_templates_dir, 'login.html')
     if not os.path.exists(login_template_path):
         with open(login_template_path, 'w') as f:
-            f.write('''
-{% extends 'admin/master.html' %}
+            f.write(
+                """{% extends 'admin/master.html' %}
 {% block body %}
 <div class="container">
   <div class="row">
@@ -175,7 +307,29 @@ def init_admin(app):
     </div>
   </div>
 </div>
-{% endblock %}
-''')
+{% endblock %}"""
+            )
+
+
+def init_admin(app):
+    """Initialize the admin interface."""
+    # Create login template
+    create_login_template(app)
+    
+    # Setup admin interface
+    admin = Admin(
+        app,
+        name='StoryVoice Admin',
+        template_mode='bootstrap4',
+        index_view=CustomAdminIndexView()
+    )
+    
+    # Add views
+    admin.add_view(StoryModelView(Story, db.session, name='Stories'))
+    
+    # Setup session configuration
+    app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(
+        seconds=int(os.getenv('SESSION_TIMEOUT', DEFAULT_SESSION_TIMEOUT))
+    )
     
     return admin

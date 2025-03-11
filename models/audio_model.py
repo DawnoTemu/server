@@ -63,7 +63,7 @@ class AudioModel:
         """
         try:
             s3_client = Config.get_s3_client()
-            s3_key = f"{voice_id}/{story_id}.mp3"
+            s3_key = f"voices/{voice_id}/{story_id}.mp3"
             
             # Upload to S3 with enhanced settings
             s3_client.upload_fileobj(
@@ -95,7 +95,7 @@ class AudioModel:
         """
         try:
             s3_client = Config.get_s3_client()
-            s3_key = f"{voice_id}/{story_id}.mp3"
+            s3_key = f"voices/{voice_id}/{story_id}.mp3"
             
             s3_client.head_object(
                 Bucket=Config.S3_BUCKET,
@@ -105,48 +105,6 @@ class AudioModel:
             return True
         except ClientError:
             return False
-    
-    @staticmethod
-    def get_audio(voice_id, story_id, range_header=None):
-        """
-        Get audio data from S3
-        
-        Args:
-            voice_id: Voice ID
-            story_id: Story ID
-            range_header: Optional HTTP Range header
-            
-        Returns:
-            tuple: (success, data/error message, extra info)
-        """
-        try:
-            s3_client = Config.get_s3_client()
-            s3_key = f"{voice_id}/{story_id}.mp3"
-            
-            s3_kwargs = {'Bucket': Config.S3_BUCKET, 'Key': s3_key}
-            if range_header:
-                s3_kwargs['Range'] = range_header
-            
-            s3_response = s3_client.get_object(**s3_kwargs)
-            
-            # Get audio data
-            data = s3_response['Body'].read()
-            
-            # Determine if partial content (206) response is needed
-            status_code = 206 if range_header else 200
-            
-            # Extra information for response headers
-            extra = {
-                'content_length': s3_response['ContentLength'],
-                'content_range': s3_response.get('ContentRange')
-            }
-            
-            return True, data, extra
-            
-        except ClientError as e:
-            return False, str(e), None
-        except Exception as e:
-            return False, str(e), None
     
     @staticmethod
     def get_audio_presigned_url(voice_id, story_id, expires_in=3600):
@@ -168,7 +126,7 @@ class AudioModel:
                 
             # Generate presigned URL
             s3_client = Config.get_s3_client()
-            s3_key = f"{voice_id}/{story_id}.mp3"
+            s3_key = f"voices/{voice_id}/{story_id}.mp3"
             
             presigned_url = s3_client.generate_presigned_url(
                 'get_object',
