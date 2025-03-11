@@ -20,8 +20,6 @@ def init_db(app):
         
         # Log database connection information (only in debug mode)
         if app.debug:
-            logger.info(f"Database initialized with URI: {app.config['SQLALCHEMY_DATABASE_URI']}")
-            
             # Extract dialect information from the URI
             uri = app.config['SQLALCHEMY_DATABASE_URI']
             dialect = uri.split('://')[0] if '://' in uri else 'unknown'
