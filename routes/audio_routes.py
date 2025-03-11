@@ -14,7 +14,9 @@ def get_audio_url(voice_id, story_id):
         expires_in=expires_in
     )
     
-    return jsonify(result), status_code
+    if success:
+        return redirect(result)
+    return jsonify({"error": "Audio image not found"}), 404
 
 @audio_bp.route('/audio/exists/<string:voice_id>/<int:story_id>')
 def check_audio_exists(voice_id, story_id):

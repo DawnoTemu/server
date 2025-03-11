@@ -71,7 +71,7 @@ class AudioController:
         if not success:
             return False, {"error": f"Failed to generate presigned URL: {result}"}, 500
             
-        return True, {"url": result}, 200
+        return True, result, 200
 
     @staticmethod
     def synthesize_audio(voice_id, story_id):
