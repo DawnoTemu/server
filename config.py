@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 from dotenv import load_dotenv
-import boto3
+from utils.s3_client import S3Client
 
 # Load environment variables
 load_dotenv()
@@ -66,12 +66,21 @@ class Config:
             raise EnvironmentError(f"Missing environment variables: {', '.join(missing)}")
         return True
     
-    # Initialize AWS S3 client
+    # Get S3 client using our optimized implementation
     @classmethod
     def get_s3_client(cls):
-        return boto3.client(
-            's3',
-            aws_access_key_id=cls.AWS_ACCESS_KEY_ID,
-            aws_secret_access_key=cls.AWS_SECRET_ACCESS_KEY,
-            region_name=cls.AWS_REGION
-        )
+        """
+        Get the singleton S3 client instance 
+        (Maintains compatibility with existing code)
+        """
+        return S3Client.get_client()
+    
+    # Helper method to generate S3 URLs
+    @classmethod
+    def get_s3_url(cls, key, expires_in=3600):
+        """
+        Generate a presigned URL for S3 object
+        """
+        if not key:
+            return None
+        return S3Client.generate_presigned_url(key, expires_in)
