@@ -1,3 +1,4 @@
+# app.py
 from flask import Flask
 import os
 from config import Config
@@ -5,6 +6,7 @@ from routes import register_blueprints
 from flask_cors import CORS
 from database import init_db
 from admin import init_admin
+from utils.s3_client import S3Client
 
 is_development = os.getenv('FLASK_ENV', 'production').lower() == 'development' or \
                  os.getenv('FLASK_DEBUG', 'False').lower() == 'true'
@@ -21,6 +23,13 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = Config.SQLALCHEMY_TRACK_MODIFICAT
 
 # Set secret key for session management
 app.secret_key = os.getenv('SECRET_KEY')
+
+# Initialize S3 client early - single initialization for entire application
+try:
+    S3Client.initialize()
+    app.logger.info("S3 client initialized successfully at app startup")
+except Exception as e:
+    app.logger.error(f"Failed to initialize S3 client: {str(e)}")
 
 # Initialize database
 init_db(app)

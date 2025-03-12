@@ -124,18 +124,17 @@ class StoryModel:
             
             if not s3_key:
                 return False, "Cover image not found in S3"
-                
-            s3_client = Config.get_s3_client()
             
-            presigned_url = s3_client.generate_presigned_url(
-                'get_object',
-                Params={
-                    'Bucket': Config.S3_BUCKET,
-                    'Key': s3_key,
-                    # Use the appropriate content type based on the file extension
-                    'ResponseContentType': StoryModel._get_content_type_from_key(s3_key),
-                },
-                ExpiresIn=expires_in
+            # Get content type for response headers
+            content_type = StoryModel._get_content_type_from_key(s3_key)
+            
+            # Use S3Client utility directly
+            from utils.s3_client import S3Client
+            
+            presigned_url = S3Client.generate_presigned_url(
+                s3_key,
+                expires_in,
+                {'ResponseContentType': content_type}
             )
             
             return True, presigned_url

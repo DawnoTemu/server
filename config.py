@@ -75,7 +75,7 @@ class Config:
         """
         return S3Client.get_client()
     
-    # Helper method to generate S3 URLs
+    # Helper method to generate S3 URLs (now delegates to S3Client)
     @classmethod
     def get_s3_url(cls, key, expires_in=3600):
         """

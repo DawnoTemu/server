@@ -1,3 +1,4 @@
+# utils/s3_client.py
 import boto3
 from botocore.config import Config as BotoConfig
 import os
@@ -11,44 +12,61 @@ class S3Client:
     """
     Singleton S3 client with connection pooling and retry configuration
     """
+    # Class variable to store the singleton instance
     _instance = None
     _client = None
+    _initialized = False
+    
+    # Cache environment variables
+    _aws_access_key = None
+    _aws_secret_key = None 
+    _aws_region = None
+    _bucket_name = None
+    _max_pool_connections = None
+    _max_retries = None
     
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super(S3Client, cls).__new__(cls)
-            cls._configure_client()
         return cls._instance
     
     @classmethod
-    def _configure_client(cls):
-        """Configure the S3 client with optimal settings"""
-        # Get environment variables
-        aws_access_key = os.getenv("AWS_ACCESS_KEY_ID")
-        aws_secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
-        aws_region = os.getenv("AWS_REGION")
-        max_pool_connections = int(os.getenv("AWS_MAX_POOL_CONNECTIONS", "10"))
-        max_retries = int(os.getenv("AWS_MAX_RETRIES", "5"))
+    def initialize(cls):
+        """Initialize the client once at application startup"""
+        if cls._initialized:
+            return
+            
+        # Cache environment variables
+        cls._aws_access_key = os.getenv("AWS_ACCESS_KEY_ID")
+        cls._aws_secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
+        cls._aws_region = os.getenv("AWS_REGION")
+        cls._bucket_name = os.getenv("S3_BUCKET_NAME")
+        cls._max_pool_connections = int(os.getenv("AWS_MAX_POOL_CONNECTIONS", "10"))
+        cls._max_retries = int(os.getenv("AWS_MAX_RETRIES", "5"))
         
         # Configure boto3 with connection pooling and retry strategy
         boto_config = BotoConfig(
-            region_name=aws_region,
+            region_name=cls._aws_region,
             retries={
-                'max_attempts': max_retries,
+                'max_attempts': cls._max_retries,
                 'mode': 'adaptive'  # Adaptive retry mode with exponential backoff
             },
-            max_pool_connections=max_pool_connections
+            max_pool_connections=cls._max_pool_connections
         )
         
         try:
             # Create the client with our optimized configuration
             cls._client = boto3.client(
                 's3',
-                aws_access_key_id=aws_access_key,
-                aws_secret_access_key=aws_secret_key,
+                aws_access_key_id=cls._aws_access_key,
+                aws_secret_access_key=cls._aws_secret_key,
                 config=boto_config
             )
-            logger.info(f"S3 client initialized with max_pool_connections={max_pool_connections}, max_retries={max_retries}")
+            
+            # Mark as initialized to avoid redundant configuration
+            cls._initialized = True
+            
+            logger.info(f"S3 client initialized with max_pool_connections={cls._max_pool_connections}, max_retries={cls._max_retries}")
         except Exception as e:
             logger.error(f"Failed to initialize S3 client: {str(e)}")
             raise
@@ -56,20 +74,21 @@ class S3Client:
     @classmethod
     def get_client(cls):
         """Get the configured S3 client instance"""
-        if cls._client is None:
-            S3Client()  # Initialize if not already done
+        if not cls._initialized:
+            cls.initialize()
         return cls._client
     
-    @staticmethod
-    @lru_cache(maxsize=100)
-    def get_bucket_name():
-        """Get S3 bucket name with caching"""
-        return os.getenv("S3_BUCKET_NAME")
+    @classmethod
+    def get_bucket_name(cls):
+        """Get S3 bucket name from cached environment variables"""
+        if not cls._initialized:
+            cls.initialize()
+        return cls._bucket_name
     
     @classmethod
     def generate_presigned_url(cls, key, expires_in=3600, response_headers=None):
         """
-        Generate a presigned URL with caching potential
+        Generate a presigned URL with optimized parameter handling
         
         Args:
             key: S3 object key
@@ -123,7 +142,19 @@ class S3Client:
                 key,
                 ExtraArgs=extra_args
             )
-            return True
+            
+            # Verify upload success
+            try:
+                cls.get_client().head_object(
+                    Bucket=cls.get_bucket_name(),
+                    Key=key
+                )
+                logger.debug(f"Successfully uploaded file to {key}")
+                return True
+            except Exception as e:
+                logger.error(f"Upload verification failed for {key}: {str(e)}")
+                return False
+                
         except Exception as e:
             logger.error(f"Failed to upload file to {key}: {str(e)}")
             return False

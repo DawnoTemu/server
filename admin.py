@@ -111,23 +111,15 @@ def upload_to_s3(file_stream, bucket, key, content_type, extra_args=None):
         if file_size == 0:
             print("Warning: File stream is empty")
             return False
-            
-        s3_client = Config.get_s3_client()
-        s3_client.upload_fileobj(
-            file_stream,
-            bucket,
-            key,
-            ExtraArgs=extra_args
-        )
         
-        # Verify upload success by checking if the object exists
-        try:
-            s3_client.head_object(Bucket=bucket, Key=key)
-            print(f"Successfully uploaded file to {key}")
-            return True
-        except Exception:
-            print(f"Upload appeared to succeed but object not found in S3")
-            return False
+        # Use the optimized S3Client directly
+        from utils.s3_client import S3Client
+        
+        return S3Client.upload_fileobj(
+            file_stream,
+            key,
+            extra_args
+        )
             
     except Exception as e:
         # Enhanced error logging
@@ -151,7 +143,7 @@ class StoryModelView(SecureModelView):
     column_list = ('id', 'title', 'author', 'created_at', 'updated_at')
     column_searchable_list = ('title', 'author', 'content')
     column_filters = ('author', 'created_at')
-    form_excluded_columns = ('created_at', 'updated_at', 's3_cover_key')
+    form_excluded_columns = ('created_at', 'updated_at', 's3_cover_key', 'id') 
     
     # Add preview of cover image
     column_formatters = {
@@ -179,6 +171,11 @@ class StoryModelView(SecureModelView):
 
     def on_model_change(self, form, model, is_created):
         """Handle model changes including file uploads."""
+        # Make sure we don't set ID for new objects
+        if is_created:
+            # Ensure ID is None for new records to let the database assign it
+            model.id = None
+            
         file_storage = form.cover_upload.data
         if file_storage and file_storage.filename:
             try:
@@ -220,7 +217,6 @@ class StoryModelView(SecureModelView):
                 print(f"Error details: {e}")  # Add more detailed logging
                 db.session.rollback()
                 raise
-
 
 class CustomAdminIndexView(AdminIndexView):
     """Custom admin index view with authentication."""
