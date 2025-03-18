@@ -53,7 +53,7 @@ class AudioModel:
                             "similarity_boost": 0.85,
                             "style": 0.35,
                             "use_speaker_boost": True,
-                            "speed": 1.2
+                            "speed": 1.1
                         }
                     },
                     headers={"Accept": "audio/mpeg"}
