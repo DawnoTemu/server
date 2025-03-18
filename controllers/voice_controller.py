@@ -24,7 +24,7 @@ class VoiceController:
             return False, "Invalid file type", 400
             
         # Clone voice with background noise removal (this can help with audio clarity)
-        success, result = VoiceModel.clone_voice(file.stream, file.filename, remove_background_noise=True)
+        success, result = VoiceModel.clone_voice(file.stream, file.filename, remove_background_noise=False)
         
         if success:
             return True, {"voice_id": result["voice_id"], "name": Config.VOICE_NAME}, 200
