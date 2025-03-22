@@ -49,11 +49,11 @@ class AudioModel:
                         "text": text,
                         "model_id": "eleven_multilingual_v2",
                         "voice_settings": {
-                            "stability": 0.45,
-                            "similarity_boost": 0.85,
-                            "style": 0.35,
+                            "stability": 0.65,
+                            "similarity_boost": 0.9,
+                            "style": 0.0,
                             "use_speaker_boost": True,
-                            "speed": 1.1
+                            "speed": 1.0
                         }
                     },
                     headers={"Accept": "audio/mpeg"}
