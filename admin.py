@@ -17,6 +17,7 @@ from werkzeug.security import check_password_hash
 from database import db
 from models.story_model import Story
 from models.user_model import User
+from models.voice_model import Voice, VoiceModel
 from config import Config
 
 # Constants
@@ -374,7 +375,94 @@ class UserModelView(ModelView):
         except Exception as e:
             flash(f'Failed to reset password: {str(e)}', 'error')
             return False
+
+
+class VoiceModelView(ModelView):
+    """Admin view for managing voices"""
+    
+    column_list = ('id', 'name', 'user', 'elevenlabs_voice_id', 'created_at')
+    
+    column_searchable_list = ('name', 'elevenlabs_voice_id')
+    
+    column_filters = ('user.email', 'name', 'created_at')
+    
+    column_formatters = {
+        'user': lambda v, c, m, p: m.user.email if m.user else None,
+    }
+    
+    column_descriptions = {
+        'elevenlabs_voice_id': 'Voice ID from ElevenLabs API',
+        'user_id': 'User who owns this voice',
+        's3_sample_key': 'S3 key for the original audio sample',
+    }
+    
+    form_columns = ('name', 'elevenlabs_voice_id', 'user', 's3_sample_key', 'sample_filename')
+    
+    create_modal = True
+    edit_modal = True
+    
+    def is_accessible(self):
+        # Import here to avoid circular imports
+        from admin import is_authenticated
+        return is_authenticated()
+    
+    def inaccessible_callback(self, name, **kwargs):
+        # Import here to avoid circular imports
+        from flask import redirect, url_for
+        return redirect(url_for('admin.login_view'))
+    
+    # Add custom actions
+    def _delete_voice_action(self, ids):
+        """Custom action to delete a voice from ElevenLabs and database"""
+        # Import here to avoid circular imports
+        from models.voice_model import VoiceModel
         
+        success_count = 0
+        error_messages = []
+        
+        for voice_id in ids:
+            success, message = VoiceModel.delete_voice(voice_id)
+            if success:
+                success_count += 1
+            else:
+                error_messages.append(f"Voice ID {voice_id}: {message}")
+        
+        if success_count == len(ids):
+            flash(f'Successfully deleted {success_count} voices', 'success')
+        else:
+            flash(f'Deleted {success_count} of {len(ids)} voices. Errors: {", ".join(error_messages)}', 'warning')
+        
+        return success_count > 0
+    
+    # Register custom actions - FIXED VERSION with correct return value
+    def get_actions_list(self):
+        # Get the original actions and confirmations
+        actions_tuple = super(VoiceModelView, self).get_actions_list()
+        
+        # Unpack the tuple (it should have 2 items)
+        if len(actions_tuple) == 2:
+            actions, confirmation_messages = actions_tuple
+        else:
+            # Handle unexpected return value format
+            actions = actions_tuple[0] if actions_tuple else []
+            confirmation_messages = {}
+        
+        # Convert to list if necessary
+        actions_list = list(actions) if isinstance(actions, tuple) else actions
+        
+        # Add our custom action
+        actions_list.append(('delete_voice', 'Delete from ElevenLabs and Database'))
+        
+        # Add confirmation message for our action
+        confirmation_messages['delete_voice'] = 'Are you sure you want to delete these voices from ElevenLabs and the database?'
+        
+        # Return the expected format
+        return actions_list, confirmation_messages
+    
+    # Implement the action handler
+    def action_delete_voice(self, ids):
+        return self._delete_voice_action(ids)
+    
 def init_admin(app):
     """Initialize the admin interface."""
     # Create login template
@@ -391,6 +479,7 @@ def init_admin(app):
     # Add views correctly - using the appropriate view class for each model
     admin.add_view(StoryModelView(Story, db.session, name='Stories'))
     admin.add_view(UserModelView(User, db.session, name='Users'))
+    admin.add_view(VoiceModelView(Voice, db.session, name='Voices'))
     
     # Setup session configuration
     app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(

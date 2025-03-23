@@ -79,13 +79,22 @@ class AudioController:
         Synthesize audio for a story with a given voice
         
         Args:
-            voice_id: Voice ID
+            voice_id: Database ID of the voice
             story_id: Story ID
             
         Returns:
             tuple: (success, data/error message, status_code)
         """
         try:
+            # Get the voice from the database
+            voice = VoiceModel.get_voice_by_id(voice_id)
+            
+            if not voice:
+                return False, {"error": "Voice not found"}, 404
+                
+            # Get the ElevenLabs voice ID
+            elevenlabs_voice_id = voice.elevenlabs_voice_id
+            
             # Get story text
             story = StoryModel.get_story_by_id(story_id)
             
@@ -98,19 +107,19 @@ class AudioController:
                 return False, {"error": "Story text not found in file"}, 400
                 
             # Synthesize speech
-            synth_success, result = AudioModel.synthesize_speech(voice_id, text)
+            synth_success, result = AudioModel.synthesize_speech(elevenlabs_voice_id, text)
             
             if not synth_success:
                 return False, {"error": f"Synthesis failed: {result}"}, 500
                 
             # Store audio in S3
-            store_success, message = AudioModel.store_audio(result, voice_id, story_id)
+            store_success, message = AudioModel.store_audio(result, elevenlabs_voice_id, story_id)
             
             if not store_success:
                 return False, {"error": f"Storage failed: {message}"}, 500
                 
             # Generate presigned URL for the audio
-            presigned_success, presigned_url = AudioModel.get_audio_presigned_url(voice_id, story_id)
+            presigned_success, presigned_url = AudioModel.get_audio_presigned_url(elevenlabs_voice_id, story_id)
             
             if not presigned_success:
                 return False, {"error": f"Failed to generate URL: {presigned_url}"}, 500
