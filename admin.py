@@ -7,12 +7,16 @@ from datetime import datetime, timedelta
 from flask import redirect, url_for, request, flash, session
 from flask_admin import Admin, AdminIndexView, expose
 from flask_admin.contrib.sqla import ModelView
+from flask import flash, redirect, url_for
+from werkzeug.security import generate_password_hash
+from models.user_model import User
 from flask_admin.form import FileUploadField
 from werkzeug.utils import secure_filename
 from werkzeug.security import check_password_hash
 
 from database import db
 from models.story_model import Story
+from models.user_model import User
 from config import Config
 
 # Constants
@@ -306,7 +310,71 @@ def create_login_template(app):
 {% endblock %}"""
             )
 
-
+class UserModelView(ModelView):
+    """Admin view for managing users"""
+    
+    column_list = ('id', 'email', 'email_confirmed', 'is_active', 'last_login', 'created_at')
+    
+    column_searchable_list = ('email',)
+    
+    column_filters = ('email_confirmed', 'is_active', 'created_at', 'last_login')
+    
+    form_columns = ('email', 'password_hash', 'email_confirmed', 'is_active')
+    
+    form_widget_args = {
+        'password_hash': {
+            'readonly': True,
+            'description': 'To set a password, use the "Set Password" action below.'
+        }
+    }
+    
+    column_descriptions = {
+        'email_confirmed': 'Whether the user has confirmed their email address',
+        'is_active': 'Whether the user account is active (can log in)',
+    }
+    
+    column_formatters = {
+        'last_login': lambda v, c, m, p: m.last_login.strftime('%Y-%m-%d %H:%M:%S') if m.last_login else 'Never'
+    }
+    
+    # Create a form with password field for user creation
+    def create_form(self):
+        form = super(UserModelView, self).create_form()
+        # Clear the password_hash field if it exists in the form
+        if hasattr(form, 'password_hash'):
+            form.password_hash.data = None
+        return form
+    
+    # Override create model to set password properly
+    def on_model_change(self, form, model, is_created):
+        # If creating a new user and password_hash is empty, set a default password
+        if is_created and not model.password_hash:
+            model.password_hash = generate_password_hash('changeme')
+            flash('User created with default password: "changeme". Please change this immediately.', 'warning')
+    
+    # Add custom actions
+    @staticmethod
+    def reset_password_action(ids):
+        """Custom action to reset a user's password"""
+        try:
+            for user_id in ids:
+                user = User.query.get(user_id)
+                if user:
+                    user.password_hash = generate_password_hash('changeme')
+            
+            from database import db
+            db.session.commit()
+            
+            if len(ids) == 1:
+                flash(f'Password reset to "changeme" for 1 user', 'success')
+            else:
+                flash(f'Password reset to "changeme" for {len(ids)} users', 'success')
+            
+            return True
+        except Exception as e:
+            flash(f'Failed to reset password: {str(e)}', 'error')
+            return False
+        
 def init_admin(app):
     """Initialize the admin interface."""
     # Create login template
@@ -320,8 +388,9 @@ def init_admin(app):
         index_view=CustomAdminIndexView()
     )
     
-    # Add views
+    # Add views correctly - using the appropriate view class for each model
     admin.add_view(StoryModelView(Story, db.session, name='Stories'))
+    admin.add_view(UserModelView(User, db.session, name='Users'))
     
     # Setup session configuration
     app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(

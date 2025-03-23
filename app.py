@@ -6,7 +6,9 @@ from routes import register_blueprints
 from flask_cors import CORS
 from database import init_db
 from admin import init_admin
+from admin import init_admin
 from utils.s3_client import S3Client
+from utils.email_service import EmailService
 
 is_development = os.getenv('FLASK_ENV', 'production').lower() == 'development' or \
                  os.getenv('FLASK_DEBUG', 'False').lower() == 'true'
@@ -20,6 +22,14 @@ app = Flask(__name__, static_folder='static', static_url_path='/')
 # Configure the app
 app.config['SQLALCHEMY_DATABASE_URI'] = Config.SQLALCHEMY_DATABASE_URI
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = Config.SQLALCHEMY_TRACK_MODIFICATIONS
+app.config['MAIL_SERVER'] = os.getenv('MAIL_SERVER', 'smtp.gmail.com')
+app.config['MAIL_PORT'] = int(os.getenv('MAIL_PORT', 587))
+app.config['MAIL_USE_TLS'] = os.getenv('MAIL_USE_TLS', 'True').lower() == 'true'
+app.config['MAIL_USE_SSL'] = os.getenv('MAIL_USE_SSL', 'False').lower() == 'true'
+app.config['MAIL_USERNAME'] = os.getenv('MAIL_USERNAME')
+app.config['MAIL_PASSWORD'] = os.getenv('MAIL_PASSWORD')
+app.config['MAIL_DEFAULT_SENDER'] = os.getenv('MAIL_DEFAULT_SENDER', 'noreply@storyvoice.app')
+app.config['FRONTEND_URL'] = os.getenv('FRONTEND_URL', 'http://localhost:3000')
 
 # Set secret key for session management
 app.secret_key = os.getenv('SECRET_KEY')
@@ -34,6 +44,7 @@ except Exception as e:
 # Initialize database
 init_db(app)
 init_admin(app)
+EmailService.init_app(app)
 
 if is_development:
     # In development mode, allow all origins

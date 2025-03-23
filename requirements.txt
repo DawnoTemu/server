@@ -11,3 +11,6 @@ psycopg-pool==3.2.1
 flask-migrate==4.0.5
 flask-admin==1.6.1
 wtforms==3.1.2
+pyjwt==2.8.0
+flask-mail==0.9.1
+email-validator==2.1.0.post1
