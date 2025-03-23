@@ -1,11 +1,12 @@
-from flask import request, jsonify, Blueprint
+from flask import request, jsonify
 from controllers.auth_controller import AuthController
 from utils.auth_middleware import token_required
 from routes import auth_bp
 
+# POST /auth/register - Register a new user
 @auth_bp.route('/register', methods=['POST'])
 def register():
-    """API endpoint for user registration"""
+    """Register a new user account"""
     data = request.json
     
     # Required fields
@@ -26,9 +27,10 @@ def register():
     
     return jsonify(result), status_code
 
+# POST /auth/login - Authenticate user
 @auth_bp.route('/login', methods=['POST'])
 def login():
-    """API endpoint for user login"""
+    """Log in a user and return authentication tokens"""
     data = request.json
     
     # Required fields
@@ -44,9 +46,10 @@ def login():
     
     return jsonify(result), status_code
 
+# POST /auth/refresh - Refresh access token
 @auth_bp.route('/refresh', methods=['POST'])
 def refresh_token():
-    """API endpoint to refresh access token"""
+    """Generate a new access token using a refresh token"""
     data = request.json
     
     # Required fields
@@ -61,22 +64,25 @@ def refresh_token():
     
     return jsonify(result), status_code
 
+# GET /auth/me - Get current user
 @auth_bp.route('/me', methods=['GET'])
 @token_required
-def me(current_user):
-    """API endpoint to get current user information"""
+def get_current_user(current_user):
+    """Get the authenticated user's profile information"""
     return jsonify(current_user.to_dict()), 200
 
+# GET /auth/confirm-email/:token - Confirm email
 @auth_bp.route('/confirm-email/<token>', methods=['GET'])
 def confirm_email(token):
-    """API endpoint to confirm email address"""
+    """Confirm a user's email address using a token"""
     success, result, status_code = AuthController.confirm_email(token)
     
     return jsonify(result), status_code
 
+# POST /auth/reset-password-request - Request password reset
 @auth_bp.route('/reset-password-request', methods=['POST'])
 def reset_password_request():
-    """API endpoint to request password reset"""
+    """Request a password reset email"""
     data = request.json
     
     # Required fields
@@ -91,9 +97,10 @@ def reset_password_request():
     
     return jsonify(result), status_code
 
+# POST /auth/reset-password/:token - Reset password
 @auth_bp.route('/reset-password/<token>', methods=['POST'])
 def reset_password(token):
-    """API endpoint to reset password"""
+    """Reset a user's password using a token"""
     data = request.json
     
     # Required fields

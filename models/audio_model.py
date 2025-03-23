@@ -133,6 +133,65 @@ class AudioModel:
             return True
         except ClientError:
             return False
+        except Exception as e:
+            logger.error(f"Error checking if audio exists: {str(e)}")
+            return False
+    
+    @staticmethod
+    def get_audio(voice_id, story_id, range_header=None):
+        """
+        Get audio data from S3
+        
+        Args:
+            voice_id: Voice ID
+            story_id: Story ID
+            range_header: Optional HTTP Range header
+            
+        Returns:
+            tuple: (success, data, extra_info)
+        """
+        try:
+            s3_key = AudioModel.get_object_key(voice_id, story_id)
+            
+            # Use optimized S3 client
+            s3_client = S3Client.get_client()
+            
+            # Prepare get_object params
+            get_params = {
+                'Bucket': S3Client.get_bucket_name(),
+                'Key': s3_key
+            }
+            
+            # Add range header if provided
+            if range_header:
+                get_params['Range'] = range_header
+            
+            # Get the object
+            response = s3_client.get_object(**get_params)
+            
+            # Get the content
+            content = response['Body'].read()
+            
+            # Extra info for headers
+            extra = {
+                'content_length': response.get('ContentLength', len(content)),
+                'content_type': response.get('ContentType', 'audio/mpeg')
+            }
+            
+            # Add content range if available
+            if 'ContentRange' in response:
+                extra['content_range'] = response['ContentRange']
+            
+            return True, content, extra
+            
+        except ClientError as e:
+            error_code = e.response['Error']['Code']
+            if error_code == 'NoSuchKey':
+                return False, "Audio not found", None
+            return False, f"S3 error: {error_code}", None
+        except Exception as e:
+            logger.error(f"Error retrieving audio: {str(e)}")
+            return False, f"Unexpected error: {str(e)}", None
     
     @staticmethod
     def get_audio_presigned_url(voice_id, story_id, expires_in=3600):

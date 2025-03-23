@@ -1,23 +1,25 @@
-from flask import jsonify, send_from_directory, redirect
+from flask import jsonify, redirect
 from routes import story_bp
 from controllers.story_controller import StoryController
-from config import Config
 
-@story_bp.route('/stories')
+# GET /stories - List all stories
+@story_bp.route('/stories', methods=['GET'])
 def list_stories():
-    """API endpoint to list all stories"""
+    """List all available stories"""
     success, result, status_code = StoryController.get_all_stories()
     return jsonify(result), status_code
 
-@story_bp.route('/stories/<int:story_id>')
+# GET /stories/:id - Get a specific story
+@story_bp.route('/stories/<int:story_id>', methods=['GET'])
 def get_story(story_id):
-    """API endpoint to get a specific story"""
+    """Get a specific story by ID"""
     success, result, status_code = StoryController.get_story(story_id)
     return jsonify(result), status_code
 
-@story_bp.route('/stories/<int:story_id>/cover')
+# GET /stories/:id/cover - Get story cover image
+@story_bp.route('/stories/<int:story_id>/cover', methods=['GET'])
 def get_story_cover(story_id):
-    """API endpoint to get a story's cover image from S3"""
+    """Get the cover image for a story"""
     success, result = StoryController.get_story_cover_presigned_url(story_id)
     if success:
         return redirect(result)
