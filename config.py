@@ -46,7 +46,7 @@ class Config:
     STORIES_DIR = Path("stories")
     
     # Voice configuration
-    ALLOWED_EXTENSIONS = {"wav", "mp3"}
+    ALLOWED_EXTENSIONS = {"wav", "mp3", "m4a"}
     VOICE_NAME = "MyClonedVoice"
     
     # Create required directories
