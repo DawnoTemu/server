@@ -21,7 +21,15 @@ is_development = os.getenv('FLASK_ENV', 'production').lower() == 'development' o
 app = Flask(__name__, static_folder='static', static_url_path='/')
 
 # Set secret key for session management
-app.secret_key = os.getenv('SECRET_KEY')
+if os.getenv('FLASK_ENV') == 'development' and not os.getenv('SECRET_KEY'):
+    import secrets
+    app.secret_key = secrets.token_hex(16)
+    print("WARNING: Using a generated SECRET_KEY. This is OK for development but not for production.")
+else:
+    secret_key = os.getenv('SECRET_KEY')
+    if not secret_key:
+        raise ValueError("SECRET_KEY environment variable must be set")
+    app.secret_key = secret_key
 
 # Configure the app
 app.config['SQLALCHEMY_DATABASE_URI'] = Config.SQLALCHEMY_DATABASE_URI

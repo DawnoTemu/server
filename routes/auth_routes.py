@@ -79,6 +79,24 @@ def confirm_email(token):
     
     return jsonify(result), status_code
 
+# POST /auth/resend-confirmation - Resend confirmation email
+@auth_bp.route('/resend-confirmation', methods=['POST'])
+def resend_confirmation():
+    """Resend the email confirmation link"""
+    data = request.json
+    
+    # Required fields
+    email = data.get('email')
+    
+    # Validate required fields
+    if not email:
+        return jsonify({"error": "Email is required"}), 400
+    
+    # Resend confirmation email
+    success, result, status_code = AuthController.resend_confirmation_email(email)
+    
+    return jsonify(result), status_code
+
 # POST /auth/reset-password-request - Request password reset
 @auth_bp.route('/reset-password-request', methods=['POST'])
 def reset_password_request():

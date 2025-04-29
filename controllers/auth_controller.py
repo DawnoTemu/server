@@ -145,6 +145,36 @@ class AuthController:
             return False, {"error": "User not found"}, 404
     
     @staticmethod
+    def resend_confirmation_email(email):
+        """
+        Resend confirmation email to a user
+        
+        Args:
+            email: User's email address
+            
+        Returns:
+            tuple: (success, message, status_code)
+        """
+        # Get user by email
+        user = UserModel.get_by_email(email)
+        
+        # Always return success to prevent email enumeration
+        if not user:
+            return True, {"message": "If an account with that email exists, a confirmation link has been sent."}, 200
+        
+        # If user is already confirmed, inform them
+        if user.email_confirmed:
+            return True, {"message": "Your email is already confirmed. You can log in."}, 200
+        
+        # Generate confirmation token
+        token = user.get_confirmation_token()
+        
+        # Send confirmation email
+        EmailService.send_confirmation_email(email, token)
+        
+        return True, {"message": "Confirmation link has been sent to your email."}, 200
+    
+    @staticmethod
     def request_password_reset(email):
         """
         Request a password reset for a user
