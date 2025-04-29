@@ -18,6 +18,7 @@ from database import db
 from models.story_model import Story
 from models.user_model import User
 from models.voice_model import Voice, VoiceModel
+from models.audio_model import AudioStory, AudioStatus
 from config import Config
 
 # Constants
@@ -452,7 +453,223 @@ class VoiceModelView(SecureModelView):
     # Implement the action handler
     def action_delete_voice(self, ids):
         return self._delete_voice_action(ids)
+
+
+class AudioStoryModelView(SecureModelView):
+    """Admin view for managing audio stories"""
     
+    column_list = ('id', 'story', 'voice', 'user', 'status', 'created_at', 'updated_at')
+    
+    column_searchable_list = ('status', 'error_message')
+    
+    column_filters = (
+        'status', 
+        'user.email',
+        'voice.name', 
+        'story.title',
+        'created_at',
+        'updated_at'
+    )
+    
+    column_formatters = {
+        'user': lambda v, c, m, p: m.user.email if m.user else None,
+        'story': lambda v, c, m, p: m.story.title if m.story else None,
+        'voice': lambda v, c, m, p: m.voice.name if m.voice else None,
+        'status': lambda v, c, m, p: m.status,
+    }
+    
+    column_descriptions = {
+        'story_id': 'Story that this audio belongs to',
+        'voice_id': 'Voice used for synthesis',
+        'user_id': 'User who owns this audio',
+        'status': 'Current status of the audio (pending, processing, ready, error)',
+        'error_message': 'Error message if synthesis failed',
+        's3_key': 'S3 key where the audio file is stored',
+        'file_size_bytes': 'Size of the audio file in bytes',
+        'duration_seconds': 'Duration of the audio in seconds',
+    }
+    
+    form_columns = (
+        'story', 
+        'voice', 
+        'user', 
+        'status', 
+        'error_message', 
+        's3_key', 
+        'file_size_bytes', 
+        'duration_seconds'
+    )
+    
+    form_choices = {
+        'status': [
+            (AudioStatus.PENDING.value, 'Pending'),
+            (AudioStatus.PROCESSING.value, 'Processing'),
+            (AudioStatus.READY.value, 'Ready'),
+            (AudioStatus.ERROR.value, 'Error')
+        ]
+    }
+    
+    form_widget_args = {
+        'error_message': {'rows': 3},
+    }
+    
+    # Add a custom list of status colors
+    status_colors = {
+        AudioStatus.PENDING.value: 'blue',
+        AudioStatus.PROCESSING.value: 'orange',
+        AudioStatus.READY.value: 'green',
+        AudioStatus.ERROR.value: 'red'
+    }
+    
+    create_modal = True
+    edit_modal = True
+    
+    # Custom actions
+    def _delete_audio_action(self, ids):
+        """Custom action to delete audio stories and their S3 files"""
+        from models.audio_model import AudioModel
+        
+        success_count = 0
+        error_messages = []
+        deleted_s3_files = 0
+        
+        for audio_id in ids:
+            try:
+                # Get the audio record
+                audio = AudioStory.query.get(audio_id)
+                
+                if not audio:
+                    error_messages.append(f"Audio ID {audio_id}: Not found")
+                    continue
+                
+                # Delete S3 file if it exists
+                if audio.s3_key:
+                    try:
+                        from utils.s3_client import S3Client
+                        S3Client.delete_objects([audio.s3_key])
+                        deleted_s3_files += 1
+                    except Exception as e:
+                        logger.error(f"Error deleting S3 file for audio {audio_id}: {str(e)}")
+                        # Continue with database deletion even if S3 fails
+                
+                # Delete the database record
+                db.session.delete(audio)
+                success_count += 1
+                
+            except Exception as e:
+                db.session.rollback()
+                error_messages.append(f"Audio ID {audio_id}: {str(e)}")
+        
+        # Commit all successful deletions
+        if success_count > 0:
+            db.session.commit()
+        
+        if error_messages:
+            flash(f'Deleted {success_count} audio stories ({deleted_s3_files} S3 files). Errors: {", ".join(error_messages)}', 'warning')
+        else:
+            flash(f'Successfully deleted {success_count} audio stories ({deleted_s3_files} S3 files)', 'success')
+        
+        return success_count > 0
+    
+    def _regenerate_audio_action(self, ids):
+        """Custom action to regenerate failed or pending audio stories"""
+        from models.audio_model import AudioModel
+        from models.story_model import StoryModel
+        
+        success_count = 0
+        error_messages = []
+        
+        for audio_id in ids:
+            try:
+                # Get the audio record
+                audio = AudioStory.query.get(audio_id)
+                
+                if not audio:
+                    error_messages.append(f"Audio ID {audio_id}: Not found")
+                    continue
+                
+                # Get the story text
+                story = StoryModel.get_story_by_id(audio.story_id)
+                if not story or 'content' not in story or not story['content']:
+                    error_messages.append(f"Audio ID {audio_id}: Story content not found")
+                    continue
+                
+                # Get the voice
+                from models.voice_model import Voice
+                voice = Voice.query.get(audio.voice_id)
+                if not voice or not voice.elevenlabs_voice_id:
+                    error_messages.append(f"Audio ID {audio_id}: Voice not found")
+                    continue
+                
+                # Update status to processing
+                audio.status = AudioStatus.PROCESSING.value
+                audio.error_message = None
+                db.session.commit()
+                
+                # Synthesize speech
+                synth_success, audio_data = AudioModel.synthesize_speech(voice.elevenlabs_voice_id, story['content'])
+                
+                if not synth_success:
+                    audio.status = AudioStatus.ERROR.value
+                    audio.error_message = str(audio_data)
+                    db.session.commit()
+                    error_messages.append(f"Audio ID {audio_id}: Synthesis failed - {str(audio_data)}")
+                    continue
+                
+                # Store audio
+                store_success, message = AudioModel.store_audio(audio_data, audio.voice_id, audio.story_id, audio)
+                
+                if not store_success:
+                    error_messages.append(f"Audio ID {audio_id}: Storage failed - {message}")
+                    continue
+                
+                success_count += 1
+                
+            except Exception as e:
+                db.session.rollback()
+                error_messages.append(f"Audio ID {audio_id}: {str(e)}")
+        
+        if error_messages:
+            flash(f'Regenerated {success_count} audio stories. Errors: {", ".join(error_messages)}', 'warning')
+        else:
+            flash(f'Successfully regenerated {success_count} audio stories', 'success')
+        
+        return success_count > 0
+    
+    # Register custom actions
+    def get_actions_list(self):
+        # Get the original actions and confirmations
+        actions_tuple = super(AudioStoryModelView, self).get_actions_list()
+        
+        # Unpack the tuple (it should have 2 items)
+        if len(actions_tuple) == 2:
+            actions, confirmation_messages = actions_tuple
+        else:
+            # Handle unexpected return value format
+            actions = actions_tuple[0] if actions_tuple else []
+            confirmation_messages = {}
+        
+        # Convert to list if necessary
+        actions_list = list(actions) if isinstance(actions, tuple) else actions
+        
+        # Add our custom actions
+        actions_list.append(('delete_audio', 'Delete Audio Files and Records'))
+        actions_list.append(('regenerate_audio', 'Regenerate Failed Audio'))
+        
+        # Add confirmation messages
+        confirmation_messages['delete_audio'] = 'Are you sure you want to delete these audio files and records?'
+        confirmation_messages['regenerate_audio'] = 'Are you sure you want to regenerate these audio files?'
+        
+        # Return the expected format
+        return actions_list, confirmation_messages
+    
+    # Implement the action handlers
+    def action_delete_audio(self, ids):
+        return self._delete_audio_action(ids)
+    
+    def action_regenerate_audio(self, ids):
+        return self._regenerate_audio_action(ids)
+
 def init_admin(app):
     """Initialize the admin interface."""
     # Create login template
@@ -470,7 +687,8 @@ def init_admin(app):
     admin.add_view(StoryModelView(Story, db.session, name='Stories'))
     admin.add_view(UserModelView(User, db.session, name='Users'))
     admin.add_view(VoiceModelView(Voice, db.session, name='Voices'))
-    
+    admin.add_view(AudioStoryModelView(AudioStory, db.session, name='Audio Stories'))
+
     # Setup session configuration
     app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(
         seconds=int(os.getenv('SESSION_TIMEOUT', DEFAULT_SESSION_TIMEOUT))

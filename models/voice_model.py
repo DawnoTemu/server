@@ -79,9 +79,10 @@ class VoiceModel:
             
             session = VoiceModel.create_api_session()
             
-            # Use provided voice name or default
-            if not voice_name:
-                voice_name = Config.VOICE_NAME
+            # Set voice name and description
+            if not voice_name:               
+                voice_name = f"{user_id}_MAIN"
+            voice_description = f"Main voice model for user {user_id}"
             
             # Split audio into chunks if needed
             audio_chunks = split_audio_file(file_data, filename)
@@ -96,7 +97,7 @@ class VoiceModel:
             
             # Add other form fields
             files.append(("name", (None, voice_name)))
-            files.append(("description", (None, f"Voice cloned for user {user_id}")))
+            files.append(("description", (None, voice_description)))
             files.append(("remove_background_noise", (None, str(remove_background_noise).lower())))
             
             # Make API request

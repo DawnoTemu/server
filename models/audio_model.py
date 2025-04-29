@@ -1,37 +1,142 @@
 import requests
 from io import BytesIO
 from botocore.exceptions import ClientError
+from enum import Enum
+import logging
+import os
+from datetime import datetime
+
+from database import db
 from utils.s3_client import S3Client
 from config import Config
-import logging
 
 # Configure logger
 logger = logging.getLogger('audio_model')
+
+class AudioStatus(Enum):
+    """Enumeration of possible audio story statuses"""
+    PENDING = "pending"
+    PROCESSING = "processing"
+    READY = "ready"
+    ERROR = "error"
+
+
+class AudioStory(db.Model):
+    """Database model for voice story audio"""
+    __tablename__ = 'audio_stories'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    
+    # Foreign keys
+    story_id = db.Column(db.Integer, db.ForeignKey('stories.id'), nullable=False)
+    voice_id = db.Column(db.Integer, db.ForeignKey('voices.id'), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    
+    # Relationships
+    story = db.relationship('Story', backref=db.backref('audio_stories', lazy=True))
+    voice = db.relationship('Voice', backref=db.backref('audio_stories', lazy=True))
+    user = db.relationship('User', backref=db.backref('audio_stories', lazy=True))
+    
+    # Status
+    status = db.Column(db.String(20), nullable=False, default=AudioStatus.PENDING.value)
+    error_message = db.Column(db.Text, nullable=True)
+    
+    # S3 storage information
+    s3_key = db.Column(db.String(512), nullable=True)
+    duration_seconds = db.Column(db.Float, nullable=True)
+    file_size_bytes = db.Column(db.Integer, nullable=True)
+    
+    # Metadata and tracking
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    def __repr__(self):
+        return f"<AudioStory {self.id}: Story {self.story_id}, Voice {self.voice_id}>"
+    
+    def to_dict(self):
+        """Convert to dictionary for API responses"""
+        voice_name = self.voice.name if self.voice else None
+        story_title = self.story.title if self.story else None
+        
+        return {
+            'id': self.id,
+            'story_id': self.story_id,
+            'story_title': story_title,
+            'voice_id': self.voice_id,
+            'voice_name': voice_name,
+            'user_id': self.user_id,
+            'status': self.status,
+            'error_message': self.error_message,
+            'duration_seconds': self.duration_seconds,
+            'file_size_bytes': self.file_size_bytes,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None
+        }
+
 
 class AudioModel:
     """Model for audio synthesis and storage operations"""
     
     # Audio object key prefix
-    VOICES_PREFIX = "voices/"
+    AUDIO_STORIES_PREFIX = "audio_stories/"
     
     # Content type mapping
     CONTENT_TYPES = {
         "mp3": "audio/mpeg",
         "wav": "audio/wav"
     }
-    
+
     @staticmethod
     def get_object_key(voice_id, story_id, extension="mp3"):
         """Generate consistent S3 object key for voice/story audio"""
-        return f"{AudioModel.VOICES_PREFIX}{voice_id}/{story_id}.{extension}"
+        # Use a new prefix to avoid conflicts with old files
+        return f"{AudioModel.AUDIO_STORIES_PREFIX}{voice_id}/{story_id}.{extension}"
     
     @staticmethod
-    def synthesize_speech(voice_id, text):
+    def find_or_create_audio_record(story_id, voice_id, user_id):
+        """
+        Find or create an audio record in the database
+        
+        Args:
+            story_id: ID of the story
+            voice_id: ID of the voice in our database
+            user_id: ID of the user
+            
+        Returns:
+            AudioStory: Audio story record
+        """
+        try:
+            # Check if a record already exists
+            audio = AudioStory.query.filter_by(story_id=story_id, voice_id=voice_id).first()
+            
+            if audio:
+                return audio
+            
+            # Create a new record
+            audio = AudioStory(
+                story_id=story_id,
+                voice_id=voice_id,
+                user_id=user_id,
+                status=AudioStatus.PENDING.value
+            )
+            
+            db.session.add(audio)
+            db.session.commit()
+            
+            logger.info(f"Created new audio story record: id={audio.id}, story={story_id}, voice={voice_id}")
+            return audio
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"Error creating audio story record: {str(e)}")
+            raise
+    
+    @staticmethod
+    def synthesize_speech(elevenlabs_voice_id, text):
         """
         Synthesize speech using ElevenLabs API
         
         Args:
-            voice_id: ID of the voice to use
+            elevenlabs_voice_id: ElevenLabs voice ID
             text: Text to synthesize
             
         Returns:
@@ -44,7 +149,7 @@ class AudioModel:
             # Use a session with keep-alive for better performance
             with session:
                 response = session.post(
-                    f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream",
+                    f"https://api.elevenlabs.io/v1/text-to-speech/{elevenlabs_voice_id}/stream",
                     json={
                         "text": text,
                         "model_id": "eleven_multilingual_v2",
@@ -65,21 +170,25 @@ class AudioModel:
         except requests.exceptions.RequestException as e:
             logger.error(f"Error synthesizing speech: {str(e)}")
             if hasattr(e, 'response') and e.response is not None:
-                return False, e.response.json()
+                try:
+                    return False, e.response.json().get('detail', str(e))
+                except:
+                    return False, str(e)
             return False, str(e)
         except Exception as e:
             logger.error(f"Unexpected error in synthesize_speech: {str(e)}")
             return False, str(e)
     
     @staticmethod
-    def store_audio(audio_data, voice_id, story_id):
+    def store_audio(audio_data, voice_id, story_id, audio_record):
         """
-        Store audio data in S3 with caching headers
+        Store audio data in S3 and update database record
         
         Args:
             audio_data: BytesIO object containing audio data
-            voice_id: Voice ID
+            voice_id: Voice ID (database voice ID)
             story_id: Story ID
+            audio_record: AudioStory record to update
             
         Returns:
             tuple: (success, message)
@@ -92,47 +201,66 @@ class AudioModel:
             extra_args = {
                 'ContentType': AudioModel.CONTENT_TYPES.get("mp3", "audio/mpeg"),
                 'CacheControl': 'max-age=86400',  # Cache for 24 hours
-                'ContentDisposition': f'attachment; filename="{story_id}.mp3"'
+                'ContentDisposition': f'attachment; filename="{story_id}_{voice_id}.mp3"'
             }
+            
+            # Reset file position
+            audio_data.seek(0)
+            
+            # Get file size for metadata
+            audio_data.seek(0, os.SEEK_END)
+            file_size = audio_data.tell()
+            audio_data.seek(0)
             
             # Use our optimized S3 client
             success = S3Client.upload_fileobj(audio_data, s3_key, extra_args)
             
+            # Update database record
             if success:
+                audio_record.s3_key = s3_key
+                audio_record.file_size_bytes = file_size
+                audio_record.status = AudioStatus.READY.value
+                db.session.commit()
+                logger.info(f"Updated audio record {audio_record.id} with S3 key {s3_key}")
                 return True, "Audio stored successfully"
             else:
+                # Update error status
+                audio_record.status = AudioStatus.ERROR.value
+                audio_record.error_message = "Failed to upload to S3"
+                db.session.commit()
                 return False, "Failed to upload to S3"
                 
         except Exception as e:
             logger.error(f"Error storing audio: {str(e)}")
+            
+            # Update error status
+            audio_record.status = AudioStatus.ERROR.value
+            audio_record.error_message = str(e)
+            db.session.commit()
+            
             return False, str(e)
     
     @staticmethod
     def check_audio_exists(voice_id, story_id):
         """
-        Check if audio exists in S3
+        Check if audio exists in the database
         
         Args:
             voice_id: Voice ID
             story_id: Story ID
             
         Returns:
-            bool: True if audio exists, False otherwise
+            bool: True if audio exists and is ready, False otherwise
         """
         try:
-            s3_key = AudioModel.get_object_key(voice_id, story_id)
+            # Only check the database - ignore any files created by the old system
+            record = AudioStory.query.filter_by(
+                voice_id=voice_id, 
+                story_id=story_id, 
+                status=AudioStatus.READY.value
+            ).first()
             
-            # Use our optimized S3 client
-            s3_client = S3Client.get_client()
-            
-            s3_client.head_object(
-                Bucket=S3Client.get_bucket_name(),
-                Key=s3_key
-            )
-            
-            return True
-        except ClientError:
-            return False
+            return record is not None and record.s3_key is not None
         except Exception as e:
             logger.error(f"Error checking if audio exists: {str(e)}")
             return False
@@ -140,7 +268,7 @@ class AudioModel:
     @staticmethod
     def get_audio(voice_id, story_id, range_header=None):
         """
-        Get audio data from S3
+        Get audio data from S3 for a database record
         
         Args:
             voice_id: Voice ID
@@ -151,15 +279,23 @@ class AudioModel:
             tuple: (success, data, extra_info)
         """
         try:
-            s3_key = AudioModel.get_object_key(voice_id, story_id)
+            # Find the database record
+            record = AudioStory.query.filter_by(
+                voice_id=voice_id, 
+                story_id=story_id, 
+                status=AudioStatus.READY.value
+            ).first()
             
-            # Use optimized S3 client
+            if not record or not record.s3_key:
+                return False, "Audio not found or not ready", None
+            
+            # Get the object from S3
             s3_client = S3Client.get_client()
             
             # Prepare get_object params
             get_params = {
                 'Bucket': S3Client.get_bucket_name(),
-                'Key': s3_key
+                'Key': record.s3_key
             }
             
             # Add range header if provided
@@ -187,7 +323,7 @@ class AudioModel:
         except ClientError as e:
             error_code = e.response['Error']['Code']
             if error_code == 'NoSuchKey':
-                return False, "Audio not found", None
+                return False, "Audio file not found in storage", None
             return False, f"S3 error: {error_code}", None
         except Exception as e:
             logger.error(f"Error retrieving audio: {str(e)}")
@@ -207,21 +343,25 @@ class AudioModel:
             tuple: (success, url/error message)
         """
         try:
-            # First check if the audio file exists
-            if not AudioModel.check_audio_exists(voice_id, story_id):
-                return False, "Audio file does not exist"
-                
-            # Generate presigned URL
-            s3_key = AudioModel.get_object_key(voice_id, story_id)
+            # Find the database record
+            record = AudioStory.query.filter_by(
+                voice_id=voice_id, 
+                story_id=story_id, 
+                status=AudioStatus.READY.value
+            ).first()
             
+            if not record or not record.s3_key:
+                return False, "Audio not found or not ready"
+            
+            # Generate presigned URL
             response_headers = {
                 'ResponseContentType': 'audio/mpeg',
-                'ResponseContentDisposition': f'attachment; filename="{story_id}.mp3"'
+                'ResponseContentDisposition': f'attachment; filename="{story_id}_{voice_id}.mp3"'
             }
             
             # Use our optimized S3 client
             presigned_url = S3Client.generate_presigned_url(
-                s3_key, 
+                record.s3_key, 
                 expires_in, 
                 response_headers
             )
@@ -238,41 +378,120 @@ class AudioModel:
         Delete all audio files for a voice
         
         Args:
-            voice_id: Voice ID
+            voice_id: Voice ID (database voice ID)
             
         Returns:
             tuple: (success, message)
         """
         try:
-            s3_client = S3Client.get_client()
+            # Get all audio records for this voice
+            records = AudioStory.query.filter_by(voice_id=voice_id).all()
             
-            # List objects to delete
-            paginator = s3_client.get_paginator('list_objects_v2')
+            if not records:
+                return True, "No audio records found for this voice"
             
-            # Collect all keys to delete
+            # Collect S3 keys to delete
             keys_to_delete = []
-            prefix = f"{AudioModel.VOICES_PREFIX}{voice_id}/"
-            
-            for page in paginator.paginate(
-                Bucket=S3Client.get_bucket_name(), 
-                Prefix=prefix
-            ):
-                if 'Contents' in page:
-                    keys_to_delete.extend([obj['Key'] for obj in page['Contents']])
-            
-            # If no objects found, return success
-            if not keys_to_delete:
-                return True, "No audio files found to delete"
-            
-            # Use our optimized batch delete
-            success, deleted_count, errors = S3Client.delete_objects(keys_to_delete)
-            
-            if success:
-                return True, f"Deleted {deleted_count} audio files"
-            else:
-                logger.warning(f"Partial success deleting audio files: {deleted_count} deleted with {len(errors)} errors")
-                return False, f"Failed to delete some audio files: {errors[:3]}"
+            for record in records:
+                if record.s3_key:
+                    keys_to_delete.append(record.s3_key)
                 
+                # Delete the database record
+                db.session.delete(record)
+            
+            # Commit database changes
+            db.session.commit()
+            
+            # Delete S3 files if any
+            if keys_to_delete:
+                success, deleted_count, errors = S3Client.delete_objects(keys_to_delete)
+                
+                if not success:
+                    logger.warning(f"Some S3 files couldn't be deleted: {errors}")
+                    return True, f"Deleted database records but had issues with S3: {errors}"
+                
+                return True, f"Deleted {len(records)} audio records and {deleted_count} S3 files"
+            
+            return True, f"Deleted {len(records)} audio records (no S3 files)"
+            
         except Exception as e:
+            db.session.rollback()
             logger.error(f"Error deleting audio files: {str(e)}")
             return False, str(e)
+    
+    @staticmethod
+    def synthesize_audio(voice_id, story_id, user_id, text):
+        """
+        Synthesize audio for a story with a voice and store in database
+        
+        Args:
+            voice_id: ID of the voice in the database
+            story_id: ID of the story
+            user_id: ID of the user
+            text: Text to synthesize
+            
+        Returns:
+            tuple: (success, data/error message)
+        """
+        try:
+            # Get the ElevenLabs voice ID
+            from models.voice_model import Voice
+            voice = Voice.query.get(voice_id)
+            
+            if not voice:
+                return False, "Voice not found"
+                
+            elevenlabs_voice_id = voice.elevenlabs_voice_id
+            
+            # Find or create audio record
+            audio_record = AudioModel.find_or_create_audio_record(story_id, voice_id, user_id)
+            
+            # Check if audio already exists and is ready
+            if audio_record.status == AudioStatus.READY.value and audio_record.s3_key:
+                # Generate a presigned URL
+                success, url = AudioModel.get_audio_presigned_url(voice_id, story_id)
+                
+                if success:
+                    return True, {"status": "success", "url": url}
+                else:
+                    return False, {"error": "Failed to generate URL", "details": url}
+            
+            # Update status to processing
+            audio_record.status = AudioStatus.PROCESSING.value
+            db.session.commit()
+            
+            # Synthesize speech
+            synth_success, audio_data = AudioModel.synthesize_speech(elevenlabs_voice_id, text)
+            
+            if not synth_success:
+                # Update error status
+                audio_record.status = AudioStatus.ERROR.value
+                audio_record.error_message = str(audio_data)
+                db.session.commit()
+                
+                return False, {"error": "Synthesis failed", "details": str(audio_data)}
+            
+            # Store audio
+            store_success, message = AudioModel.store_audio(audio_data, voice_id, story_id, audio_record)
+            
+            if not store_success:
+                return False, {"error": "Storage failed", "details": message}
+            
+            # Generate a presigned URL
+            success, url = AudioModel.get_audio_presigned_url(voice_id, story_id)
+            
+            if not success:
+                return False, {"error": "Failed to generate URL", "details": url}
+            
+            return True, {"status": "success", "url": url}
+            
+        except Exception as e:
+            logger.error(f"Error in synthesize_audio: {str(e)}")
+            
+            # Update error status if record exists
+            if 'audio_record' in locals() and audio_record:
+                audio_record.status = AudioStatus.ERROR.value
+                audio_record.error_message = str(e)
+                db.session.commit()
+                
+            return False, {"error": str(e)}
