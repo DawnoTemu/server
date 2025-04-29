@@ -311,7 +311,7 @@ def create_login_template(app):
 {% endblock %}"""
             )
 
-class UserModelView(ModelView):
+class UserModelView(SecureModelView):
     """Admin view for managing users"""
     
     column_list = ('id', 'email', 'email_confirmed', 'is_active', 'last_login', 'created_at')
@@ -337,7 +337,7 @@ class UserModelView(ModelView):
     column_formatters = {
         'last_login': lambda v, c, m, p: m.last_login.strftime('%Y-%m-%d %H:%M:%S') if m.last_login else 'Never'
     }
-    
+
     # Create a form with password field for user creation
     def create_form(self):
         form = super(UserModelView, self).create_form()
@@ -377,7 +377,7 @@ class UserModelView(ModelView):
             return False
 
 
-class VoiceModelView(ModelView):
+class VoiceModelView(SecureModelView):
     """Admin view for managing voices"""
     
     column_list = ('id', 'name', 'user', 'elevenlabs_voice_id', 'created_at')
@@ -400,16 +400,6 @@ class VoiceModelView(ModelView):
     
     create_modal = True
     edit_modal = True
-    
-    def is_accessible(self):
-        # Import here to avoid circular imports
-        from admin import is_authenticated
-        return is_authenticated()
-    
-    def inaccessible_callback(self, name, **kwargs):
-        # Import here to avoid circular imports
-        from flask import redirect, url_for
-        return redirect(url_for('admin.login_view'))
     
     # Add custom actions
     def _delete_voice_action(self, ids):

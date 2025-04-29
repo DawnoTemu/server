@@ -51,7 +51,7 @@ class AudioModel:
                         "voice_settings": {
                             "stability": 0.65,
                             "similarity_boost": 0.9,
-                            "style": 0.0,
+                            "style": 0.1,
                             "use_speaker_boost": True,
                             "speed": 1.0
                         }
