@@ -22,3 +22,4 @@ if __name__ == '__main__':
     # This is just for running via 'python celery_worker.py'
     # Normally you would use the celery command line as shown above
     celery_app.start()
+    

@@ -145,12 +145,19 @@ def clone_voice_task(self, voice_id, file_path, filename, user_id, voice_name=No
     except Exception as e:
         logger.exception(f"Exception in clone_voice_task: {e}")
         raise  # Let the task retry mechanism handle it
-    
+        
     finally:
-        # Clean up temp file
+        # Clean up temp file and directory
         try:
+            # First remove the file
             if os.path.exists(file_path):
                 os.remove(file_path)
                 logger.info(f"Cleaned up temporary file: {file_path}")
+            
+            # Then remove the directory
+            temp_dir = os.path.dirname(file_path)
+            if os.path.exists(temp_dir):
+                os.rmdir(temp_dir)
+                logger.info(f"Cleaned up temporary directory: {temp_dir}")
         except Exception as e:
-            logger.error(f"Failed to clean up temporary file {file_path}: {e}")
+            logger.error(f"Failed to clean up temporary resources: {e}")

@@ -47,8 +47,8 @@ def create_app(testing=False):
     app.config['FRONTEND_URL'] = os.getenv('FRONTEND_URL', 'http://localhost:3000')
     
     # Celery configuration
-    app.config['CELERY_BROKER_URL'] = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
-    app.config['CELERY_RESULT_BACKEND'] = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+    app.config['broker_url'] = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+    app.config['result_backend'] = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
     
     # Now validate configuration after app is initialized
     if not testing:
