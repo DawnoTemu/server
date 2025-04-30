@@ -3,6 +3,8 @@ from io import BytesIO
 import logging
 import os
 import sys
+import uuid
+import tempfile
 
 from config import Config
 from database import db
@@ -11,15 +13,26 @@ from datetime import datetime
 # Configure logger
 logger = logging.getLogger('voice_model_service')
 
+# Voice status constants (enum-like)
+class VoiceStatus:
+    PENDING = "pending"
+    PROCESSING = "processing"
+    READY = "ready"
+    ERROR = "error"
+
 class Voice(db.Model):
     """Database model for voice recordings"""
     __tablename__ = 'voices'
     
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(255), nullable=False)
-    elevenlabs_voice_id = db.Column(db.String(255), nullable=False, unique=True)
+    elevenlabs_voice_id = db.Column(db.String(255), nullable=True, unique=True)  # Now nullable while pending
     s3_sample_key = db.Column(db.String(512), nullable=True)  # S3 key for the original sample
     sample_filename = db.Column(db.String(255), nullable=True)
+    
+    # Status tracking for async processing
+    status = db.Column(db.String(20), nullable=False, default=VoiceStatus.PENDING)
+    error_message = db.Column(db.Text, nullable=True)
     
     # Foreign key to user table
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
@@ -40,6 +53,7 @@ class Voice(db.Model):
             'name': self.name,
             'elevenlabs_voice_id': self.elevenlabs_voice_id,
             'user_id': self.user_id,
+            'status': self.status,  # Include status in API response
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
         }
@@ -58,16 +72,84 @@ class VoiceModel:
         return session
     
     @staticmethod
-    def clone_voice(file_data, filename, user_id, voice_name=None, remove_background_noise=False):
+    def clone_voice(file_data, filename, user_id, voice_name=None):
         """
-        Clone a voice using ElevenLabs API and store in database
+        Create a voice record and queue an async job for voice cloning
         
         Args:
             file_data: File-like object containing audio data
             filename: Original filename
             user_id: ID of the user who owns this voice
             voice_name: Name for the voice (defaults to Config.VOICE_NAME)
-            remove_background_noise: Whether to remove background noise (default: False)
+            
+        Returns:
+            tuple: (success, data/error message)
+        """
+        try:
+            # Set voice name and description
+            if not voice_name:               
+                voice_name = f"{user_id}_MAIN"
+            
+            # Create a voice record with pending status
+            new_voice = Voice(
+                name=voice_name,
+                user_id=user_id,
+                status=VoiceStatus.PENDING,
+                elevenlabs_voice_id=None  # Will be set when async task completes
+            )
+            
+            db.session.add(new_voice)
+            db.session.commit()
+            
+            # Save file data temporarily (Celery can't serialize file objects)
+            temp_dir = tempfile.mkdtemp(prefix="storyvoice_")
+            temp_path = os.path.join(temp_dir, f"voice_{new_voice.id}_{uuid.uuid4()}.tmp")
+            
+            # Reset file position and save
+            file_data.seek(0)
+            with open(temp_path, 'wb') as f:
+                f.write(file_data.read())
+            
+            # Queue async task
+            from tasks.voice_tasks import clone_voice_task
+            task = clone_voice_task.delay(new_voice.id, temp_path, filename, user_id, voice_name)
+            
+            logger.info(f"Queued voice cloning task {task.id} for voice ID {new_voice.id}")
+            
+            # Return voice ID and status
+            return True, {
+                "id": new_voice.id,
+                "name": voice_name,
+                "status": VoiceStatus.PENDING
+            }
+                
+        except Exception as e:
+            logger.error(f"Exception in clone_voice: {str(e)}")
+            
+            # If we have created a voice record but failed to queue the task,
+            # update its status to ERROR
+            if 'new_voice' in locals() and new_voice.id:
+                try:
+                    new_voice.status = VoiceStatus.ERROR
+                    new_voice.error_message = str(e)
+                    db.session.commit()
+                except:
+                    pass  # Don't let this cause another exception
+                    
+            return False, str(e)
+    
+    @staticmethod
+    def _clone_voice_api(file_data, filename, user_id, voice_name=None, remove_background_noise=False):
+        """
+        Internal method to handle the actual API call to ElevenLabs for voice cloning
+        This is called by the async task, not directly by controllers
+        
+        Args:
+            file_data: File-like object containing audio data
+            filename: Original filename
+            user_id: ID of the user who owns this voice
+            voice_name: Name for the voice
+            remove_background_noise: Whether to remove background noise
             
         Returns:
             tuple: (success, data/error message)
@@ -115,47 +197,10 @@ class VoiceModel:
                     logger.error("ElevenLabs API did not return a voice_id")
                     return False, "Voice cloning failed: No voice ID returned"
                 
-                # Store original sample in S3
-                s3_sample_key = None
-                try:
-                    # Reset the first chunk's file position
-                    first_chunk_filename = audio_chunks[0][0]
-                    first_chunk_file = audio_chunks[0][1]
-                    first_chunk_file.seek(0)
-                    
-                    # Generate S3 key for the sample
-                    s3_sample_key = f"{VoiceModel.VOICE_SAMPLES_PREFIX}{user_id}/{elevenlabs_voice_id}.mp3"
-                    
-                    # Upload to S3
-                    extra_args = {
-                        'ContentType': 'audio/mpeg',
-                        'CacheControl': 'max-age=31536000',  # Cache for 1 year
-                    }
-                    
-                    S3Client.upload_fileobj(first_chunk_file, s3_sample_key, extra_args)
-                    logger.info(f"Stored voice sample in S3: {s3_sample_key}")
-                except Exception as e:
-                    logger.error(f"Failed to store voice sample in S3: {str(e)}")
-                    # Continue even if S3 storage fails
-                
-                # Create and save a new Voice record in the database
-                new_voice = Voice(
-                    name=voice_name,
-                    elevenlabs_voice_id=elevenlabs_voice_id,
-                    user_id=user_id,
-                    s3_sample_key=s3_sample_key,
-                    sample_filename=first_chunk_filename if audio_chunks else filename
-                )
-                
-                db.session.add(new_voice)
-                db.session.commit()
-                
-                logger.info(f"Voice cloned and stored in database: {new_voice}")
-                
+                # Return successful response with voice data
                 return True, {
                     "voice_id": elevenlabs_voice_id,
-                    "name": voice_name,
-                    "id": new_voice.id
+                    "name": voice_name
                 }
             else:
                 error_detail = "Cloning failed"
@@ -167,7 +212,7 @@ class VoiceModel:
                 return False, error_detail
                 
         except Exception as e:
-            logger.error(f"Exception in clone_voice: {str(e)}")
+            logger.error(f"Exception in _clone_voice_api: {str(e)}")
             return False, str(e)
     
     @staticmethod
@@ -188,28 +233,31 @@ class VoiceModel:
             if not voice:
                 return False, "Voice not found in database"
             
-            # Get the ElevenLabs voice ID
+            # Check if the voice has an ElevenLabs ID (it might be in pending state)
             elevenlabs_voice_id = voice.elevenlabs_voice_id
-            
-            # Delete the voice from ElevenLabs
-            session = VoiceModel.create_api_session()
             api_success = True
-            api_message = "Voice deleted from ElevenLabs"
+            api_message = "Voice was still pending, no ElevenLabs voice to delete"
             
-            try:
-                # Make API request
-                response = session.delete(
-                    f"https://api.elevenlabs.io/v1/voices/{elevenlabs_voice_id}"
-                )
+            if elevenlabs_voice_id:
+                # Delete the voice from ElevenLabs
+                session = VoiceModel.create_api_session()
                 
-                if response.status_code != 200:
+                try:
+                    # Make API request
+                    response = session.delete(
+                        f"https://api.elevenlabs.io/v1/voices/{elevenlabs_voice_id}"
+                    )
+                    
+                    if response.status_code != 200:
+                        api_success = False
+                        api_message = response.json().get("detail", "Deletion failed")
+                        logger.error(f"ElevenLabs API error: {response.status_code} - {api_message}")
+                    else:
+                        api_message = "Voice deleted from ElevenLabs"
+                except Exception as e:
                     api_success = False
-                    api_message = response.json().get("detail", "Deletion failed")
-                    logger.error(f"ElevenLabs API error: {response.status_code} - {api_message}")
-            except Exception as e:
-                api_success = False
-                api_message = str(e)
-                logger.error(f"Exception deleting from ElevenLabs: {str(e)}")
+                    api_message = str(e)
+                    logger.error(f"Exception deleting from ElevenLabs: {str(e)}")
             
             # Delete any S3 samples
             s3_success = True
@@ -300,6 +348,10 @@ class VoiceModel:
             voice = Voice.query.get(voice_id)
             if not voice or not voice.s3_sample_key:
                 return False, "Voice sample not found"
+                
+            # Check if voice is ready
+            if voice.status != VoiceStatus.READY:
+                return False, f"Voice is not ready (status: {voice.status})"
                 
             url = S3Client.generate_presigned_url(
                 voice.s3_sample_key,

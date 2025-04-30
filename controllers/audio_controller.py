@@ -1,6 +1,6 @@
 from models.audio_model import AudioModel, AudioStatus
 from models.story_model import StoryModel
-from models.voice_model import VoiceModel
+from models.voice_model import VoiceModel, Voice, VoiceStatus
 import logging
 
 # Configure logger
@@ -124,6 +124,13 @@ class AudioController:
             
             if not voice:
                 return False, {"error": "Voice not found"}, 404
+            
+            # Check if voice is ready    
+            if voice.status != VoiceStatus.READY:
+                return False, {
+                    "error": f"Voice is not ready (status: {voice.status})",
+                    "status": voice.status
+                }, 400
                 
             user_id = voice.user_id
                 
@@ -138,13 +145,18 @@ class AudioController:
             if not text:
                 return False, {"error": "Story text not found in story"}, 400
                 
-            # Synthesize audio using the database model
+            # Queue audio synthesis job
             success, result = AudioModel.synthesize_audio(voice.id, story_id, user_id, text)
             
             if not success:
                 return False, result, 500
+            
+            # For already generated audio, return 200 OK    
+            if result.get("status") == "ready":
+                return True, result, 200
                 
-            return True, result, 200
+            # For async operations in progress, return 202 Accepted
+            return True, result, 202
             
         except Exception as e:
             logger.error(f"Error synthesizing audio: {str(e)}")

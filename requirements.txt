@@ -14,3 +14,5 @@ wtforms==3.1.2
 pyjwt==2.8.0
 flask-mail==0.9.1
 email-validator==2.1.0.post1
+redis==5.0.1
+celery==5.3.6

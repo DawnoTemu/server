@@ -1,6 +1,10 @@
-from models.voice_model import VoiceModel
+from models.voice_model import VoiceModel, VoiceStatus
 from models.audio_model import AudioModel
 from config import Config
+import logging
+
+# Configure logger
+logger = logging.getLogger('voice_controller')
 
 class VoiceController:
     """Controller for voice-related operations"""
@@ -34,6 +38,9 @@ class VoiceController:
         )
         
         if success:
+            # For async operations, return 202 Accepted
+            if isinstance(result, dict) and result.get('status') == VoiceStatus.PENDING:
+                return True, result, 202
             return True, result, 200
         else:
             return False, {"error": result}, 500
@@ -81,6 +88,7 @@ class VoiceController:
             
             return True, [voice.to_dict() for voice in voices], 200
         except Exception as e:
+            logger.error(f"Error getting voices for user {user_id}: {str(e)}")
             return False, {"error": str(e)}, 500
     
     @staticmethod
@@ -102,6 +110,7 @@ class VoiceController:
                 
             return True, voice.to_dict(), 200
         except Exception as e:
+            logger.error(f"Error getting voice {voice_id}: {str(e)}")
             return False, {"error": str(e)}, 500
     
     @staticmethod

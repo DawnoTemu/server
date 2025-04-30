@@ -422,7 +422,7 @@ class AudioModel:
     @staticmethod
     def synthesize_audio(voice_id, story_id, user_id, text):
         """
-        Synthesize audio for a story with a voice and store in database
+        Create or find an audio record and queue an async job to synthesize audio
         
         Args:
             voice_id: ID of the voice in the database
@@ -434,15 +434,6 @@ class AudioModel:
             tuple: (success, data/error message)
         """
         try:
-            # Get the ElevenLabs voice ID
-            from models.voice_model import Voice
-            voice = Voice.query.get(voice_id)
-            
-            if not voice:
-                return False, "Voice not found"
-                
-            elevenlabs_voice_id = voice.elevenlabs_voice_id
-            
             # Find or create audio record
             audio_record = AudioModel.find_or_create_audio_record(story_id, voice_id, user_id)
             
@@ -452,38 +443,35 @@ class AudioModel:
                 success, url = AudioModel.get_audio_presigned_url(voice_id, story_id)
                 
                 if success:
-                    return True, {"status": "success", "url": url}
+                    return True, {"status": "ready", "url": url, "id": audio_record.id}
                 else:
                     return False, {"error": "Failed to generate URL", "details": url}
             
-            # Update status to processing
-            audio_record.status = AudioStatus.PROCESSING.value
+            # If audio is already processing, just return the current status
+            if audio_record.status == AudioStatus.PROCESSING.value:
+                return True, {
+                    "status": "processing", 
+                    "id": audio_record.id,
+                    "message": "Audio synthesis is already in progress"
+                }
+            
+            # Update status to pending (for new or failed records)
+            audio_record.status = AudioStatus.PENDING.value
+            audio_record.error_message = None
             db.session.commit()
             
-            # Synthesize speech
-            synth_success, audio_data = AudioModel.synthesize_speech(elevenlabs_voice_id, text)
+            # Queue async task
+            from tasks.audio_tasks import synthesize_audio_task
+            task = synthesize_audio_task.delay(audio_record.id, voice_id, story_id, text)
             
-            if not synth_success:
-                # Update error status
-                audio_record.status = AudioStatus.ERROR.value
-                audio_record.error_message = str(audio_data)
-                db.session.commit()
-                
-                return False, {"error": "Synthesis failed", "details": str(audio_data)}
+            logger.info(f"Queued audio synthesis task {task.id} for audio ID {audio_record.id}")
             
-            # Store audio
-            store_success, message = AudioModel.store_audio(audio_data, voice_id, story_id, audio_record)
-            
-            if not store_success:
-                return False, {"error": "Storage failed", "details": message}
-            
-            # Generate a presigned URL
-            success, url = AudioModel.get_audio_presigned_url(voice_id, story_id)
-            
-            if not success:
-                return False, {"error": "Failed to generate URL", "details": url}
-            
-            return True, {"status": "success", "url": url}
+            # Return audio ID and status
+            return True, {
+                "status": "pending", 
+                "id": audio_record.id,
+                "message": "Audio synthesis has been queued"
+            }
             
         except Exception as e:
             logger.error(f"Error in synthesize_audio: {str(e)}")
