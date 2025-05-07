@@ -9,6 +9,7 @@ import tempfile
 from config import Config
 from database import db
 from datetime import datetime
+from utils.elevenlabs_service import ElevenLabsService
 
 # Configure logger
 logger = logging.getLogger('voice_model_service')
@@ -67,9 +68,7 @@ class VoiceModel:
     @staticmethod
     def create_api_session():
         """Create a session for ElevenLabs API with authentication"""
-        session = requests.Session()
-        session.headers.update({"xi-api-key": Config.ELEVENLABS_API_KEY})
-        return session
+        return ElevenLabsService.create_session()
     
     @staticmethod
     def clone_voice(file_data, filename, user_id, voice_name=None):
@@ -159,8 +158,6 @@ class VoiceModel:
             from utils.audio_splitter import split_audio_file
             from utils.s3_client import S3Client
             
-            session = VoiceModel.create_api_session()
-            
             # Set voice name and description
             if not voice_name:               
                 voice_name = f"{user_id}_MAIN"
@@ -170,46 +167,13 @@ class VoiceModel:
             audio_chunks = split_audio_file(file_data, filename)
             logger.info(f"Split audio into {len(audio_chunks)} chunks")
             
-            # Prepare multipart form data
-            files = []
-            
-            # Add each audio chunk as a file with the same field name
-            for chunk_filename, chunk_file, mime_type in audio_chunks:
-                files.append(("files", (chunk_filename, chunk_file, mime_type)))
-            
-            # Add other form fields
-            files.append(("name", (None, voice_name)))
-            files.append(("description", (None, voice_description)))
-            files.append(("remove_background_noise", (None, str(remove_background_noise).lower())))
-            
-            # Make API request
-            response = session.post(
-                "https://api.elevenlabs.io/v1/voices/add",
-                files=files
+            # Use the ElevenLabsService to clone the voice
+            return ElevenLabsService.clone_voice(
+                files=audio_chunks,
+                voice_name=voice_name,
+                voice_description=voice_description,
+                remove_background_noise=remove_background_noise
             )
-            
-            if response.status_code == 200:
-                # Get the ElevenLabs voice ID from response
-                elevenlabs_data = response.json()
-                elevenlabs_voice_id = elevenlabs_data.get("voice_id")
-                
-                if not elevenlabs_voice_id:
-                    logger.error("ElevenLabs API did not return a voice_id")
-                    return False, "Voice cloning failed: No voice ID returned"
-                
-                # Return successful response with voice data
-                return True, {
-                    "voice_id": elevenlabs_voice_id,
-                    "name": voice_name
-                }
-            else:
-                error_detail = "Cloning failed"
-                try:
-                    error_detail = response.json().get("detail", error_detail)
-                except:
-                    pass
-                logger.error(f"ElevenLabs API error: {response.status_code} - {error_detail}")
-                return False, error_detail
                 
         except Exception as e:
             logger.error(f"Exception in _clone_voice_api: {str(e)}")
@@ -240,24 +204,7 @@ class VoiceModel:
             
             if elevenlabs_voice_id:
                 # Delete the voice from ElevenLabs
-                session = VoiceModel.create_api_session()
-                
-                try:
-                    # Make API request
-                    response = session.delete(
-                        f"https://api.elevenlabs.io/v1/voices/{elevenlabs_voice_id}"
-                    )
-                    
-                    if response.status_code != 200:
-                        api_success = False
-                        api_message = response.json().get("detail", "Deletion failed")
-                        logger.error(f"ElevenLabs API error: {response.status_code} - {api_message}")
-                    else:
-                        api_message = "Voice deleted from ElevenLabs"
-                except Exception as e:
-                    api_success = False
-                    api_message = str(e)
-                    logger.error(f"Exception deleting from ElevenLabs: {str(e)}")
+                api_success, api_message = ElevenLabsService.delete_voice(elevenlabs_voice_id)
             
             # Delete any S3 samples
             s3_success = True

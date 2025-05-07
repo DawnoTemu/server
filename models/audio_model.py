@@ -9,6 +9,7 @@ from datetime import datetime
 from database import db
 from utils.s3_client import S3Client
 from config import Config
+from utils.elevenlabs_service import ElevenLabsService
 
 # Configure logger
 logger = logging.getLogger('audio_model')
@@ -142,42 +143,7 @@ class AudioModel:
         Returns:
             tuple: (success, audio_data/error message)
         """
-        try:
-            session = requests.Session()
-            session.headers.update({"xi-api-key": Config.ELEVENLABS_API_KEY})
-            
-            # Use a session with keep-alive for better performance
-            with session:
-                response = session.post(
-                    f"https://api.elevenlabs.io/v1/text-to-speech/{elevenlabs_voice_id}/stream",
-                    json={
-                        "text": text,
-                        "model_id": "eleven_multilingual_v2",
-                        "voice_settings": {
-                            "stability": 0.65,
-                            "similarity_boost": 0.9,
-                            "style": 0.1,
-                            "use_speaker_boost": True,
-                            "speed": 1.0
-                        }
-                    },
-                    headers={"Accept": "audio/mpeg"}
-                )
-                
-                response.raise_for_status()
-                return True, BytesIO(response.content)
-            
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error synthesizing speech: {str(e)}")
-            if hasattr(e, 'response') and e.response is not None:
-                try:
-                    return False, e.response.json().get('detail', str(e))
-                except:
-                    return False, str(e)
-            return False, str(e)
-        except Exception as e:
-            logger.error(f"Unexpected error in synthesize_speech: {str(e)}")
-            return False, str(e)
+        return ElevenLabsService.synthesize_speech(elevenlabs_voice_id, text)
     
     @staticmethod
     def store_audio(audio_data, voice_id, story_id, audio_record):

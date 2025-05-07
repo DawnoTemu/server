@@ -133,6 +133,6 @@ def mock_elevenlabs_session():
     mock_delete_response.json.return_value = {"status": "success"}
     mock_session.delete.return_value = mock_delete_response
     
-    # Patch the function that creates the session
-    with patch('requests.Session', return_value=mock_session):
+    # Patch the ElevenLabsService create_session method
+    with patch('utils.elevenlabs_service.ElevenLabsService.create_session', return_value=mock_session):
         yield mock_session
