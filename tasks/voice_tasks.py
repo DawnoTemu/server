@@ -5,6 +5,7 @@ This module contains Celery tasks for processing voice cloning operations asynch
 
 import os
 import logging
+import sentry_sdk
 from io import BytesIO
 from celery import Task
 from tasks import celery_app
@@ -32,6 +33,8 @@ class VoiceTask(Task):
     def on_failure(self, exc, task_id, args, kwargs, einfo):
         """Handle task failure by updating voice record status"""
         logger.error(f"Task {task_id} failed: {exc}")
+        # Capture the exception in Sentry
+        sentry_sdk.capture_exception(exc)
         with self.flask_app.app_context():
             try:
                 if args and args[0]:  # First argument should be voice_id

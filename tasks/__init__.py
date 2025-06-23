@@ -1,6 +1,21 @@
 import os
+import sentry_sdk
+from sentry_sdk.integrations.celery import CeleryIntegration
 from celery import Celery
 import logging
+from config import Config
+
+# Initialize Sentry SDK for Celery tasks
+if Config.SENTRY_DSN:
+    sentry_sdk.init(
+        dsn=Config.SENTRY_DSN,
+        send_default_pii=True,
+        traces_sample_rate=1.0,
+        integrations=[CeleryIntegration()],
+    )
+    logging.info("Sentry SDK initialized successfully for Celery tasks")
+else:
+    logging.warning("SENTRY_DSN not found in environment variables. Sentry monitoring is disabled for Celery tasks.")
 
 # Configure logger
 logger = logging.getLogger('celery_tasks')
