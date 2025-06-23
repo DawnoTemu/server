@@ -1,4 +1,4 @@
-from flask import request, jsonify
+from flask import request, jsonify, render_template
 from controllers.auth_controller import AuthController
 from utils.auth_middleware import token_required
 from routes import auth_bp
@@ -77,7 +77,11 @@ def confirm_email(token):
     """Confirm a user's email address using a token"""
     success, result, status_code = AuthController.confirm_email(token)
     
-    return jsonify(result), status_code
+    if success:
+        return render_template('auth/email_confirmed.html')
+    else:
+        error_message = result.get('error', 'Wystąpił nieznany błąd.')
+        return render_template('auth/email_confirmation_error.html', error_message=error_message), status_code
 
 # POST /auth/resend-confirmation - Resend confirmation email
 @auth_bp.route('/resend-confirmation', methods=['POST'])

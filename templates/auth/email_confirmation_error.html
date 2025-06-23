@@ -1,0 +1,10 @@
+{% extends "layout.html" %}
+
+{% block title %}Błąd Potwierdzenia Email - DawnoTemu{% endblock %}
+
+{% block content %}
+    <h1>Wystąpił błąd</h1>
+    <p>{{ error_message or 'Nie mogliśmy zweryfikować Twojego adresu email. Link mógł wygasnąć lub jest nieprawidłowy.' }}</p>
+    <p>Jeśli problem będzie się powtarzał, skontaktuj się z naszym wsparciem.</p>
+    {# TODO: Add a link to the support page or contact info #}
+{% endblock %} 
