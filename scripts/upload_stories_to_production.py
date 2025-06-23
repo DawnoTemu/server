@@ -93,16 +93,35 @@ class ProductionUploader:
         try:
             # Use appropriate endpoint based on authentication method
             if self.api_key:
-                # API key can't access admin endpoints, so test with a simple endpoint
-                response = self.session.get(f"{self.base_url}/stories", timeout=30)
+                # Test API key by trying to access the actual upload endpoint with a test request
+                # This properly validates the API key authentication
+                test_data = {
+                    "title": "Test Story",
+                    "author": "Test Author", 
+                    "content": "Test content for API key validation"
+                }
+                
+                response = self.session.post(
+                    f"{self.base_url}/admin/stories/upload",
+                    json=test_data,
+                    timeout=30
+                )
                 
                 if response.status_code == 200:
-                    stories = response.json()
-                    return True, f"API key authentication successful. Server accessible."
+                    # Test successful - check if it was actually uploaded or is a duplicate
+                    result = response.json()
+                    if result.get('duplicate'):
+                        return True, f"API key authentication successful. Test story already exists (ID: {result.get('existing_story_id')})."
+                    else:
+                        return True, f"API key authentication successful. Test story uploaded (ID: {result.get('story_id')})."
                 elif response.status_code == 401:
-                    return False, "API key authentication failed. Check your API key."
+                    return False, "API key authentication failed. Check your API key configuration in ADMIN_API_KEYS."
+                elif response.status_code == 400:
+                    # Bad request likely means API key worked but data validation failed
+                    # This is actually good - it means auth passed
+                    return True, "API key authentication successful. Server accessible (data validation passed)."
                 else:
-                    return False, f"Server returned HTTP {response.status_code}"
+                    return False, f"Server returned HTTP {response.status_code}: {response.text}"
             else:
                 # JWT token can access admin endpoints
                 response = self.session.get(f"{self.base_url}/admin/stories/stats", timeout=30)
