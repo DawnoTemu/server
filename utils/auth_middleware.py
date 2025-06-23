@@ -1,5 +1,6 @@
 from functools import wraps
 import jwt
+import os
 from flask import request, jsonify, current_app
 from models.user_model import UserModel
 
@@ -160,8 +161,9 @@ def api_key_required(f):
         if not api_key:
             return jsonify({"error": "API key is required"}), 401
         
-        # Validate API key against configured admin API keys
-        valid_api_keys = current_app.config.get('ADMIN_API_KEYS', [])
+        # Directly read from environment variables for robustness, bypassing app config.
+        admin_keys_str = os.getenv('ADMIN_API_KEYS', '')
+        valid_api_keys = [key.strip() for key in admin_keys_str.split(',')] if admin_keys_str else []
         
         if not valid_api_keys or api_key not in valid_api_keys:
             return jsonify({"error": "Invalid API key"}), 401
