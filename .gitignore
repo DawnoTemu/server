@@ -99,3 +99,8 @@ instance/
 /temp_audio/
 /voice_samples/
 /story_cache/
+
+# Stories backup and export files
+stories_backup/
+*_stories_backup/
+*.stories_export/

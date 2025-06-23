@@ -14,6 +14,7 @@ class User(db.Model):
     password_hash = db.Column(db.String(255), nullable=False)
     email_confirmed = db.Column(db.Boolean, default=False)
     is_active = db.Column(db.Boolean, default=False)
+    is_admin = db.Column(db.Boolean, default=False)
     last_login = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -36,6 +37,7 @@ class User(db.Model):
             'email': self.email,
             'email_confirmed': self.email_confirmed,
             'is_active': self.is_active,
+            'is_admin': self.is_admin,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'last_login': self.last_login.isoformat() if self.last_login else None
         }
@@ -51,6 +53,21 @@ class User(db.Model):
         """Generate password reset token valid for 1 hour"""
         return self._generate_token(
             {'reset_password': self.id, 'type': 'reset_password'}, 
+            expires_in
+        )
+    
+    def get_admin_token(self, expires_in=3600):
+        """Generate admin token with elevated privileges (1 hour expiry)"""
+        if not self.is_admin:
+            return None
+            
+        return self._generate_token(
+            {
+                'sub': self.id,
+                'type': 'admin_access',
+                'admin': True,
+                'email': self.email
+            }, 
             expires_in
         )
     
@@ -106,18 +123,19 @@ class UserModel:
         return User.query.filter_by(email=email).first()
     
     @staticmethod
-    def create_user(email, password):
+    def create_user(email, password, is_admin=False):
         """
         Create a new user
         
         Args:
             email: User's email address
             password: Plaintext password (will be hashed)
+            is_admin: Whether user should have admin privileges
             
         Returns:
             User: Newly created user object
         """
-        user = User(email=email)
+        user = User(email=email, is_admin=is_admin)
         user.set_password(password)
         
         # Add to database
@@ -212,6 +230,44 @@ class UserModel:
         return True
     
     @staticmethod
+    def promote_to_admin(user_id):
+        """
+        Promote a user to admin status
+        
+        Args:
+            user_id: ID of the user
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        user = UserModel.get_by_id(user_id)
+        if not user:
+            return False
+            
+        user.is_admin = True
+        db.session.commit()
+        return True
+    
+    @staticmethod
+    def revoke_admin(user_id):
+        """
+        Revoke admin status from a user
+        
+        Args:
+            user_id: ID of the user
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        user = UserModel.get_by_id(user_id)
+        if not user:
+            return False
+            
+        user.is_admin = False
+        db.session.commit()
+        return True
+    
+    @staticmethod
     def get_all_users():
         """
         Get all users (for admin purposes)
@@ -230,3 +286,13 @@ class UserModel:
             list: List of inactive User objects
         """
         return User.query.filter_by(is_active=False).all()
+    
+    @staticmethod
+    def get_admin_users():
+        """
+        Get all admin users
+        
+        Returns:
+            list: List of admin User objects
+        """
+        return User.query.filter_by(is_admin=True).all()

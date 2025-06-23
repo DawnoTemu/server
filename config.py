@@ -65,6 +65,14 @@ class Config:
     # Voice service selection ("elevenlabs" or "cartesia")
     PREFERRED_VOICE_SERVICE = os.getenv("PREFERRED_VOICE_SERVICE", "elevenlabs").lower()
     
+    # Security configuration
+    SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key-change-in-production")
+    
+    # Admin API Keys for production operations (comma-separated list)
+    ADMIN_API_KEYS = []
+    if os.getenv("ADMIN_API_KEYS"):
+        ADMIN_API_KEYS = [key.strip() for key in os.getenv("ADMIN_API_KEYS").split(",")]
+    
     # File paths and storage
     UPLOAD_FOLDER = Path("uploads")
     STORIES_DIR = Path("stories")
