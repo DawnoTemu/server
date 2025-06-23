@@ -346,6 +346,7 @@ heroku config:set RESEND_FROM_EMAIL=no-reply@dawnotemu.app
 heroku config:set FRONTEND_URL=https://dawnotemu.app
 heroku config:set SECRET_KEY=your_production_secret_key
 heroku config:set PREFERRED_VOICE_SERVICE=cartesia
+heroku config:set SENTRY_DSN=your_sentry_dsn
 ```
 
 4. **Deploy:**

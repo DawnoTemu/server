@@ -1,4 +1,6 @@
 # app.py
+import sentry_sdk
+from sentry_sdk.integrations.flask import FlaskIntegration
 from flask import Flask
 import os
 import logging
@@ -10,6 +12,23 @@ from admin import init_admin  # Import only once
 from utils.s3_client import S3Client
 from utils.email_service import EmailService
 from tasks import celery_app, init_app
+
+# Initialize Sentry SDK before Flask app
+if Config.SENTRY_DSN:
+    sentry_sdk.init(
+        dsn=Config.SENTRY_DSN,
+        # Add data like request headers and IP for users,
+        # see https://docs.sentry.io/platforms/python/data-management/data-collected/ for more info
+        send_default_pii=True,
+        # Set traces sample rate to 1.0 to capture 100% of transactions for performance monitoring
+        # We recommend adjusting this value in production
+        traces_sample_rate=1.0,
+        # Enable Flask integration
+        integrations=[FlaskIntegration()],
+    )
+    logging.info("Sentry SDK initialized successfully")
+else:
+    logging.warning("SENTRY_DSN not found in environment variables. Sentry monitoring is disabled.")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -87,6 +106,13 @@ def create_app(testing=False):
     
     # Register blueprints
     register_blueprints(app)
+    
+    # Add a test route to verify Sentry installation
+    @app.route("/test-sentry")
+    def test_sentry():
+        """Test route to verify Sentry installation"""
+        1/0  # raises an error
+        return "<p>This should not be reached</p>"
     
     return app
 
