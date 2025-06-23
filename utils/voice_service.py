@@ -91,8 +91,20 @@ class VoiceService:
         
         try:
             if service == VoiceService.ELEVENLABS:
-                # ElevenLabs takes the raw file object
-                return ElevenLabsService.clone_voice(file_data, filename, user_id, voice_name)
+                # ElevenLabs expects files as a list of tuples, voice_name, voice_description
+                from utils.audio_splitter import split_audio_file
+                
+                # Split audio into chunks if needed
+                audio_chunks = split_audio_file(file_data, filename)
+                
+                # Set voice description
+                voice_description = f"Voice for user {user_id}"
+                
+                return ElevenLabsService.clone_voice(
+                    files=audio_chunks,
+                    voice_name=voice_name or f"{user_id}_MAIN",
+                    voice_description=voice_description
+                )
             elif service == VoiceService.CARTESIA:
                 # Cartesia takes a list of tuples for files
                 # Reset file position to beginning

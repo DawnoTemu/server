@@ -51,6 +51,10 @@ def token_required(f):
             if not current_user.is_active:
                 return jsonify({"error": "User account is inactive"}), 403
                 
+            # Check if email is confirmed
+            if not current_user.email_confirmed:
+                return jsonify({"error": "Please confirm your email address before accessing this resource"}), 403
+                
         except jwt.ExpiredSignatureError:
             return jsonify({"error": "Token has expired"}), 401
         except jwt.InvalidTokenError:

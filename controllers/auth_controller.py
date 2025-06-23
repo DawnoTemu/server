@@ -66,6 +66,10 @@ class AuthController:
         if not user.is_active:
             return False, {"error": "Account is deactivated. Please contact support."}, 403
             
+        # Check if email is confirmed
+        if not user.email_confirmed:
+            return False, {"error": "Please confirm your email address before logging in. Check your email for the confirmation link."}, 403
+            
         # Update last login time
         UserModel.update_last_login(user.id)
         
@@ -108,6 +112,10 @@ class AuthController:
             
             if not user or not user.is_active:
                 return False, {"error": "Invalid or inactive user"}, 401
+                
+            # Check if email is confirmed
+            if not user.email_confirmed:
+                return False, {"error": "Please confirm your email address before accessing the application."}, 403
                 
             # Generate new access token
             access_token = AuthController.generate_access_token(user)

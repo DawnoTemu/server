@@ -1,6 +1,5 @@
 import logging
 import resend
-from config import Config
 from utils.email_template_helper import EmailTemplateHelper
 
 # Configure logger
@@ -10,9 +9,16 @@ class EmailService:
     """Service for sending emails using Resend API"""
     
     @staticmethod
+    def _get_config():
+        """Lazy import Config to avoid circular imports"""
+        from config import Config
+        return Config
+    
+    @staticmethod
     def init_app(app):
         """Initialize the email service with the Flask app"""
         # Set the Resend API key
+        Config = EmailService._get_config()
         resend.api_key = Config.RESEND_API_KEY
         logger.info("Resend API initialized")
     
@@ -28,6 +34,8 @@ class EmailService:
             html_body: HTML email body (optional)
         """
         try:
+            Config = EmailService._get_config()
+            
             # Prepare email data
             email_data = {
                 "from": Config.RESEND_FROM_EMAIL,
@@ -61,8 +69,10 @@ class EmailService:
             user_email: User's email address
             token: Confirmation token
         """
-        # Build the confirmation URL
-        confirm_url = f"{Config.FRONTEND_URL}/confirm-email/{token}"
+        Config = EmailService._get_config()
+        
+        # Build the confirmation URL - use backend API endpoint
+        confirm_url = f"{Config.BACKEND_URL}/auth/confirm-email/{token}"
         
         subject = "Potwierdź swoje konto DawnoTemu ✨"
         
@@ -119,8 +129,10 @@ class EmailService:
             user_email: User's email address
             token: Password reset token
         """
-        # Build the reset URL
-        reset_url = f"{Config.FRONTEND_URL}/reset-password/{token}"
+        Config = EmailService._get_config()
+        
+        # Build the reset URL - use backend API endpoint
+        reset_url = f"{Config.BACKEND_URL}/auth/reset-password/{token}"
         
         subject = "Resetuj hasło do DawnoTemu 🔐"
         

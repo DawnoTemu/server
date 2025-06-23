@@ -1,7 +1,6 @@
 import logging
 from io import BytesIO
 from cartesia import Cartesia
-from cartesia.core.api_error import ApiError
 from config import Config
 
 # Configure logger
@@ -72,15 +71,17 @@ class CartesiaSDKService:
             else:
                 return False, "No audio files provided"
             
-        except ApiError as e:
-            # Handle specific API errors from Cartesia
-            logger.error(f"Cartesia API error: {e.status_code} - {e.body}")
+        except ValueError as e:
+            # Handle Cartesia API errors (now raised as ValueError)
+            logger.error(f"Cartesia API error: {str(e)}")
             
             # Handle payment required error explicitly
-            if e.status_code == 402:
+            if "Invalid token" in str(e) or "unauthorized" in str(e).lower():
+                return False, f"Authentication error: Please check your Cartesia API key"
+            elif "payment" in str(e).lower() or "billing" in str(e).lower():
                 return False, f"Payment required: Please check your Cartesia account billing status and API limits"
                 
-            return False, f"API error: {e.body}"
+            return False, f"API error: {str(e)}"
             
         except Exception as e:
             logger.error(f"Exception in clone_voice: {str(e)}")
@@ -105,9 +106,9 @@ class CartesiaSDKService:
             
             return True, "Voice deleted from Cartesia"
             
-        except ApiError as e:
-            logger.error(f"Cartesia API error: {e.status_code} - {e.body}")
-            return False, f"API error: {e.body}"
+        except ValueError as e:
+            logger.error(f"Cartesia API error: {str(e)}")
+            return False, f"API error: {str(e)}"
             
         except Exception as e:
             logger.error(f"Exception in delete_voice: {str(e)}")
@@ -185,14 +186,16 @@ class CartesiaSDKService:
                 logger.error("Received empty audio response")
                 return False, "Received empty audio response"
                 
-        except ApiError as e:
-            logger.error(f"Cartesia API error: {e.status_code} - {e.body}")
+        except ValueError as e:
+            logger.error(f"Cartesia API error: {str(e)}")
             
             # Handle payment required error explicitly
-            if e.status_code == 402:
+            if "Invalid token" in str(e) or "unauthorized" in str(e).lower():
+                return False, f"Authentication error: Please check your Cartesia API key"
+            elif "payment" in str(e).lower() or "billing" in str(e).lower():
                 return False, f"Payment required: Please check your Cartesia account billing status and API limits"
                 
-            return False, f"API error: {e.body}"
+            return False, f"API error: {str(e)}"
             
         except Exception as e:
             logger.error(f"Exception in synthesize_speech: {str(e)}")
@@ -214,9 +217,9 @@ class CartesiaSDKService:
             
             return True, voices
             
-        except ApiError as e:
-            logger.error(f"Cartesia API error: {e.status_code} - {e.body}")
-            return False, f"API error: {e.body}"
+        except ValueError as e:
+            logger.error(f"Cartesia API error: {str(e)}")
+            return False, f"API error: {str(e)}"
             
         except Exception as e:
             logger.error(f"Exception in list_voices: {str(e)}")

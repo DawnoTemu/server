@@ -1,188 +1,453 @@
-# StoryVoice: AI Voice-Cloned Bedtime Stories 🎙️✨
+# DawnoTemu: AI-Powered Personalized Bedtime Stories 🎙️✨
 
-**Turn bedtime stories into personalized audio adventures using voice cloning technology**
+**Twój głos opowiada baśnie, zawsze gdy potrzebujesz**
 
-StoryVoice is a web application that allows users to record a short audio sample of their voice and then uses AI to read children's stories in that voice. Perfect for parents who want to create personalized bedtime stories for their children, even when they can't be physically present.
+DawnoTemu is an AI-powered platform that creates personalized bedtime stories using voice cloning technology. Parents can record their voice and have Polish fairy tales narrated in their own voice, creating magical moments even when they can't be physically present.
 
-[![Python](https://img.shields.io/badge/Python-3.10-blue?logo=python)](https://python.org)
+[![Python](https://img.shields.io/badge/Python-3.13-blue?logo=python)](https://python.org)
 [![Flask](https://img.shields.io/badge/Flask-3.0.2-lightgrey?logo=flask)](https://flask.palletsprojects.com/)
+[![Cartesia](https://img.shields.io/badge/Powered%20by-Cartesia-purple)](https://cartesia.ai)
 [![ElevenLabs](https://img.shields.io/badge/Powered%20by-ElevenLabs-orange)](https://elevenlabs.io)
+[![Resend](https://img.shields.io/badge/Email%20by-Resend-green)](https://resend.com)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
-[![Heroku](https://img.shields.io/badge/Deployed%20on-Heroku-79589F?logo=heroku)](https://www.heroku.com)
 
-![StoryVoice Demo](demo-screenshot.png)
+![DawnoTemu Demo](demo-screenshot.png)
 
 ## 🌟 Features
 
-- **Voice Cloning**: Record or upload a 30-second audio sample to create your unique voice profile
-- **AI-Powered Narration**: Generate natural-sounding story narration using ElevenLabs' voice synthesis API
-- **Curated Story Library**: Classic tales and modern stories suitable for children
-- **Interactive Audio Player**: Full playback controls with seek/scrub functionality
-- **User-Friendly Interface**: Clean, intuitive design that works across devices
-- **Progressive Web App (PWA)**: Install as a standalone app on mobile devices
-- **Secure Storage**: Audio files stored in AWS S3 for reliability and scalability
+### Core Functionality
+- **🎤 Voice Cloning**: Record a 1-minute audio sample to create your unique voice profile
+- **🤖 AI-Powered Narration**: Generate natural-sounding Polish story narration using Cartesia and ElevenLabs APIs
+- **📚 Curated Polish Story Library**: Classic Polish fairy tales and bedtime stories
+- **🎵 Interactive Audio Player**: Full playback controls with seek/scrub functionality
+- **📱 Responsive Design**: Beautiful, mobile-first interface with DawnoTemu branding
+- **🔐 User Authentication**: Secure account system with email confirmation
+- **📧 Professional Email System**: Branded emails using Resend API with beautiful templates
 
-## 🛠️ Technology Stack
+### Advanced Features
+- **⚡ Background Processing**: Celery-powered asynchronous voice synthesis
+- **🌐 Multi-Service Support**: Cartesia (primary) and ElevenLabs voice services
+- **☁️ Cloud Storage**: AWS S3 integration for audio file storage
+- **🔄 Voice Quality Comparison**: Built-in testing system for voice quality optimization
+- **👨‍💼 Admin Interface**: Flask-Admin dashboard for content management
+- **🚀 Production Ready**: Comprehensive logging, error handling, and monitoring
 
-### Backend
-- **Python 3.10** - Core programming language
-- **Flask 3.0.2** - Web framework
-- **ElevenLabs API** - Text-to-speech with voice cloning capabilities
+## 🏗️ Architecture
+
+### Backend Stack
+- **Python 3.13** - Core programming language
+- **Flask 3.0.2** - Web framework with blueprints architecture
+- **SQLAlchemy + PostgreSQL** - Database ORM and relational database
+- **Celery + Redis** - Asynchronous task processing
+- **Flask-Admin** - Administrative interface
+- **Flask-Migrate** - Database migrations
+- **Cartesia API** - Primary voice synthesis service
+- **ElevenLabs API** - Secondary voice synthesis service
+- **Resend API** - Email delivery service
 - **AWS S3** - Cloud storage for audio files
 
-### Frontend
-- **HTML5/CSS3** - Markup and styling
+### Frontend Technologies
+- **HTML5/CSS3** - Modern web standards
 - **Tailwind CSS** - Utility-first CSS framework
 - **Vanilla JavaScript** - Client-side interactivity
-- **Progressive Web App (PWA)** - Mobile-friendly installable experience
+- **DawnoTemu Design System** - Custom branded components
 
-### DevOps
+### Infrastructure
 - **Heroku** - Cloud hosting platform
+- **PostgreSQL** - Production database
+- **Redis** - Task queue and caching
+- **AWS S3** - File storage
 - **Gunicorn** - WSGI HTTP Server
-- **Environment Variables** - Configuration management
 
 ## 📋 Prerequisites
 
-- Python 3.10 or higher
+- Python 3.13 or higher
+- PostgreSQL database
+- Redis server
+- Cartesia API key (get one at [cartesia.ai](https://cartesia.ai))
 - ElevenLabs API key (get one at [elevenlabs.io](https://elevenlabs.io))
+- Resend API key (get one at [resend.com](https://resend.com))
 - AWS account with S3 bucket set up
-- AWS credentials with S3 access permissions
 
 ## 🚀 Getting Started
 
-### Environment Setup
+### 1. Environment Setup
 
-1. Clone the repository
+Clone the repository:
 ```bash
-git clone https://github.com/yourusername/storyvoice.git
-cd storyvoice
+git clone https://github.com/yourusername/dawnotemu.git
+cd dawnotemu/server
 ```
 
-2. Create and activate a virtual environment
+Create and activate a virtual environment:
 ```bash
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 ```
 
-3. Install dependencies
+Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
-4. Create a `.env` file in the project root with the following variables:
-```
-ELEVENLABS_API_KEY=your_eleven_labs_api_key
+### 2. Environment Configuration
+
+Create a `.env` file in the server directory:
+```bash
+# Database Configuration
+DATABASE_URL=postgresql+psycopg://username:password@localhost:5432/dawnotemu
+
+# API Keys
+CARTESIA_API_KEY=your_cartesia_api_key
+ELEVENLABS_API_KEY=your_elevenlabs_api_key
+RESEND_API_KEY=your_resend_api_key
+
+# AWS Configuration
 AWS_ACCESS_KEY_ID=your_aws_access_key
 AWS_SECRET_ACCESS_KEY=your_aws_secret_key
-AWS_REGION=your_aws_region
+AWS_REGION=eu-west-1
 S3_BUCKET_NAME=your_s3_bucket_name
+
+# Email Configuration
+RESEND_FROM_EMAIL=no-reply@dawnotemu.app
+FRONTEND_URL=http://localhost:3000
+BACKEND_URL=http://localhost:8000
+
+# Application Configuration
+SECRET_KEY=your_secret_key_here
+FLASK_ENV=development
+FLASK_DEBUG=True
+
+# Celery Configuration
+REDIS_URL=redis://localhost:6379/0
+
+# Voice Service Configuration
+PREFERRED_VOICE_SERVICE=cartesia  # or "elevenlabs"
 ```
 
-### Running Locally
+### 3. Database Setup
 
-Start the Flask development server:
+Initialize the database:
 ```bash
-python app.py
+flask db upgrade
+```
+
+### 4. Running the Application
+
+#### Development Mode
+
+**Terminal 1 - Flask Application:**
+```bash
+flask run --host=0.0.0.0 --port=8000
+```
+
+**Terminal 2 - Celery Worker:**
+```bash
+celery -A celery_worker.celery_app worker --loglevel=info
+```
+
+**Terminal 3 - Redis Server:**
+```bash
+redis-server
 ```
 
 The application will be available at http://localhost:8000
 
-### Deployment to Heroku
+#### Production Mode
 
-1. Create a new Heroku app
 ```bash
-heroku create your-storyvoice-app
-```
+# Start the web server
+gunicorn app:app --bind 0.0.0.0:$PORT
 
-2. Add environment variables to Heroku
-```bash
-heroku config:set ELEVENLABS_API_KEY=your_eleven_labs_api_key
-heroku config:set AWS_ACCESS_KEY_ID=your_aws_access_key
-heroku config:set AWS_SECRET_ACCESS_KEY=your_aws_secret_key
-heroku config:set AWS_REGION=your_aws_region
-heroku config:set S3_BUCKET_NAME=your_s3_bucket_name
-```
-
-3. Deploy to Heroku
-```bash
-git push heroku main
+# Start Celery worker (in separate process/container)
+celery -A celery_worker.celery_app worker --loglevel=info
 ```
 
 ## 📂 Project Structure
 
 ```
-storyvoice/
-├── app.py                 # Main Flask application
-├── static/                # Frontend assets
-│   ├── app.html           # Main application HTML
-│   ├── scripts.js         # Client-side JavaScript
-│   ├── styles.css         # Custom CSS styles
-│   ├── sw.js              # Service Worker for PWA
-│   └── manifest.json      # PWA manifest
-├── stories/               # Story content in JSON format
-│   ├── 1.json             # Hansel and Gretel
-│   ├── 2.json             # Three Little Pigs
-│   └── ...                # Other stories
-├── Procfile               # Heroku deployment configuration
-├── requirements.txt       # Python dependencies
-├── runtime.txt            # Python version specification
-└── README.md              # Project documentation
+dawnotemu/server/
+├── app.py                          # Main Flask application
+├── celery_worker.py               # Celery configuration and tasks
+├── config.py                      # Application configuration
+├── database.py                    # Database initialization
+├── admin.py                       # Flask-Admin configuration
+├── requirements.txt               # Python dependencies
+├── runtime.txt                    # Python version for Heroku
+├── Procfile                       # Heroku deployment configuration
+├── pytest.ini                     # Test configuration
+├── migrations/                    # Database migrations
+│   ├── alembic.ini
+│   ├── env.py
+│   └── versions/                  # Migration files
+├── models/                        # SQLAlchemy models
+│   ├── __init__.py
+│   ├── user_model.py              # User authentication
+│   ├── voice_model.py             # Voice profiles
+│   ├── story_model.py             # Story content
+│   └── audio_model.py             # Audio files
+├── controllers/                   # Business logic
+│   ├── __init__.py
+│   ├── auth_controller.py         # Authentication logic
+│   ├── voice_controller.py        # Voice management
+│   ├── story_controller.py        # Story management
+│   └── audio_controller.py        # Audio processing
+├── routes/                        # API endpoints
+│   ├── __init__.py
+│   ├── auth_routes.py             # Authentication endpoints
+│   ├── voice_routes.py            # Voice management endpoints
+│   ├── story_routes.py            # Story endpoints
+│   ├── audio_routes.py            # Audio processing endpoints
+│   ├── static_routes.py           # Static file serving
+│   └── task_routes.py             # Task status endpoints
+├── utils/                         # Utility modules
+│   ├── __init__.py
+│   ├── auth_middleware.py         # JWT authentication
+│   ├── email_service.py           # Email functionality
+│   ├── email_template_helper.py   # Email template utilities
+│   ├── cartesia_service.py        # Cartesia API integration
+│   ├── cartesia_sdk_service.py    # Cartesia SDK integration
+│   ├── elevenlabs_service.py      # ElevenLabs API integration
+│   ├── voice_service.py           # Voice service abstraction
+│   ├── s3_client.py               # AWS S3 client
+│   ├── audio_splitter.py          # Audio processing
+│   └── helpers.py                 # General utilities
+├── tasks/                         # Celery tasks
+│   ├── __init__.py
+│   ├── voice_tasks.py             # Voice processing tasks
+│   └── audio_tasks.py             # Audio synthesis tasks
+├── templates/                     # Email templates
+│   ├── admin/                     # Admin interface templates
+│   └── email/                     # Email templates
+│       └── base_template.html     # Base email template
+├── static/                        # Static assets
+│   └── icons/                     # Application icons
+├── stories/                       # Story content
+├── uploads/                       # Temporary file uploads
+├── tests/                         # Test suite
+│   ├── conftest.py               # Test configuration
+│   ├── fixtures/                 # Test fixtures
+│   ├── test_models/              # Model tests
+│   ├── test_controllers/         # Controller tests
+│   ├── test_routes/              # Route tests
+│   └── test_*.py                 # Various test files
+└── openapi.yaml                  # API documentation
 ```
 
 ## 🔄 How It Works
 
-1. **Voice Recording**: Users provide a voice sample through microphone recording or audio upload
-2. **Voice Cloning**: The sample is sent to ElevenLabs API which creates a digital voice model
-3. **Story Selection**: Users choose from available stories in the library
-4. **Text-to-Speech**: The application sends the story text to ElevenLabs to generate audio with the cloned voice
-5. **Storage**: Generated audio files are stored in AWS S3 for efficient delivery
-6. **Playback**: Users can listen to stories with full audio player controls
+### Voice Cloning Process
+1. **Recording**: User records 1-minute voice sample via web interface
+2. **Upload**: Audio file uploaded to AWS S3
+3. **Processing**: Celery task processes voice cloning via Cartesia/ElevenLabs
+4. **Storage**: Voice profile stored in database with status tracking
 
-## 🌐 API Endpoints
+### Story Synthesis Process
+1. **Selection**: User chooses story from Polish fairy tale library
+2. **Queue**: Synthesis request queued via Celery
+3. **Generation**: AI generates audio using cloned voice
+4. **Storage**: Generated audio stored in S3
+5. **Delivery**: Audio streamed to user with full player controls
 
-- `POST /api/clone` - Upload a voice sample and create a voice clone
-- `DELETE /api/voices/<voice_id>` - Delete a voice profile
-- `GET /api/stories` - List available stories
-- `GET /api/stories/<story_id>` - Get a specific story's content
-- `GET /api/audio/<voice_id>/<story_id>.mp3` - Stream generated audio
-- `GET /api/audio/exists/<voice_id>/<story_id>` - Check if audio has been generated
-- `POST /api/synthesize` - Generate audio for a story with a cloned voice
+### Email System
+1. **Templates**: Modular email templates with DawnoTemu branding
+2. **Delivery**: Resend API for reliable email delivery
+3. **Types**: Account confirmation, password reset, notifications
 
-## 📱 PWA Support
+## 🌐 API Documentation
 
-StoryVoice can be installed as a Progressive Web App on mobile devices and desktop browsers:
+### Authentication Endpoints
+- `POST /auth/register` - User registration with email confirmation
+- `POST /auth/login` - User authentication with JWT tokens
+- `POST /auth/refresh` - Refresh access token
+- `GET /auth/confirm-email/<token>` - Email confirmation
+- `POST /auth/resend-confirmation` - Resend confirmation email
+- `POST /auth/reset-password-request` - Request password reset
+- `POST /auth/reset-password/<token>` - Reset password
 
-1. Open the application in a browser
-2. For mobile, tap "Add to Home Screen" in the browser menu
-3. For desktop, look for the "Install" option in the address bar
+### Voice Management
+- `POST /voices/clone` - Upload voice sample and start cloning
+- `GET /voices` - List user's voice profiles
+- `GET /voices/<voice_id>` - Get voice profile details
+- `DELETE /voices/<voice_id>` - Delete voice profile
 
-## 🔒 Privacy & Data Storage
+### Story Management
+- `GET /stories` - List available stories
+- `GET /stories/<story_id>` - Get story content
+- `POST /stories/<story_id>/synthesize` - Generate audio for story
 
-- Voice samples are processed securely via ElevenLabs API
-- Generated audio files are stored in a private AWS S3 bucket
-- No user data is shared with third parties beyond what's needed for core functionality
+### Audio Endpoints
+- `GET /audio/<voice_id>/<story_id>` - Stream generated audio
+- `GET /audio/exists/<voice_id>/<story_id>` - Check audio availability
+
+### Task Management
+- `GET /tasks/<task_id>/status` - Check background task status
+
+## 🚀 Deployment
+
+### Heroku Deployment
+
+1. **Create Heroku App:**
+```bash
+heroku create dawnotemu-app
+```
+
+2. **Add Required Add-ons:**
+```bash
+heroku addons:create heroku-postgresql:mini
+heroku addons:create heroku-redis:mini
+```
+
+3. **Set Environment Variables:**
+```bash
+heroku config:set CARTESIA_API_KEY=your_cartesia_api_key
+heroku config:set ELEVENLABS_API_KEY=your_elevenlabs_api_key
+heroku config:set RESEND_API_KEY=your_resend_api_key
+heroku config:set AWS_ACCESS_KEY_ID=your_aws_access_key
+heroku config:set AWS_SECRET_ACCESS_KEY=your_aws_secret_key
+heroku config:set AWS_REGION=eu-west-1
+heroku config:set S3_BUCKET_NAME=your_s3_bucket_name
+heroku config:set RESEND_FROM_EMAIL=no-reply@dawnotemu.app
+heroku config:set FRONTEND_URL=https://dawnotemu.app
+heroku config:set SECRET_KEY=your_production_secret_key
+heroku config:set PREFERRED_VOICE_SERVICE=cartesia
+```
+
+4. **Deploy:**
+```bash
+git push heroku main
+```
+
+5. **Run Database Migrations:**
+```bash
+heroku run flask db upgrade
+```
+
+### Production Considerations
+
+- **Scaling**: Use Heroku's dyno scaling for web and worker processes
+- **Monitoring**: Implement application monitoring (e.g., Sentry)
+- **Logging**: Centralized logging with structured logs
+- **Security**: Environment-based configuration, secure API keys
+- **Performance**: Redis caching, S3 CDN, database optimization
+
+## 🧪 Testing
+
+Run the test suite:
+```bash
+# Run all tests
+pytest
+
+# Run with coverage
+pytest --cov=.
+
+# Run specific test file
+pytest tests/test_voice_controller.py
+
+# Run with verbose output
+pytest -v
+```
+
+Test categories:
+- **Unit Tests**: Models, controllers, utilities
+- **Integration Tests**: API endpoints, database operations
+- **Service Tests**: External API integrations
+- **Email Tests**: Template rendering and delivery
+
+## 🔧 Development Tools
+
+### Email Testing
+```bash
+python test_resend_email.py
+```
+
+### Voice Quality Testing
+```bash
+python test_voice_quality_comparison.py
+```
+
+### API Testing
+```bash
+python test_endpoints.py
+```
+
+## 📧 Email System
+
+DawnoTemu uses a modular email system with:
+
+- **Resend API**: Reliable email delivery
+- **Template System**: Reusable HTML templates with DawnoTemu branding
+- **Email Types**: 
+  - Account confirmation
+  - Password reset
+  - System notifications
+
+Email templates are located in `templates/email/` with helper utilities in `utils/email_template_helper.py`.
+
+## 🔒 Security Features
+
+- **JWT Authentication**: Secure token-based authentication
+- **Email Verification**: Required email confirmation for new accounts
+- **Password Security**: Bcrypt hashing with salt
+- **API Rate Limiting**: Protection against abuse
+- **Environment Variables**: Secure configuration management
+- **CORS Configuration**: Proper cross-origin resource sharing
+- **Input Validation**: Comprehensive request validation
+
+## 🌍 Internationalization
+
+- **Polish Language**: Primary language for stories and interface
+- **Unicode Support**: Full UTF-8 support for Polish characters
+- **Localized Content**: Polish fairy tales and cultural content
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+We welcome contributions! Please follow these steps:
 
 1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Follow the existing code style and architecture
+4. Add tests for new functionality
+5. Update documentation as needed
+6. Commit your changes (`git commit -m 'Add amazing feature'`)
+7. Push to the branch (`git push origin feature/amazing-feature`)
+8. Open a Pull Request
+
+### Development Guidelines
+
+- Follow PEP 8 style guidelines
+- Write comprehensive tests
+- Use type hints where appropriate
+- Document new functions and classes
+- Keep commits atomic and well-described
 
 ## 📄 License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
 
-## 💭 Inspiration
+## 🙏 Acknowledgments
 
-Created for parents who want to:
-- Preserve their voice for future generations
-- Share stories even when physically apart
-- Create lasting memories through technology
+- **Cartesia AI** - Primary voice synthesis technology
+- **ElevenLabs** - Voice cloning capabilities
+- **Resend** - Email delivery infrastructure
+- **Flask Community** - Excellent web framework
+- **Polish Folklore** - Inspiration for story content
+
+## 💭 Mission
+
+DawnoTemu exists to strengthen family bonds through technology. We believe that a parent's voice telling bedtime stories creates lasting memories and emotional connections that transcend physical distance.
+
+Perfect for:
+- **Working Parents**: Share stories even during business trips
+- **Military Families**: Stay connected across deployments  
+- **Grandparents**: Create lasting voice memories for grandchildren
+- **Divorced Parents**: Maintain bedtime story traditions
+- **Anyone**: Who wants to preserve their voice for future generations
 
 ---
 
-*"Because every child deserves to hear stories in the voice they love most."*
+*"Twój głos opowiada baśnie, zawsze gdy potrzebujesz"*
+
+**DawnoTemu Sp. z o.o.**  
+ul. Żywiczna 38A, 03-179 Warszawa  
+zespol.dawnotemu@gmail.com

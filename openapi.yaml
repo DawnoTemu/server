@@ -21,7 +21,7 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
-      description: JWT token obtained from the /auth/login or /auth/refresh endpoints
+      description: JWT token obtained from the /auth/login or /auth/refresh endpoints. Note that the user's email must be confirmed to access protected resources.
 
   schemas:
     User:
@@ -357,6 +357,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+        '403':
+          description: Account inactive or email not confirmed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
   /auth/refresh:
     post:
@@ -386,6 +392,12 @@ paths:
                 $ref: '#/components/schemas/Error'
         '401':
           description: Invalid or expired refresh token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Email not confirmed
           content:
             application/json:
               schema:

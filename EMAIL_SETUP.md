@@ -13,13 +13,15 @@ Add the following environment variables to your `.env` file:
 RESEND_API_KEY=re_Jz1BJt4X_2Xp1zyCC9HCrneocNbWB1Asu
 RESEND_FROM_EMAIL=no-reply@dawnotemu.app
 FRONTEND_URL=https://your-frontend-domain.com
+BACKEND_URL=https://your-backend-api-domain.com
 ```
 
 ### Required Environment Variables
 
 - `RESEND_API_KEY`: Your Resend API key (required)
 - `RESEND_FROM_EMAIL`: The sender email address (defaults to `no-reply@dawnotemu.app`)
-- `FRONTEND_URL`: Your frontend application URL for email links (defaults to `http://localhost:3000`)
+- `FRONTEND_URL`: Your frontend application URL (defaults to `http://localhost:3000`)
+- `BACKEND_URL`: Your backend API URL for email confirmation links (defaults to `http://localhost:8000`)
 
 ## Email Template System
 
