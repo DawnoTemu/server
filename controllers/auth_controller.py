@@ -150,8 +150,14 @@ class AuthController:
             
         # Confirm the email
         if UserModel.confirm_email(user_id):
+            # Get user to send confirmation email
+            user = UserModel.get_by_id(user_id)
+            if user:
+                # Send email verification success notification
+                EmailService.send_email_verification_success(user.email)
+            
             return True, {
-                "message": "Email confirmed successfully! Your account is now pending beta approval. You'll be notified when your account is activated and you can log in."
+                "message": "Email pomyślnie zweryfikowany! DawnoTemu jest obecnie w fazie beta. Twoje konto oczekuje na weryfikację przez nasz zespół. Zostaniesz powiadomiony/a emailem, gdy Twoje konto zostanie aktywowane."
             }, 200
         else:
             return False, {"error": "User not found"}, 404

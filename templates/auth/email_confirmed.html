@@ -3,9 +3,39 @@
 {% block title %}Email Potwierdzony - DawnoTemu{% endblock %}
 
 {% block content %}
-    <h1>Twój email został pomyślnie zweryfikowany!</h1>
-    <p>Dziękujemy za potwierdzenie adresu email. Możesz teraz w pełni korzystać z aplikacji DawnoTemu.</p>
-    <p>Możesz teraz zamknąć to okno, lub wrócić do aplikacji.</p>
-    {# TODO: Add a proper link to the app, maybe a deep link #}
-    {# <a href="https://www.dawnotemu.app/" class="cta-button">Otwórz aplikację</a> #}
+    <div style="max-width: 600px; margin: 0 auto; padding: 40px 20px; text-align: center;">
+        <div style="background: linear-gradient(135deg, #D4C1EC 0%, #DA8FFF 100%); padding: 30px; border-radius: 20px; margin-bottom: 30px;">
+            <h1 style="color: #FFFFFF; font-size: 28px; margin: 0 0 10px 0; font-weight: 700;">
+                ✨ Twój email został pomyślnie zweryfikowany!
+            </h1>
+            <p style="color: rgba(255, 255, 255, 0.9); font-size: 16px; margin: 0;">
+                Dziękujemy za potwierdzenie adresu email
+            </p>
+        </div>
+        
+        <div style="background-color: #F9FAFC; padding: 30px; border-radius: 16px; border: 1px solid rgba(229, 231, 235, 0.5); margin-bottom: 20px;">
+            <div style="width: 60px; height: 60px; background: linear-gradient(135deg, #FBBEBF 0%, #F97316 100%); border-radius: 50%; margin: 0 auto 20px auto; display: flex; align-items: center; justify-content: center; font-size: 24px;">
+                🚀
+            </div>
+            <h2 style="color: #2D3047; font-size: 22px; margin: 0 0 15px 0; font-weight: 700;">
+                Aplikacja w fazie beta
+            </h2>
+            <p style="color: #6C6F93; font-size: 16px; line-height: 1.6; margin: 0 0 20px 0;">
+                DawnoTemu jest obecnie w fazie beta. Twoje konto oczekuje na weryfikację przez nasz zespół.
+            </p>
+            <p style="color: #6C6F93; font-size: 16px; line-height: 1.6; margin: 0;">
+                <strong>Zostaniesz powiadomiony/a emailem</strong>, gdy Twoje konto zostanie aktywowane i będziesz mógł/mogła zacząć tworzyć magiczne chwile z bajkami opowiadanymi Twoim głosem.
+            </p>
+        </div>
+        
+        <div style="background-color: rgba(218, 143, 255, 0.1); padding: 20px; border-radius: 12px; border-left: 4px solid #DA8FFF;">
+            <p style="color: #2D3047; font-size: 14px; margin: 0; font-style: italic;">
+                💜 Dziękujemy za cierpliwość! Pracujemy nad tym, aby zapewnić najlepsze doświadczenie dla wszystkich rodziców.
+            </p>
+        </div>
+        
+        <p style="color: #9CA3AF; font-size: 14px; margin: 30px 0 0 0;">
+            Możesz teraz zamknąć to okno.
+        </p>
+    </div>
 {% endblock %} 

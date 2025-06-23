@@ -179,3 +179,79 @@ class EmailService:
         )
         
         return EmailService.send_email(subject, user_email, text_body, html_body)
+    
+    @staticmethod
+    def send_email_verification_success(user_email):
+        """
+        Send email verification success notification with beta access information
+        
+        Args:
+            user_email: User's email address
+        """
+        subject = "Email zweryfikowany! Oczekujemy na aktywację konta ✨"
+        
+        # Plain text version
+        text_body = """
+        Gratulacje!
+
+        Twój email został pomyślnie zweryfikowany! 🎉
+
+        DawnoTemu jest obecnie w fazie beta, dlatego Twoje konto oczekuje na weryfikację przez nasz zespół.
+
+        Zostaniesz powiadomiony/a emailem, gdy Twoje konto zostanie aktywowane i będziesz mógł/mogła zacząć tworzyć magiczne chwile z bajkami opowiadanymi Twoim głosem.
+
+        Dziękujemy za cierpliwość! Pracujemy nad tym, aby zapewnić najlepsze doświadczenie dla wszystkich rodziców.
+
+        Pamiętasz ten wieczór, gdy nie mogłeś/mogłaś być blisko? Wkrótce Twój głos zawsze będzie przy Twoim dziecku. ❤️
+
+        Pozdrawiamy,
+        Zespół DawnoTemu
+        """
+        
+        # Create HTML content using template helper
+        content_html = f"""
+        <div style="background-color: #F9FAFC; padding: 30px; border-radius: 16px; border: 1px solid rgba(229, 231, 235, 0.5); margin-bottom: 30px; text-align: center;">
+            <div style="width: 60px; height: 60px; background: linear-gradient(135deg, #63E6E2 0%, #4FD1C7 100%); border-radius: 50%; margin: 0 auto 20px auto; display: flex; align-items: center; justify-content: center; font-size: 24px; color: #FFFFFF;">
+                ✅
+            </div>
+            <h3 style="margin: 0 0 15px 0; color: #2D3047; font-size: 20px; font-weight: 700;">
+                Email pomyślnie zweryfikowany!
+            </h3>
+            <p style="margin: 0; color: #6C6F93; font-size: 16px; line-height: 1.6;">
+                Gratulacje! Twój adres email został potwierdzony.
+            </p>
+        </div>
+        
+        <p style="margin: 0 0 25px 0; color: #6C6F93; font-size: 18px; line-height: 1.6;" class="mobile-text">
+            DawnoTemu jest obecnie w {EmailTemplateHelper.create_gradient_text("fazie beta")}, dlatego Twoje konto oczekuje na weryfikację przez nasz zespół.
+        </p>
+        
+        <div style="background-color: rgba(218, 143, 255, 0.1); padding: 25px; border-radius: 16px; border-left: 4px solid #DA8FFF; margin-bottom: 25px;">
+            <p style="margin: 0 0 15px 0; color: #2D3047; font-size: 16px; line-height: 1.6; font-weight: 600;">
+                🚀 Co dalej?
+            </p>
+            <p style="margin: 0; color: #6C6F93; font-size: 16px; line-height: 1.6;">
+                <strong>Zostaniesz powiadomiony/a emailem</strong>, gdy Twoje konto zostanie aktywowane i będziesz mógł/mogła zacząć tworzyć magiczne chwile z bajkami opowiadanymi Twoim głosem.
+            </p>
+        </div>
+        
+        <p style="margin: 0 0 30px 0; color: #6C6F93; font-size: 16px; line-height: 1.6; font-style: italic;">
+            Pamiętasz ten wieczór, gdy nie mogłeś/mogłaś być blisko? Wkrótce Twój głos zawsze będzie przy Twoim dziecku. ❤️
+        </p>
+        
+        <div style="background-color: rgba(251, 190, 159, 0.1); padding: 20px; border-radius: 12px; text-align: center;">
+            <p style="margin: 0; color: #2D3047; font-size: 14px; font-style: italic;">
+                💜 Dziękujemy za cierpliwość! Pracujemy nad tym, aby zapewnić najlepsze doświadczenie dla wszystkich rodziców.
+            </p>
+        </div>
+        """
+        
+        # Generate HTML using template helper
+        html_body = EmailTemplateHelper.get_base_email_template(
+            preheader_text="Email zweryfikowany! Oczekujemy na aktywację konta w fazie beta ✨",
+            email_title="Email zweryfikowany! 🎉",
+            email_content=content_html,
+            button_section=""
+        )
+        
+        return EmailService.send_email(subject, user_email, text_body, html_body)

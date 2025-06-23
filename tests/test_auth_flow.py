@@ -65,7 +65,16 @@ def test_confirm_email_renders_html(client, mocker):
     assert heading is not None
     assert "Twój email został pomyślnie zweryfikowany!" in heading.text
 
-    # Check for the main paragraph
-    paragraph = soup.find('p')
-    assert paragraph is not None
-    assert "Dziękujemy za potwierdzenie adresu email." in paragraph.text 
+    # Check for beta information
+    beta_heading = soup.find('h2')
+    assert beta_heading is not None
+    assert "Aplikacja w fazie beta" in beta_heading.text
+
+    # Check for the main content about beta access
+    paragraphs = soup.find_all('p')
+    beta_text_found = False
+    for paragraph in paragraphs:
+        if "DawnoTemu jest obecnie w fazie beta" in paragraph.text:
+            beta_text_found = True
+            break
+    assert beta_text_found, "Beta access message not found in page content" 
