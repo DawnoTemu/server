@@ -9,7 +9,7 @@ from datetime import datetime
 from database import db
 from utils.s3_client import S3Client
 from config import Config
-from utils.elevenlabs_service import ElevenLabsService
+from utils.voice_service import VoiceService
 
 # Configure logger
 logger = logging.getLogger('audio_model')
@@ -134,16 +134,24 @@ class AudioModel:
     @staticmethod
     def synthesize_speech(elevenlabs_voice_id, text):
         """
-        Synthesize speech using ElevenLabs API
+        Synthesize speech using external voice API
         
         Args:
-            elevenlabs_voice_id: ElevenLabs voice ID
+            elevenlabs_voice_id: External voice ID
             text: Text to synthesize
             
         Returns:
             tuple: (success, audio_data/error message)
         """
-        return ElevenLabsService.synthesize_speech(elevenlabs_voice_id, text)
+        # Determine language - use default if not specified
+        language = getattr(Config, 'DEFAULT_LANGUAGE', 'pl')
+        
+        # Use the unified VoiceService
+        return VoiceService.synthesize_speech(
+            external_voice_id=elevenlabs_voice_id,
+            text=text,
+            language=language
+        )
     
     @staticmethod
     def store_audio(audio_data, voice_id, story_id, audio_record):

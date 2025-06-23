@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <title>DawnoTemu - Email Template</title>
+    <!--[if mso]>
+    <noscript>
+        <xml>
+            <o:OfficeDocumentSettings>
+                <o:PixelsPerInch>96</o:PixelsPerInch>
+            </o:OfficeDocumentSettings>
+        </xml>
+    </noscript>
+    <![endif]-->
+    <style type="text/css">
+        /* Reset styles for email clients */
+        body, table, td, p, a, li, blockquote {
+            -webkit-text-size-adjust: 100%;
+            -ms-text-size-adjust: 100%;
+        }
+        table, td {
+            mso-table-lspace: 0pt;
+            mso-table-rspace: 0pt;
+        }
+        img {
+            -ms-interpolation-mode: bicubic;
+            border: 0;
+            height: auto;
+            line-height: 100%;
+            outline: none;
+            text-decoration: none;
+        }
+        
+        /* DawnoTemu brand colors - exact matches */
+        .bg-gradient {
+            background: linear-gradient(135deg, #D4C1EC 0%, #DA8FFF 100%);
+        }
+        .bg-gradient-reverse {
+            background: linear-gradient(135deg, #DA8FFF 0%, #D4C1EC 100%);
+        }
+        .bg-peach {
+            background-color: #FBBEBF;
+        }
+        .bg-peach-light {
+            background-color: rgba(251, 190, 159, 0.15);
+        }
+        .bg-mint {
+            background-color: #63E6E2;
+        }
+        .bg-mint-light {
+            background-color: rgba(99, 230, 226, 0.15);
+        }
+        .bg-lavender {
+            background-color: #DA8FFF;
+        }
+        .bg-lavender-light {
+            background-color: rgba(218, 143, 255, 0.15);
+        }
+        .bg-light {
+            background-color: #F9FAFC;
+        }
+        .text-dark {
+            color: #2D3047;
+        }
+        .text-medium {
+            color: #6C6F93;
+        }
+        .text-light {
+            color: #9CA3AF;
+        }
+        .text-white {
+            color: #FFFFFF;
+        }
+        .text-gradient {
+            background: linear-gradient(135deg, #DA8FFF 0%, #FBBEBF 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        /* Typography - exact font matches */
+        .font-comfortaa {
+            font-family: 'Comfortaa', cursive, Arial, sans-serif;
+        }
+        .font-quicksand {
+            font-family: 'Quicksand', sans-serif, Arial, sans-serif;
+        }
+        
+        /* Enhanced button styles matching website */
+        .btn-primary {
+            display: inline-block;
+            padding: 16px 32px;
+            background: linear-gradient(135deg, #DA8FFF 0%, #B8A2DC 100%);
+            color: #FFFFFF;
+            text-decoration: none;
+            border-radius: 9999px;
+            font-family: 'Quicksand', sans-serif, Arial, sans-serif;
+            font-weight: 600;
+            font-size: 16px;
+            line-height: 1.5;
+            text-align: center;
+            box-shadow: 0 4px 6px rgba(45, 48, 71, 0.05);
+            transition: all 0.3s ease;
+        }
+        
+        .btn-secondary {
+            display: inline-block;
+            padding: 12px 24px;
+            background-color: #FBBEBF;
+            color: #2D3047;
+            text-decoration: none;
+            border-radius: 9999px;
+            font-family: 'Quicksand', sans-serif, Arial, sans-serif;
+            font-weight: 600;
+            font-size: 14px;
+            line-height: 1.5;
+            text-align: center;
+            box-shadow: 0 4px 6px rgba(45, 48, 71, 0.05);
+            transition: all 0.3s ease;
+        }
+        
+        .btn-outline {
+            display: inline-block;
+            padding: 12px 24px;
+            background-color: transparent;
+            color: #DA8FFF;
+            text-decoration: none;
+            border: 2px solid #DA8FFF;
+            border-radius: 9999px;
+            font-family: 'Quicksand', sans-serif, Arial, sans-serif;
+            font-weight: 600;
+            font-size: 14px;
+            line-height: 1.5;
+            text-align: center;
+        }
+        
+        /* Card styles matching website */
+        .card {
+            background-color: #FFFFFF;
+            border-radius: 16px;
+            box-shadow: 0 10px 20px rgba(45, 48, 71, 0.08);
+            border: 1px solid rgba(229, 231, 235, 0.5);
+            transition: all 0.3s ease;
+        }
+        
+        .card-light {
+            background-color: #F9FAFC;
+            border-radius: 16px;
+            border: 1px solid rgba(229, 231, 235, 0.5);
+        }
+        
+        /* Icon circles matching website design */
+        .icon-circle {
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            font-weight: bold;
+            position: relative;
+        }
+        
+        .icon-circle-lg {
+            width: 60px;
+            height: 60px;
+            font-size: 24px;
+        }
+        
+        /* Decorative elements */
+        .decorative-quote {
+            font-size: 72px;
+            line-height: 1;
+            color: rgba(218, 143, 255, 0.2);
+            font-family: serif;
+            position: absolute;
+            top: -20px;
+            left: -10px;
+        }
+        
+        /* Pattern backgrounds */
+        .pattern-bg {
+            background-image: url('data:image/svg+xml,%3Csvg%20width%3D%2760%27%20height%3D%2760%27%20viewBox%3D%270%200%2060%2060%27%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%3E%3Cg%20fill%3D%27none%27%20fill-rule%3D%27evenodd%27%3E%3Cg%20fill%3D%27%23D4C1EC%27%20fill-opacity%3D%270.05%27%3E%3Cpath%20d%3D%27M36%2034v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6%2034v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6%204V0H4v4H0v2h4v4h2V6h4V4H6z%27%2F%3E%3C%2Fg%3E%3C%2Fg%3E%3C%2Fsvg%3E');
+        }
+        
+        /* Responsive design */
+        @media only screen and (max-width: 600px) {
+            .container {
+                width: 100% !important;
+                padding: 10px !important;
+            }
+            .mobile-full {
+                width: 100% !important;
+                display: block !important;
+            }
+            .mobile-center {
+                text-align: center !important;
+            }
+            .mobile-padding {
+                padding: 20px 15px !important;
+            }
+            .mobile-text {
+                font-size: 16px !important;
+                line-height: 24px !important;
+            }
+            .mobile-title {
+                font-size: 28px !important;
+                line-height: 36px !important;
+            }
+            .mobile-subtitle {
+                font-size: 20px !important;
+                line-height: 28px !important;
+            }
+            .mobile-hide {
+                display: none !important;
+            }
+            .mobile-stack {
+                display: block !important;
+                width: 100% !important;
+            }
+            .mobile-btn {
+                display: block !important;
+                width: 100% !important;
+                margin: 10px 0 !important;
+            }
+        }
+    </style>
+</head>
+<body style="margin: 0; padding: 0; background-color: #F9FAFC; font-family: 'Quicksand', sans-serif, Arial, sans-serif; color: #2D3047; line-height: 1.6;">
+    <!-- Preheader text -->
+    <div style="display: none; font-size: 1px; color: #F9FAFC; line-height: 1px; max-height: 0px; max-width: 0px; opacity: 0; overflow: hidden;">
+        Witaj w DawnoTemu! Twój głos opowiada baśnie, zawsze gdy potrzebujesz ✨
+    </div>
+    
+    <!-- Email Container with Pattern Background -->
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #F9FAFC;" class="pattern-bg">
+        <tr>
+            <td align="center" style="padding: 20px 10px;">
+                <!-- Main Content Table -->
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="600" class="container" style="max-width: 600px; background-color: #FFFFFF; border-radius: 24px; overflow: hidden; box-shadow: 0 20px 25px -5px rgba(45, 48, 71, 0.1);">
+                    
+                    <!-- Hero Header with Enhanced Design -->
+                    <tr>
+                        <td class="bg-gradient" style="padding: 50px 30px 40px 30px; text-align: center; position: relative;">
+                            <!-- AI Badge -->
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin: 0 auto 20px auto;">
+                                <tr>
+                                    <td style="padding: 8px 16px; background-color: rgba(255, 255, 255, 0.2); color: #FFFFFF; border-radius: 9999px; font-size: 14px; font-weight: 600; border: 1px solid rgba(255, 255, 255, 0.3); text-align: center;">
+                                        🤖 AI dla rodziców
+                                    </td>
+                                </tr>
+                            </table>
+                            
+                            <!-- Logo -->
+                            <img src="https://www.dawnotemu.app/images/logo-light.png" alt="DawnoTemu" width="220" style="max-width: 220px; height: auto; margin-bottom: 15px; display: block; margin-left: auto; margin-right: auto;">
+                            
+                            <!-- Main Headline -->
+                            <h1 style="margin: 0 0 15px 0; color: #FFFFFF; font-family: 'Comfortaa', cursive, Arial, sans-serif; font-size: 26px; font-weight: 700; line-height: 1.3; text-align: center;" class="mobile-title">
+                                Twój głos opowiada baśnie,<br>zawsze gdy potrzebujesz
+                            </h1>
+                            
+                            <!-- Subtitle -->
+                            <p style="margin: 0; color: rgba(255, 255, 255, 0.9); font-size: 16px; line-height: 1.5; text-align: center; max-width: 400px; margin-left: auto; margin-right: auto;">
+                                Personalizowane bajki na dobranoc z DawnoTemu
+                            </p>
+                        </td>
+                    </tr>
+                    
+                    <!-- Welcome Message with Quote Design -->
+                    <tr>
+                        <td style="padding: 50px 30px 30px 30px;" class="mobile-padding">
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                <tr>
+                                    <td style="position: relative;">
+                                        <div class="decorative-quote">"</div>
+                                        <h2 style="margin: 0 0 20px 0; color: #2D3047; font-family: 'Comfortaa', cursive, Arial, sans-serif; font-size: 32px; font-weight: 700; line-height: 1.3; tracking: -0.5px;" class="mobile-title">
+                                            Witaj w DawnoTemu! 👋
+                                        </h2>
+                                        
+                                        <p style="margin: 0 0 25px 0; color: #6C6F93; font-size: 18px; line-height: 1.6;" class="mobile-text">
+                                            Dziękujemy za dołączenie do naszej społeczności! Jesteśmy podekscytowani, że będziesz mógł/mogła tworzyć <span style="background: linear-gradient(135deg, #DA8FFF 0%, #FBBEBF 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; font-weight: 600;">magiczne chwile</span> z bajkami opowiadanymi Twoim głosem.
+                                        </p>
+                                        
+                                        <p style="margin: 0 0 30px 0; color: #6C6F93; font-size: 16px; line-height: 1.6; font-style: italic;">
+                                            Pamiętasz ten wieczór, gdy nie mogłeś/mogłaś być blisko? Teraz Twój głos zawsze będzie przy Twoim dziecku. ❤️
+                                        </p>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                    
+                    <!-- Enhanced Feature Cards -->
+                    <tr>
+                        <td style="padding: 0 30px 40px 30px;" class="mobile-padding">
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                <tr>
+                                    <td>
+                                        <h3 style="margin: 0 0 30px 0; color: #2D3047; font-family: 'Comfortaa', cursive, Arial, sans-serif; font-size: 24px; font-weight: 700; text-align: center;" class="mobile-subtitle">
+                                            Co możesz zrobić już teraz?
+                                        </h3>
+                                    </td>
+                                </tr>
+                            </table>
+                            
+                            <!-- Feature Grid -->
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                <tr>
+                                    <td width="50%" style="padding: 0 10px 20px 0;" class="mobile-stack">
+                                        <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" class="card-light" style="background-color: #F9FAFC; border-radius: 16px; border: 1px solid rgba(229, 231, 235, 0.5);">
+                                            <tr>
+                                                <td style="padding: 25px; text-align: center;">
+                                                    <div class="icon-circle" style="width: 48px; height: 48px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #DA8FFF 0%, #B8A2DC 100%); color: #FFFFFF; font-size: 20px; margin-bottom: 15px;">
+                                                        🎤
+                                                    </div>
+                                                    <h4 style="margin: 0 0 10px 0; color: #2D3047; font-size: 16px; font-weight: 700; font-family: 'Comfortaa', cursive, Arial, sans-serif;">Nagraj swój głos</h4>
+                                                    <p style="margin: 0; color: #6C6F93; font-size: 14px; line-height: 1.5;">Tylko 1 minuta nagrania</p>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                    <td width="50%" style="padding: 0 0 20px 10px;" class="mobile-stack">
+                                        <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" class="card-light" style="background-color: #F9FAFC; border-radius: 16px; border: 1px solid rgba(229, 231, 235, 0.5);">
+                                            <tr>
+                                                <td style="padding: 25px; text-align: center;">
+                                                    <div class="icon-circle" style="width: 48px; height: 48px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #63E6E2 0%, #4FD1C7 100%); color: #FFFFFF; font-size: 20px; margin-bottom: 15px;">
+                                                        📚
+                                                    </div>
+                                                    <h4 style="margin: 0 0 10px 0; color: #2D3047; font-size: 16px; font-weight: 700; font-family: 'Comfortaa', cursive, Arial, sans-serif;">Wybierz bajki</h4>
+                                                    <p style="margin: 0; color: #6C6F93; font-size: 14px; line-height: 1.5;">Setki polskich baśni</p>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td width="50%" style="padding: 0 10px 0 0;" class="mobile-stack">
+                                        <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" class="card-light" style="background-color: #F9FAFC; border-radius: 16px; border: 1px solid rgba(229, 231, 235, 0.5);">
+                                            <tr>
+                                                <td style="padding: 25px; text-align: center;">
+                                                    <div class="icon-circle" style="width: 48px; height: 48px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #FBBEBF 0%, #F97316 100%); color: #FFFFFF; font-size: 20px; margin-bottom: 15px;">
+                                                        ✨
+                                                    </div>
+                                                    <h4 style="margin: 0 0 10px 0; color: #2D3047; font-size: 16px; font-weight: 700; font-family: 'Comfortaa', cursive, Arial, sans-serif;">Stwórz historie</h4>
+                                                    <p style="margin: 0; color: #6C6F93; font-size: 14px; line-height: 1.5;">Generator AI historii</p>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                    <td width="50%" style="padding: 0 0 0 10px;" class="mobile-stack">
+                                        <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" class="card-light" style="background-color: #F9FAFC; border-radius: 16px; border: 1px solid rgba(229, 231, 235, 0.5);">
+                                            <tr>
+                                                <td style="padding: 25px; text-align: center;">
+                                                    <div class="icon-circle" style="width: 48px; height: 48px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%); color: #FFFFFF; font-size: 20px; margin-bottom: 15px;">
+                                                        🌙
+                                                    </div>
+                                                    <h4 style="margin: 0 0 10px 0; color: #2D3047; font-size: 16px; font-weight: 700; font-family: 'Comfortaa', cursive, Arial, sans-serif;">Programator snu</h4>
+                                                    <p style="margin: 0; color: #6C6F93; font-size: 14px; line-height: 1.5;">Automatyczne kołysanki</p>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                    
+                    <!-- Main CTA Section with Enhanced Design -->
+                    <tr>
+                        <td style="padding: 20px 30px 50px 30px;" class="mobile-padding">
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" class="bg-gradient" style="background: linear-gradient(135deg, #D4C1EC 0%, #DA8FFF 100%); border-radius: 20px; overflow: hidden; position: relative;">
+                                <tr>
+                                    <td style="padding: 40px 30px; text-align: center; position: relative;">
+                                        <!-- Decorative circles -->
+                                        <div style="position: absolute; top: -40px; right: -40px; width: 100px; height: 100px; background-color: rgba(255, 255, 255, 0.1); border-radius: 50%;"></div>
+                                        <div style="position: absolute; bottom: -50px; left: -50px; width: 140px; height: 140px; background-color: rgba(255, 255, 255, 0.05); border-radius: 50%;"></div>
+                                        
+                                        <h3 style="margin: 0 0 15px 0; color: #FFFFFF; font-family: 'Comfortaa', cursive, Arial, sans-serif; font-size: 28px; font-weight: 700; line-height: 1.3;" class="mobile-subtitle">
+                                            🚀 Gotowy/a na magię?
+                                        </h3>
+                                        <p style="margin: 0 0 30px 0; color: rgba(255, 255, 255, 0.9); font-size: 18px; line-height: 1.6; max-width: 400px; margin-left: auto; margin-right: auto;">
+                                            Rozpocznij tworzenie niezwykłych wspomnień z Twoim dzieckiem już dziś
+                                        </p>
+                                        
+                                        <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin: 0 auto;">
+                                            <tr>
+                                                <td style="padding: 0 8px;" class="mobile-btn">
+                                                    <a href="https://www.dawnotemu.app" class="btn-primary" style="display: inline-block; padding: 16px 32px; background: #FFFFFF; color: #DA8FFF; text-decoration: none; border-radius: 9999px; font-weight: 700; font-size: 16px; box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1); font-family: 'Quicksand', sans-serif, Arial, sans-serif;">
+                                                        ✨ Rozpocznij przygodę
+                                                    </a>
+                                                </td>
+                                            </tr>
+                                            <tr class="mobile-hide">
+                                                <td style="padding: 15px 0 0 0; text-align: center;">
+                                                    <p style="margin: 0; color: rgba(255, 255, 255, 0.8); font-size: 12px;">
+                                                        Już ponad 2500+ rodziców na liście oczekujących
+                                                    </p>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                    
+                    <!-- Testimonial Section -->
+                    <tr>
+                        <td style="padding: 0 30px 40px 30px;" class="mobile-padding">
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #F9FAFC; border-radius: 16px; border: 1px solid rgba(229, 231, 235, 0.5);">
+                                <tr>
+                                    <td style="padding: 30px; position: relative;">
+                                        <div style="font-size: 48px; line-height: 1; color: rgba(218, 143, 255, 0.2); font-family: serif; position: absolute; top: 10px; left: 20px;">"</div>
+                                        <p style="margin: 20px 0 20px 0; color: #2D3047; font-size: 16px; line-height: 1.6; font-style: italic; padding-left: 20px;">
+                                            Kiedy muszę pracować do późna, moja córka nadal zasypia słuchając bajki czytanej moim głosem. To niesamowite, jak technologia może pomóc w utrzymaniu naszej więzi mimo napięć czasowych.
+                                        </p>
+                                        <div style="display: flex; align-items: center; padding-left: 20px;">
+                                            <div style="width: 40px; height: 40px; background: linear-gradient(135deg, #DA8FFF 0%, #FBBEBF 100%); border-radius: 50%; margin-right: 12px; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 16px;">A</div>
+                                            <div>
+                                                <div style="color: #2D3047; font-weight: 600; font-size: 14px;">Anna K.</div>
+                                                <div style="color: #6C6F93; font-size: 12px;">Mama 5-latki, Kraków</div>
+                                            </div>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                    
+                    <!-- Social Proof & Stats -->
+                    <tr>
+                        <td style="padding: 20px 30px 40px 30px;" class="mobile-padding">
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                <tr>
+                                    <td style="text-align: center;">
+                                        <h4 style="margin: 0 0 20px 0; color: #2D3047; font-family: 'Comfortaa', cursive, Arial, sans-serif; font-size: 18px; font-weight: 700;">
+                                            Dołącz do tysięcy rodziców, którzy już odkryli magię DawnoTemu
+                                        </h4>
+                                        
+                                        <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin: 0 auto;">
+                                            <tr>
+                                                <td style="padding: 0 20px; text-align: center;" class="mobile-stack">
+                                                    <div style="font-size: 24px; font-weight: 700; color: #DA8FFF; margin-bottom: 5px;">👨‍👩‍👧‍👦</div>
+                                                    <div style="font-size: 12px; color: #6C6F93;">Przez rodziców,<br>dla rodziców</div>
+                                                </td>
+                                                <td style="padding: 0 20px; text-align: center;" class="mobile-stack">
+                                                    <div style="font-size: 24px; font-weight: 700; color: #DA8FFF; margin-bottom: 5px;">🔬</div>
+                                                    <div style="font-size: 12px; color: #6C6F93;">Poparte badaniami<br>ekspertów</div>
+                                                </td>
+                                                <td style="padding: 0 20px; text-align: center;" class="mobile-stack">
+                                                    <div style="font-size: 24px; font-weight: 700; color: #DA8FFF; margin-bottom: 5px;">🇵🇱</div>
+                                                    <div style="font-size: 12px; color: #6C6F93;">Made with ❤️<br>w Polsce</div>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                    
+                    <!-- Footer with Enhanced Social Links -->
+                    <tr>
+                        <td style="background: linear-gradient(135deg, #2D3047 0%, #1F2937 100%); padding: 40px 30px; text-align: center;">
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                <tr>
+                                    <td style="text-align: center;">
+                                        <img src="https://www.dawnotemu.app/images/logo-light.png" alt="DawnoTemu" width="120" style="max-width: 120px; height: auto; margin-bottom: 20px;">
+                                        
+                                        <p style="margin: 0 0 20px 0; color: rgba(255, 255, 255, 0.8); font-size: 14px; font-weight: 600;">
+                                            Śledź nas w mediach społecznościowych
+                                        </p>
+                                        
+                                        <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin: 0 auto 25px auto;">
+                                            <tr>
+                                                <td style="padding: 0 8px;">
+                                                    <a href="https://www.facebook.com/dawnotemuapp" style="display: inline-block; width: 44px; height: 44px; background: linear-gradient(135deg, #DA8FFF 0%, #B8A2DC 100%); border-radius: 50%; text-align: center; line-height: 44px; color: #FFFFFF; text-decoration: none; font-size: 18px; box-shadow: 0 4px 8px rgba(218, 143, 255, 0.3);">📘</a>
+                                                </td>
+                                                <td style="padding: 0 8px;">
+                                                    <a href="https://www.instagram.com/dawnotemu.app" style="display: inline-block; width: 44px; height: 44px; background: linear-gradient(135deg, #FBBEBF 0%, #F97316 100%); border-radius: 50%; text-align: center; line-height: 44px; color: #FFFFFF; text-decoration: none; font-size: 18px; box-shadow: 0 4px 8px rgba(251, 190, 159, 0.3);">📷</a>
+                                                </td>
+                                                <td style="padding: 0 8px;">
+                                                    <a href="https://www.tiktok.com/@dawnotemuapp" style="display: inline-block; width: 44px; height: 44px; background: linear-gradient(135deg, #63E6E2 0%, #4FD1C7 100%); border-radius: 50%; text-align: center; line-height: 44px; color: #FFFFFF; text-decoration: none; font-size: 18px; box-shadow: 0 4px 8px rgba(99, 230, 226, 0.3);">🎵</a>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                        
+                                        <div style="border-top: 1px solid rgba(255, 255, 255, 0.1); padding-top: 20px;">
+                                            <p style="margin: 0 0 10px 0; color: rgba(255, 255, 255, 0.6); font-size: 12px;">
+                                                <strong>DawnoTemu Sp. z o.o.</strong><br>
+                                                ul. Żywiczna 38A, 03-179 Warszawa
+                                            </p>
+                                            <p style="margin: 0 0 15px 0; color: rgba(255, 255, 255, 0.6); font-size: 12px;">
+                                                Masz pytania? Napisz do nas: <a href="mailto:zespol.dawnotemu@gmail.com" style="color: #DA8FFF; text-decoration: none;">zespol.dawnotemu@gmail.com</a>
+                                            </p>
+                                            <p style="margin: 0; color: rgba(255, 255, 255, 0.5); font-size: 11px;">
+                                                © 2025 DawnoTemu. Wszystkie prawa zastrzeżone.
+                                            </p>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                    
+                </table>
+                
+                <!-- Unsubscribe link -->
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin-top: 20px;">
+                    <tr>
+                        <td style="text-align: center; padding: 10px;">
+                            <p style="margin: 0; color: #9CA3AF; font-size: 11px;">
+                                Jeśli nie chcesz już otrzymywać naszych wiadomości, możesz się <a href="#" style="color: #DA8FFF; text-decoration: underline;">wypisać z listy</a>.
+                            </p>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html> 

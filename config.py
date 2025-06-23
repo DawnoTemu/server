@@ -1,7 +1,21 @@
 import os
+import boto3
+import logging
 from pathlib import Path
 from dotenv import load_dotenv
 from utils.s3_client import S3Client
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
+# Silence overly verbose loggers
+logging.getLogger('boto3').setLevel(logging.WARNING)
+logging.getLogger('botocore').setLevel(logging.WARNING)
+logging.getLogger('urllib3').setLevel(logging.WARNING)
+logging.getLogger('werkzeug').setLevel(logging.WARNING)
 
 # Load environment variables
 load_dotenv()
@@ -40,6 +54,15 @@ class Config:
     
     # ElevenLabs API configuration
     ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
+    CARTESIA_API_KEY = os.getenv("CARTESIA_API_KEY")
+    
+    # Resend API configuration
+    RESEND_API_KEY = os.getenv("RESEND_API_KEY")
+    RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL", "no-reply@dawnotemu.app")
+    FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    
+    # Voice service selection ("elevenlabs" or "cartesia")
+    PREFERRED_VOICE_SERVICE = os.getenv("PREFERRED_VOICE_SERVICE", "elevenlabs").lower()
     
     # File paths and storage
     UPLOAD_FOLDER = Path("uploads")

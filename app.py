@@ -37,14 +37,6 @@ def create_app(testing=False):
     # Configure the app
     app.config['SQLALCHEMY_DATABASE_URI'] = Config.SQLALCHEMY_DATABASE_URI
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = Config.SQLALCHEMY_TRACK_MODIFICATIONS
-    app.config['MAIL_SERVER'] = os.getenv('MAIL_SERVER', 'smtp.gmail.com')
-    app.config['MAIL_PORT'] = int(os.getenv('MAIL_PORT', 587))
-    app.config['MAIL_USE_TLS'] = os.getenv('MAIL_USE_TLS', 'True').lower() == 'true'
-    app.config['MAIL_USE_SSL'] = os.getenv('MAIL_USE_SSL', 'False').lower() == 'true'
-    app.config['MAIL_USERNAME'] = os.getenv('MAIL_USERNAME')
-    app.config['MAIL_PASSWORD'] = os.getenv('MAIL_PASSWORD')
-    app.config['MAIL_DEFAULT_SENDER'] = os.getenv('MAIL_DEFAULT_SENDER', 'noreply@storyvoice.app')
-    app.config['FRONTEND_URL'] = os.getenv('FRONTEND_URL', 'http://localhost:3000')
     
     # Celery configuration
     app.config['broker_url'] = os.getenv('REDIS_URL', 'redis://localhost:6379/0')

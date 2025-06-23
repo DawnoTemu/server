@@ -18,6 +18,7 @@ def setup_test_environment():
     """Set up test environment variables and directories"""
     # Set environment variables for testing
     os.environ["ELEVENLABS_API_KEY"] = "test_api_key"
+    os.environ["CARTESIA_API_KEY"] = "test_cartesia_api_key"
     os.environ["AWS_ACCESS_KEY_ID"] = "test_aws_key"
     os.environ["AWS_SECRET_ACCESS_KEY"] = "test_aws_secret"
     os.environ["AWS_REGION"] = "test-region-1"
@@ -135,4 +136,38 @@ def mock_elevenlabs_session():
     
     # Patch the ElevenLabsService create_session method
     with patch('utils.elevenlabs_service.ElevenLabsService.create_session', return_value=mock_session):
+        yield mock_session
+
+
+@pytest.fixture
+def mock_cartesia_session():
+    """Mock requests session for Cartesia API"""
+    # Create a proper mock with the headers attribute as a dictionary
+    mock_session = MagicMock()
+    mock_session.headers = {}  # Initialize as dict, not a mock
+    
+    # Configure post method to return successful response for voice cloning
+    mock_post_response = MagicMock()
+    mock_post_response.status_code = 200
+    mock_post_response.json.return_value = {
+        "id": "test-voice-id-789",
+        "name": "Test Voice",
+        "user_id": "test-user-123",
+        "is_public": False,
+        "description": "Test voice description",
+        "created_at": "2024-11-13T07:06:22.476564Z",
+        "language": "pl"
+    }
+    mock_post_response.content = b'mock audio content'
+    mock_post_response.raise_for_status.return_value = None
+    mock_session.post.return_value = mock_post_response
+    
+    # Configure delete method for voice deletion
+    mock_delete_response = MagicMock()
+    mock_delete_response.status_code = 200
+    mock_delete_response.json.return_value = {"status": "success"}
+    mock_session.delete.return_value = mock_delete_response
+    
+    # Patch the CartesiaService create_session method
+    with patch('utils.cartesia_service.CartesiaService.create_session', return_value=mock_session):
         yield mock_session

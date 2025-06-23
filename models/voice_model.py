@@ -9,7 +9,7 @@ import tempfile
 from config import Config
 from database import db
 from datetime import datetime
-from utils.elevenlabs_service import ElevenLabsService
+from utils.voice_service import VoiceService
 
 # Configure logger
 logger = logging.getLogger('voice_model_service')
@@ -67,8 +67,15 @@ class VoiceModel:
     
     @staticmethod
     def create_api_session():
-        """Create a session for ElevenLabs API with authentication"""
-        return ElevenLabsService.create_session()
+        """Create a session for voice API with authentication"""
+        # For backward compatibility, we still provide this method
+        # but it now routes to the appropriate service
+        if Config.PREFERRED_VOICE_SERVICE == "cartesia":
+            from utils.cartesia_sdk_service import CartesiaSDKService
+            return CartesiaSDKService.get_client()
+        else:
+            from utils.elevenlabs_service import ElevenLabsService
+            return ElevenLabsService.create_session()
     
     @staticmethod
     def clone_voice(file_data, filename, user_id, voice_name=None):
@@ -140,7 +147,7 @@ class VoiceModel:
     @staticmethod
     def _clone_voice_api(file_data, filename, user_id, voice_name=None, remove_background_noise=False):
         """
-        Internal method to handle the actual API call to ElevenLabs for voice cloning
+        Internal method to handle the actual API call for voice cloning
         This is called by the async task, not directly by controllers
         
         Args:
@@ -158,22 +165,37 @@ class VoiceModel:
             from utils.audio_splitter import split_audio_file
             from utils.s3_client import S3Client
             
-            # Set voice name and description
+            # Set voice name
             if not voice_name:               
                 voice_name = f"{user_id}_MAIN"
-            voice_description = f"Main voice model for user {user_id}"
             
-            # Split audio into chunks if needed
-            audio_chunks = split_audio_file(file_data, filename)
-            logger.info(f"Split audio into {len(audio_chunks)} chunks")
+            # Get the language from config - default to 'pl' if not specified
+            language = getattr(Config, 'DEFAULT_LANGUAGE', 'pl')
             
-            # Use the ElevenLabsService to clone the voice
-            return ElevenLabsService.clone_voice(
-                files=audio_chunks,
-                voice_name=voice_name,
-                voice_description=voice_description,
-                remove_background_noise=remove_background_noise
-            )
+            # For ElevenLabs, we need to split the audio
+            if Config.PREFERRED_VOICE_SERVICE == "elevenlabs":
+                # Split audio into chunks if needed
+                audio_chunks = split_audio_file(file_data, filename)
+                logger.info(f"Split audio into {len(audio_chunks)} chunks")
+                
+                # Use the ElevenLabsService through VoiceService
+                return VoiceService.clone_voice(
+                    file_data=file_data,
+                    filename=filename,
+                    user_id=user_id,
+                    voice_name=voice_name,
+                    service="elevenlabs"
+                )
+            else:
+                # Use the CartesiaService through VoiceService
+                return VoiceService.clone_voice(
+                    file_data=file_data,
+                    filename=filename,
+                    user_id=user_id,
+                    voice_name=voice_name,
+                    language=language,
+                    service="cartesia"
+                )
                 
         except Exception as e:
             logger.error(f"Exception in _clone_voice_api: {str(e)}")
@@ -182,7 +204,7 @@ class VoiceModel:
     @staticmethod
     def delete_voice(voice_id):
         """
-        Delete a voice from ElevenLabs and from the database
+        Delete a voice from the external service and from the database
         
         Args:
             voice_id: Database ID of the voice
@@ -197,14 +219,17 @@ class VoiceModel:
             if not voice:
                 return False, "Voice not found in database"
             
-            # Check if the voice has an ElevenLabs ID (it might be in pending state)
-            elevenlabs_voice_id = voice.elevenlabs_voice_id
+            # Check if the voice has an external ID (it might be in pending state)
+            external_voice_id = voice.elevenlabs_voice_id
             api_success = True
-            api_message = "Voice was still pending, no ElevenLabs voice to delete"
+            api_message = "Voice was still pending, no external voice to delete"
             
-            if elevenlabs_voice_id:
-                # Delete the voice from ElevenLabs
-                api_success, api_message = ElevenLabsService.delete_voice(elevenlabs_voice_id)
+            if external_voice_id:
+                # Delete the voice from the external service
+                api_success, api_message = VoiceService.delete_voice(
+                    voice_id=voice_id,
+                    external_voice_id=external_voice_id
+                )
             
             # Delete any S3 samples
             s3_success = True
@@ -227,11 +252,11 @@ class VoiceModel:
             if api_success and s3_success:
                 return True, "Voice deleted successfully from all systems"
             elif api_success:
-                return True, f"Voice deleted from database and ElevenLabs, but there was an issue with S3: {s3_message}"
+                return True, f"Voice deleted from database and external service, but there was an issue with S3: {s3_message}"
             elif s3_success:
-                return True, f"Voice deleted from database and S3, but there was an issue with ElevenLabs: {api_message}"
+                return True, f"Voice deleted from database and S3, but there was an issue with external service: {api_message}"
             else:
-                return True, f"Voice deleted from database, but there were issues with ElevenLabs ({api_message}) and S3 ({s3_message})"
+                return True, f"Voice deleted from database, but there were issues with external service ({api_message}) and S3 ({s3_message})"
                 
         except Exception as e:
             logger.error(f"Exception in delete_voice: {str(e)}")
