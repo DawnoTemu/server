@@ -107,18 +107,29 @@ class VoiceModel:
             db.session.add(new_voice)
             db.session.commit()
             
-            # Save file data temporarily (Celery can't serialize file objects)
-            temp_dir = tempfile.mkdtemp(prefix="storyvoice_")
-            temp_path = os.path.join(temp_dir, f"voice_{new_voice.id}_{uuid.uuid4()}.tmp")
+            # Upload file to S3 for Celery worker to access
+            from utils.s3_client import S3Client
             
-            # Reset file position and save
+            # Generate a temporary S3 key for the upload
+            temp_s3_key = f"temp_uploads/{user_id}/voice_{new_voice.id}_{uuid.uuid4()}.{filename.split('.')[-1]}"
+            
+            # Reset file position and upload to S3
             file_data.seek(0)
-            with open(temp_path, 'wb') as f:
-                f.write(file_data.read())
+            extra_args = {
+                'ContentType': 'audio/mpeg' if filename.lower().endswith('.mp3') else 'audio/wav',
+                'Metadata': {
+                    'user_id': str(user_id),
+                    'voice_id': str(new_voice.id),
+                    'original_filename': filename
+                }
+            }
             
-            # Queue async task
+            S3Client.upload_fileobj(file_data, temp_s3_key, extra_args)
+            logger.info(f"Uploaded temporary file to S3: {temp_s3_key}")
+            
+            # Queue async task with S3 key instead of file path
             from tasks.voice_tasks import clone_voice_task
-            task = clone_voice_task.delay(new_voice.id, temp_path, filename, user_id, voice_name)
+            task = clone_voice_task.delay(new_voice.id, temp_s3_key, filename, user_id, voice_name)
             
             logger.info(f"Queued voice cloning task {task.id} for voice ID {new_voice.id}")
             

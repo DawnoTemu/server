@@ -12,6 +12,7 @@ This directory contains all the documentation for the DawnoTemu project.
 - **[EMAIL_SETUP.md](./EMAIL_SETUP.md)** - Email system configuration and setup guide
 - **[README_cartesia.md](./README_cartesia.md)** - Cartesia AI integration guide
 - **[api.doc.md](./api.doc.md)** - Detailed API documentation and examples
+- **[DEPLOYMENT.md](./DEPLOYMENT.md)** - Comprehensive deployment guide for all environments
 
 ## 🔗 Quick Links
 
@@ -22,6 +23,7 @@ This directory contains all the documentation for the DawnoTemu project.
 ### System Setup
 - [Email System Setup](./EMAIL_SETUP.md) - Resend API configuration
 - [Cartesia Integration](./README_cartesia.md) - Voice synthesis setup
+- [Deployment Guide](./DEPLOYMENT.md) - Complete deployment instructions
 
 ### Main Project
 - [Project README](../README.md) - Complete project overview and setup

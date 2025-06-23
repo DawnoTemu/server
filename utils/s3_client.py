@@ -160,6 +160,40 @@ class S3Client:
             return False
     
     @classmethod
+    def download_fileobj(cls, key):
+        """
+        Download a file object from S3
+        
+        Args:
+            key: S3 object key
+            
+        Returns:
+            BytesIO: File-like object containing the downloaded data
+            
+        Raises:
+            Exception: If download fails
+        """
+        try:
+            from io import BytesIO
+            
+            file_obj = BytesIO()
+            cls.get_client().download_fileobj(
+                cls.get_bucket_name(),
+                key,
+                file_obj
+            )
+            
+            # Reset file pointer to beginning
+            file_obj.seek(0)
+            
+            logger.debug(f"Successfully downloaded file from {key}")
+            return file_obj
+            
+        except Exception as e:
+            logger.error(f"Failed to download file from {key}: {str(e)}")
+            raise
+    
+    @classmethod
     def delete_objects(cls, keys):
         """
         Delete multiple objects efficiently using batching

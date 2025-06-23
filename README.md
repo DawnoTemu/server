@@ -243,8 +243,8 @@ dawnotemu/server/
 
 ### Voice Cloning Process
 1. **Recording**: User records 1-minute voice sample via web interface
-2. **Upload**: Audio file uploaded to AWS S3
-3. **Processing**: Celery task processes voice cloning via Cartesia/ElevenLabs
+2. **Upload**: Audio file uploaded to AWS S3 for distributed processing
+3. **Processing**: Celery task downloads from S3 and processes voice cloning via Cartesia/ElevenLabs
 4. **Storage**: Voice profile stored in database with status tracking
 
 ### Story Synthesis Process

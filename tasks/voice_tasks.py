@@ -49,13 +49,13 @@ class VoiceTask(Task):
 
 @celery_app.task(bind=True, base=VoiceTask, max_retries=2, 
                  autoretry_for=(Exception,), retry_backoff=True)
-def clone_voice_task(self, voice_id, file_path, filename, user_id, voice_name=None):
+def clone_voice_task(self, voice_id, s3_key, filename, user_id, voice_name=None):
     """
-    Asynchronous task to clone a voice using ElevenLabs API
+    Asynchronous task to clone a voice using voice synthesis APIs
     
     Args:
         voice_id: ID of the voice record in the database
-        file_path: Path to temporarily stored audio file
+        s3_key: S3 key where the audio file is temporarily stored
         filename: Original filename
         user_id: ID of the user who owns this voice
         voice_name: Optional name for the voice
@@ -80,14 +80,16 @@ def clone_voice_task(self, voice_id, file_path, filename, user_id, voice_name=No
         voice.status = VoiceStatus.PROCESSING
         db.session.commit()
         
-        # Read file data
+        # Download file data from S3
         try:
-            with open(file_path, 'rb') as f:
-                file_data = BytesIO(f.read())
+            logger.info(f"Downloading file from S3: {s3_key}")
+            file_obj = S3Client.download_fileobj(s3_key)
+            file_data = BytesIO(file_obj.read())
+            logger.info(f"Successfully downloaded file from S3, size: {len(file_data.getvalue())} bytes")
         except Exception as e:
-            logger.error(f"Error reading file {file_path}: {e}")
+            logger.error(f"Error downloading file from S3 {s3_key}: {e}")
             voice.status = VoiceStatus.ERROR
-            voice.error_message = f"Could not read voice sample: {str(e)}"
+            voice.error_message = f"Could not download voice sample from S3: {str(e)}"
             db.session.commit()
             return False
             
@@ -95,44 +97,44 @@ def clone_voice_task(self, voice_id, file_path, filename, user_id, voice_name=No
         success, result = VoiceModel._clone_voice_api(file_data, filename, user_id, voice_name)
         
         if success:
-            # Get the ElevenLabs voice ID
-            elevenlabs_voice_id = result.get("voice_id")
+            # Get the voice ID from the result
+            external_voice_id = result.get("voice_id")
             
-            if not elevenlabs_voice_id:
+            if not external_voice_id:
                 voice.status = VoiceStatus.ERROR
-                voice.error_message = "No voice ID returned from ElevenLabs"
+                voice.error_message = "No voice ID returned from voice service"
                 db.session.commit()
                 return False
                 
-            # Store original sample in S3
-            s3_sample_key = None
+            # Store original sample in S3 (permanent location)
+            permanent_s3_key = None
             try:
                 # Reset file position
                 file_data.seek(0)
                 
-                # Generate S3 key for the sample
-                s3_sample_key = f"{VoiceModel.VOICE_SAMPLES_PREFIX}{user_id}/{elevenlabs_voice_id}.mp3"
+                # Generate permanent S3 key for the sample
+                permanent_s3_key = f"{VoiceModel.VOICE_SAMPLES_PREFIX}{user_id}/{external_voice_id}.mp3"
                 
-                # Upload to S3
+                # Upload to permanent S3 location
                 extra_args = {
                     'ContentType': 'audio/mpeg',
                     'CacheControl': 'max-age=31536000',  # Cache for 1 year
                 }
                 
-                S3Client.upload_fileobj(file_data, s3_sample_key, extra_args)
-                logger.info(f"Stored voice sample in S3: {s3_sample_key}")
+                S3Client.upload_fileobj(file_data, permanent_s3_key, extra_args)
+                logger.info(f"Stored voice sample in permanent S3 location: {permanent_s3_key}")
             except Exception as e:
-                logger.error(f"Failed to store voice sample in S3: {str(e)}")
-                # Continue even if S3 storage fails
+                logger.error(f"Failed to store voice sample in permanent S3 location: {str(e)}")
+                # Continue even if permanent S3 storage fails
             
             # Update voice record with successful results
-            voice.elevenlabs_voice_id = elevenlabs_voice_id
-            voice.s3_sample_key = s3_sample_key
+            voice.elevenlabs_voice_id = external_voice_id
+            voice.s3_sample_key = permanent_s3_key
             voice.sample_filename = filename
             voice.status = VoiceStatus.READY
             db.session.commit()
             
-            logger.info(f"Voice cloning successful for voice ID {voice_id}, ElevenLabs ID: {elevenlabs_voice_id}")
+            logger.info(f"Voice cloning successful for voice ID {voice_id}, External Voice ID: {external_voice_id}")
             return True
         else:
             # Update with error
@@ -147,17 +149,10 @@ def clone_voice_task(self, voice_id, file_path, filename, user_id, voice_name=No
         raise  # Let the task retry mechanism handle it
         
     finally:
-        # Clean up temp file and directory
+        # Clean up temporary S3 file
         try:
-            # First remove the file
-            if os.path.exists(file_path):
-                os.remove(file_path)
-                logger.info(f"Cleaned up temporary file: {file_path}")
-            
-            # Then remove the directory
-            temp_dir = os.path.dirname(file_path)
-            if os.path.exists(temp_dir):
-                os.rmdir(temp_dir)
-                logger.info(f"Cleaned up temporary directory: {temp_dir}")
+            from utils.s3_client import S3Client
+            S3Client.delete_objects([s3_key])
+            logger.info(f"Cleaned up temporary S3 file: {s3_key}")
         except Exception as e:
-            logger.error(f"Failed to clean up temporary resources: {e}")
+            logger.error(f"Failed to clean up temporary S3 file {s3_key}: {e}")
