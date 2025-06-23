@@ -21,8 +21,9 @@ DawnoTemu is an AI-powered platform that creates personalized bedtime stories us
 - **📚 Curated Polish Story Library**: Classic Polish fairy tales and bedtime stories
 - **🎵 Interactive Audio Player**: Full playback controls with seek/scrub functionality
 - **📱 Responsive Design**: Beautiful, mobile-first interface with DawnoTemu branding
-- **🔐 User Authentication**: Secure account system with email confirmation
+- **🔐 User Authentication**: Secure account system with email confirmation and beta approval
 - **📧 Professional Email System**: Branded emails using Resend API with beautiful templates
+- **👨‍💼 Beta Management**: Admin-controlled user activation system for beta phase
 
 ### Advanced Features
 - **⚡ Background Processing**: Celery-powered asynchronous voice synthesis
@@ -231,7 +232,11 @@ dawnotemu/server/
 │   ├── test_controllers/         # Controller tests
 │   ├── test_routes/              # Route tests
 │   └── test_*.py                 # Various test files
-└── openapi.yaml                  # API documentation
+└── docs/                         # Documentation
+    ├── openapi.yaml              # API documentation
+    ├── EMAIL_SETUP.md            # Email system documentation
+    ├── README_cartesia.md        # Cartesia integration guide
+    └── api.doc.md                # API documentation guide
 ```
 
 ## 🔄 How It Works
@@ -282,6 +287,36 @@ dawnotemu/server/
 
 ### Task Management
 - `GET /tasks/<task_id>/status` - Check background task status
+
+### Admin Endpoints (Beta Management)
+- `GET /admin/users` - List all users (admin only)
+- `GET /admin/users/pending` - List pending (inactive) users
+- `GET /admin/users/<user_id>` - Get user details
+- `POST /admin/users/<user_id>/activate` - Activate user account
+- `POST /admin/users/<user_id>/deactivate` - Deactivate user account
+
+## 🧪 Beta Management System
+
+DawnoTemu is currently in beta phase with controlled user access:
+
+### User Registration Flow
+1. **Registration**: Users register with email and password
+2. **Email Confirmation**: Users must confirm their email address
+3. **Beta Approval**: Account remains inactive until admin approval
+4. **Activation**: Admin manually activates approved users
+5. **Access**: Only activated users can log in and use the platform
+
+### Admin Management
+- **Pending Users**: View all users waiting for beta approval
+- **User Activation**: Manually activate approved users
+- **User Deactivation**: Deactivate users if needed
+- **User Management**: Full user list and details
+
+### Beta Features
+- All new users are inactive by default
+- Email confirmation required before activation
+- Admin-controlled access during beta phase
+- Secure API endpoints for user management
 
 ## 🚀 Deployment
 
@@ -358,17 +393,22 @@ Test categories:
 
 ### Email Testing
 ```bash
-python test_resend_email.py
+python tests/test_resend_email.py
 ```
 
 ### Voice Quality Testing
 ```bash
-python test_voice_quality_comparison.py
+python tests/test_voice_quality_comparison.py
 ```
 
 ### API Testing
 ```bash
-python test_endpoints.py
+python tests/test_endpoints.py
+```
+
+### Beta System Testing
+```bash
+python tests/test_beta_system.py
 ```
 
 ## 📧 Email System

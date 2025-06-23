@@ -13,7 +13,7 @@ class User(db.Model):
     email = db.Column(db.String(255), unique=True, nullable=False, index=True)
     password_hash = db.Column(db.String(255), nullable=False)
     email_confirmed = db.Column(db.Boolean, default=False)
-    is_active = db.Column(db.Boolean, default=True)
+    is_active = db.Column(db.Boolean, default=False)
     last_login = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -35,6 +35,7 @@ class User(db.Model):
             'id': self.id,
             'email': self.email,
             'email_confirmed': self.email_confirmed,
+            'is_active': self.is_active,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'last_login': self.last_login.isoformat() if self.last_login else None
         }
@@ -171,3 +172,61 @@ class UserModel:
         if user:
             user.last_login = datetime.utcnow()
             db.session.commit()
+    
+    @staticmethod
+    def activate_user(user_id):
+        """
+        Activate a user account
+        
+        Args:
+            user_id: ID of the user
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        user = UserModel.get_by_id(user_id)
+        if not user:
+            return False
+            
+        user.is_active = True
+        db.session.commit()
+        return True
+    
+    @staticmethod
+    def deactivate_user(user_id):
+        """
+        Deactivate a user account
+        
+        Args:
+            user_id: ID of the user
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        user = UserModel.get_by_id(user_id)
+        if not user:
+            return False
+            
+        user.is_active = False
+        db.session.commit()
+        return True
+    
+    @staticmethod
+    def get_all_users():
+        """
+        Get all users (for admin purposes)
+        
+        Returns:
+            list: List of all User objects
+        """
+        return User.query.all()
+    
+    @staticmethod
+    def get_pending_users():
+        """
+        Get all inactive users (for admin approval)
+        
+        Returns:
+            list: List of inactive User objects
+        """
+        return User.query.filter_by(is_active=False).all()

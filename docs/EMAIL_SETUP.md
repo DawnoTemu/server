@@ -96,7 +96,7 @@ html_body = EmailTemplateHelper.get_base_email_template(
 To test the email integration and template system, run:
 
 ```bash
-python test_resend_email.py
+python tests/test_resend_email.py
 ```
 
 This will:

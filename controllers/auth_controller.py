@@ -39,7 +39,9 @@ class AuthController:
             # Send confirmation email
             EmailService.send_confirmation_email(email, token)
             
-            return True, {"message": "Registration successful. Please check your email to confirm your account."}, 201
+            return True, {
+                "message": "Registration successful! Please check your email to confirm your account. After confirmation, your account will be reviewed for beta access. You'll be notified when your account is activated."
+            }, 201
             
         except Exception as e:
             db.session.rollback()
@@ -148,7 +150,9 @@ class AuthController:
             
         # Confirm the email
         if UserModel.confirm_email(user_id):
-            return True, {"message": "Email confirmed successfully. You can now log in."}, 200
+            return True, {
+                "message": "Email confirmed successfully! Your account is now pending beta approval. You'll be notified when your account is activated and you can log in."
+            }, 200
         else:
             return False, {"error": "User not found"}, 404
     
