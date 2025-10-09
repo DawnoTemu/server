@@ -206,10 +206,20 @@ def debit(user_id: int, amount: int, reason: str, audio_story_id: Optional[int] 
             # Update existing debit to include the extra charge
             existing.amount -= extra_needed  # more negative
             db.session.flush()
+            # Merge allocations into existing rows to avoid PK conflicts
+            existing_alloc_rows = {
+                a.lot_id: a
+                for a in db.session.query(CreditTransactionAllocation)
+                .filter(CreditTransactionAllocation.transaction_id == existing.id)
+                .all()
+            }
             for lot, take in extra_allocations:
-                db.session.add(
-                    CreditTransactionAllocation(transaction_id=existing.id, lot_id=lot.id, amount=-take)
-                )
+                if lot.id in existing_alloc_rows:
+                    existing_alloc_rows[lot.id].amount += -take
+                else:
+                    db.session.add(
+                        CreditTransactionAllocation(transaction_id=existing.id, lot_id=lot.id, amount=-take)
+                    )
             user.credits_balance = int(user.credits_balance or 0) - extra_needed
             db.session.commit()
             return True, existing
