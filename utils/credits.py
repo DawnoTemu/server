@@ -1,4 +1,5 @@
 from typing import Dict
+import math
 
 
 def get_credit_config() -> Dict[str, int | str]:
@@ -42,3 +43,22 @@ def get_credit_sources_priority() -> list[str]:
             seen.add(s)
             normalized.append(s)
     return normalized
+
+
+def calculate_required_credits(text: str | None, unit_size: int | None = None) -> int:
+    """Calculate required Story Points for the given text length.
+
+    - Uses ceil(len(text) / unit_size)
+    - Minimum of 1 credit for any request (including empty text)
+    - If `unit_size` is None or invalid (<=0), falls back to Config.CREDITS_UNIT_SIZE or 1000
+    """
+    if unit_size is None or not isinstance(unit_size, int) or unit_size <= 0:
+        try:
+            from config import Config
+            unit_size = int(getattr(Config, "CREDITS_UNIT_SIZE", 1000))
+        except Exception:
+            unit_size = 1000
+
+    length = len(text) if text else 0
+    credits = math.ceil(length / unit_size) if unit_size > 0 else 1
+    return max(1, credits)
