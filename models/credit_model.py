@@ -144,7 +144,7 @@ def debit(user_id: int, amount: int, reason: str, audio_story_id: Optional[int] 
             .first()
         )
         if existing:
-            # If the prior debit still has outstanding amount (not fully refunded), reuse it
+            # Calculate outstanding amount on the existing debit
             refunded_amount = (
                 db.session.query(func.coalesce(func.sum(CreditTransaction.amount), 0))
                 .filter(
@@ -156,8 +156,63 @@ def debit(user_id: int, amount: int, reason: str, audio_story_id: Optional[int] 
                 .scalar()
             )
             outstanding = (-existing.amount) - refunded_amount
-            if outstanding > 0:
+            if amount <= outstanding:
+                # Existing debit already covers the requested amount
                 return True, existing
+            # Need to charge the difference on top of existing debit
+            extra_needed = amount - outstanding
+            user = _lock_user(user_id)
+            # Build available lots
+            active_lots = _active_lots_query(user_id).all()
+            lots_by_source: dict[str, list[CreditLot]] = {}
+            for lot in active_lots:
+                key = (lot.source or '').strip().lower()
+                lots_by_source.setdefault(key, []).append(lot)
+            for src in list(lots_by_source.keys()):
+                lots_by_source[src].sort(key=lambda l: (l.expires_at or datetime.max, l.created_at))
+            total_available = sum(l.amount_remaining for lots in lots_by_source.values() for l in lots)
+            if total_available < extra_needed:
+                raise InsufficientCreditsError(
+                    f"Insufficient Story Points: need +{extra_needed}, available {total_available}"
+                )
+            # Order sources
+            prio = _priority_sources()
+            seen: set[str] = set()
+            ordered_sources: list[str] = []
+            for s in prio:
+                if s in lots_by_source and s not in seen:
+                    ordered_sources.append(s)
+                    seen.add(s)
+            for s in lots_by_source.keys():
+                if s not in seen:
+                    ordered_sources.append(s)
+            remaining_extra = extra_needed
+            extra_allocations: List[Tuple[CreditLot, int]] = []
+            for src in ordered_sources:
+                for lot in lots_by_source.get(src, []):
+                    if remaining_extra <= 0:
+                        break
+                    take = min(remaining_extra, lot.amount_remaining)
+                    if take > 0:
+                        lot.amount_remaining -= take
+                        extra_allocations.append((lot, take))
+                        remaining_extra -= take
+                if remaining_extra <= 0:
+                    break
+            if remaining_extra > 0:
+                raise InsufficientCreditsError(
+                    f"Insufficient Story Points after allocation: need +{extra_needed}, allocated {extra_needed - remaining_extra}"
+                )
+            # Update existing debit to include the extra charge
+            existing.amount -= extra_needed  # more negative
+            db.session.flush()
+            for lot, take in extra_allocations:
+                db.session.add(
+                    CreditTransactionAllocation(transaction_id=existing.id, lot_id=lot.id, amount=-take)
+                )
+            user.credits_balance = int(user.credits_balance or 0) - extra_needed
+            db.session.commit()
+            return True, existing
 
     user = _lock_user(user_id)
 
