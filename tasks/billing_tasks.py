@@ -66,3 +66,59 @@ celery_app.conf.beat_schedule = getattr(celery_app.conf, 'beat_schedule', {}) | 
     }
 }
 
+
+@celery_app.task(name='billing.expire_credit_lots', ignore_result=True)
+def expire_credit_lots():
+    """Daily job to expire credit lots at or before now and adjust balances.
+
+    Behavior:
+    - Finds lots where expires_at <= now AND amount_remaining > 0.
+    - Zeros out amount_remaining for those lots.
+    - Decreases users.credits_balance by the total amount removed per user (not below 0).
+    """
+    now = datetime.utcnow()
+    expired_lots = (
+        db.session.query(CreditLot)
+        .filter(
+            CreditLot.expires_at.isnot(None),
+            CreditLot.expires_at <= now,
+            CreditLot.amount_remaining > 0,
+        )
+        .all()
+    )
+    if not expired_lots:
+        logger.info('No expiring credit lots found.')
+        return
+
+    delta_by_user: dict[int, int] = {}
+    for lot in expired_lots:
+        amt = int(lot.amount_remaining or 0)
+        if amt <= 0:
+            continue
+        lot.amount_remaining = 0
+        delta_by_user[lot.user_id] = delta_by_user.get(lot.user_id, 0) + amt
+
+    # Apply balance adjustments
+    for user_id, delta in delta_by_user.items():
+        user = db.session.get(User, user_id)
+        if not user:
+            continue
+        curr = int(user.credits_balance or 0)
+        new_val = max(0, curr - delta)
+        user.credits_balance = new_val
+
+    try:
+        db.session.commit()
+        logger.info('Expired %d lots; adjusted %d users.', len(expired_lots), len(delta_by_user))
+    except Exception as e:
+        db.session.rollback()
+        logger.error('Error expiring credit lots: %s', e)
+
+
+# Schedule the expiration sweeper daily at 03:15 UTC
+celery_app.conf.beat_schedule = getattr(celery_app.conf, 'beat_schedule', {}) | {
+    'expire-credit-lots-daily': {
+        'task': 'billing.expire_credit_lots',
+        'schedule': crontab(minute=15, hour=3),
+    }
+}
