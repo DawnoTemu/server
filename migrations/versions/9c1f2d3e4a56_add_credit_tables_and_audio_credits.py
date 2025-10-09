@@ -36,21 +36,14 @@ def upgrade():
         sa.Column('updated_at', sa.DateTime(), server_default=sa.func.now(), nullable=False),
     )
 
-    # Unique protection against duplicate debit per audio story
+    # Unique protection against duplicate open (status='applied') debit per (audio_story, user)
     bind = op.get_bind()
     dialect = bind.dialect.name if bind is not None else None
-    if dialect == 'postgresql':
+    if dialect in ('postgresql', 'sqlite'):
         op.execute("""
-            CREATE UNIQUE INDEX IF NOT EXISTS uq_credit_tx_debit_per_audio
-            ON credit_transactions (audio_story_id)
-            WHERE type = 'debit'
-        """)
-    elif dialect == 'sqlite':
-        # SQLite supports partial indexes; scope uniqueness to debit only
-        op.execute("""
-            CREATE UNIQUE INDEX IF NOT EXISTS uq_credit_tx_debit_per_audio
-            ON credit_transactions (audio_story_id)
-            WHERE type = 'debit'
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_credit_tx_open_debit
+            ON credit_transactions (audio_story_id, user_id)
+            WHERE type = 'debit' AND status = 'applied'
         """)
     else:
         # Other dialects without partial indexes: skip uniqueness here and
@@ -94,7 +87,7 @@ def downgrade():
     bind = op.get_bind()
     dialect = bind.dialect.name if bind is not None else None
     if dialect in ('postgresql', 'sqlite'):
-        op.execute("DROP INDEX IF EXISTS uq_credit_tx_debit_per_audio")
+        op.execute("DROP INDEX IF EXISTS uq_credit_tx_open_debit")
     else:
         # No index/constraint was created for other dialects in upgrade()
         pass
