@@ -142,7 +142,19 @@ def debit(user_id: int, amount: int, reason: str, audio_story_id: Optional[int] 
             .first()
         )
         if existing:
-            return True, existing
+            # If the prior debit is fully refunded, allow a new debit
+            refunded_amount = (
+                db.session.query(func.coalesce(func.sum(CreditTransaction.amount), 0))
+                .filter(
+                    CreditTransaction.audio_story_id == audio_story_id,
+                    CreditTransaction.user_id == user_id,
+                    CreditTransaction.type == 'refund',
+                )
+                .scalar()
+            )
+            outstanding = (-existing.amount) - refunded_amount
+            if outstanding > 0:
+                return True, existing
 
     user = _lock_user(user_id)
 
@@ -260,6 +272,10 @@ def refund_by_audio(audio_story_id: int, reason: str):
             CreditTransactionAllocation(transaction_id=refund_tx.id, lot_id=lot.id, amount=take)
         )
         remaining -= take
+
+    # If fully refunded, mark the original debit as refunded to allow re-debit later
+    if refunded_amount + to_refund >= debit_amount:
+        debit_tx.status = 'refunded'
 
     # Adjust cached balance
     user.credits_balance = int(user.credits_balance or 0) + to_refund
