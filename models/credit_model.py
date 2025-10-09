@@ -138,17 +138,20 @@ def debit(user_id: int, amount: int, reason: str, audio_story_id: Optional[int] 
                 CreditTransaction.audio_story_id == audio_story_id,
                 CreditTransaction.user_id == user_id,
                 CreditTransaction.type == 'debit',
+                CreditTransaction.status == 'applied',
             )
+            .order_by(CreditTransaction.created_at.desc())
             .first()
         )
         if existing:
-            # If the prior debit is fully refunded, allow a new debit
+            # If the prior debit still has outstanding amount (not fully refunded), reuse it
             refunded_amount = (
                 db.session.query(func.coalesce(func.sum(CreditTransaction.amount), 0))
                 .filter(
                     CreditTransaction.audio_story_id == audio_story_id,
                     CreditTransaction.user_id == user_id,
                     CreditTransaction.type == 'refund',
+                    CreditTransaction.created_at >= existing.created_at,
                 )
                 .scalar()
             )
@@ -211,13 +214,27 @@ def debit(user_id: int, amount: int, reason: str, audio_story_id: Optional[int] 
 
 
 def refund_by_audio(audio_story_id: int, reason: str):
-    # Find original debit
+    """Refund the currently applied debit for a given audio story.
+
+    Selects the debit with status='applied' for the correct user and refunds
+    any outstanding portion, supporting idempotent retries.
+    """
+    # Determine the user from the audio story to avoid cross-user refunds
+    from models.audio_model import AudioStory
+    audio_row = db.session.get(AudioStory, audio_story_id)
+    if not audio_row:
+        return True, None
+
+    # Find the outstanding (applied) debit for this user/audio
     debit_tx = (
         db.session.query(CreditTransaction)
         .filter(
             CreditTransaction.audio_story_id == audio_story_id,
+            CreditTransaction.user_id == audio_row.user_id,
             CreditTransaction.type == 'debit',
+            CreditTransaction.status == 'applied',
         )
+        .order_by(CreditTransaction.created_at.desc())
         .first()
     )
     if not debit_tx:
@@ -226,12 +243,14 @@ def refund_by_audio(audio_story_id: int, reason: str):
 
     user = _lock_user(debit_tx.user_id)
 
-    # Check if already refunded to full amount
+    # Compute how much of this specific debit has been refunded already
     refunded_amount = (
         db.session.query(func.coalesce(func.sum(CreditTransaction.amount), 0))
         .filter(
             CreditTransaction.audio_story_id == audio_story_id,
+            CreditTransaction.user_id == user.id,
             CreditTransaction.type == 'refund',
+            CreditTransaction.created_at >= debit_tx.created_at,
         )
         .scalar()
     )
