@@ -129,8 +129,10 @@ def grant(user_id: int, amount: int, reason: str, source: str, expires_at: Optio
 def debit(user_id: int, amount: int, reason: str, audio_story_id: Optional[int] = None, story_id: Optional[int] = None):
     if amount <= 0:
         raise ValueError("Debit amount must be positive")
+    # Acquire per-user lock to prevent concurrent races
+    user = _lock_user(user_id)
 
-    # Idempotency: if a debit for this audio already exists, return it
+    # Idempotency (after locking): if a debit for this audio already exists, return/reuse it
     if audio_story_id is not None:
         existing = (
             db.session.query(CreditTransaction)
@@ -163,7 +165,6 @@ def debit(user_id: int, amount: int, reason: str, audio_story_id: Optional[int] 
                 return True, existing, 0
             # Need to charge the difference on top of existing debit
             extra_needed = amount - outstanding
-            user = _lock_user(user_id)
             # Build available lots
             active_lots = _active_lots_query(user_id).all()
             lots_by_source: dict[str, list[CreditLot]] = {}
@@ -225,8 +226,6 @@ def debit(user_id: int, amount: int, reason: str, audio_story_id: Optional[int] 
             user.credits_balance = int(user.credits_balance or 0) - extra_needed
             db.session.commit()
             return True, existing, extra_needed
-
-    user = _lock_user(user_id)
 
     # Gather active lots and order by configured priority and soonest expiry
     active_lots = _active_lots_query(user_id).all()
@@ -303,21 +302,15 @@ def debit(user_id: int, amount: int, reason: str, audio_story_id: Optional[int] 
 def refund_by_audio(audio_story_id: int, reason: str):
     """Refund the currently applied debit for a given audio story.
 
-    Selects the debit with status='applied' for the correct user and refunds
-    any outstanding portion, supporting idempotent retries.
+    Selects the latest applied debit for this audio_story_id (regardless of the
+    audio record's stored user) and refunds any outstanding portion. This avoids
+    cross-user mismatches when audio records are reused across users.
     """
-    # Determine the user from the audio story to avoid cross-user refunds
-    from models.audio_model import AudioStory
-    audio_row = db.session.get(AudioStory, audio_story_id)
-    if not audio_row:
-        return True, None
-
-    # Find the outstanding (applied) debit for this user/audio
+    # Find the most recent applied debit for this audio story (any user)
     debit_tx = (
         db.session.query(CreditTransaction)
         .filter(
             CreditTransaction.audio_story_id == audio_story_id,
-            CreditTransaction.user_id == audio_row.user_id,
             CreditTransaction.type == 'debit',
             CreditTransaction.status == 'applied',
         )
