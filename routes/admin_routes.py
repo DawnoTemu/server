@@ -3,6 +3,8 @@ from models.user_model import UserModel
 from controllers.admin_controller import AdminController
 from utils.auth_middleware import admin_required, api_key_required
 from routes import admin_bp
+from models.credit_model import grant as credit_grant
+from datetime import datetime
 
 # GET /admin/users - List all users (admin only)
 @admin_bp.route('/users', methods=['GET'])
@@ -185,6 +187,62 @@ def revoke_admin_privileges(current_user, user_id):
         return jsonify({
             "error": "User not found or could not revoke admin privileges"
         }), 404
+
+# POST /admin/users/<user_id>/credits/grant - Grant Story Points to a user
+@admin_bp.route('/users/<int:user_id>/credits/grant', methods=['POST'])
+@admin_required
+def grant_credits(current_user, user_id):
+    """Grant Story Points to a user (admin only).
+
+    Body: { "amount": int>0, "reason": str, "source": str, "expires_at": ISO8601? }
+    """
+    if not request.is_json:
+        return jsonify({"error": "Content-Type must be application/json"}), 400
+
+    data = request.get_json() or {}
+    try:
+        amount = int(data.get('amount', 0))
+    except Exception:
+        amount = 0
+    reason = data.get('reason') or 'admin_grant'
+    source = (data.get('source') or 'add_on').strip().lower()
+    expires_at_raw = data.get('expires_at')
+    expires_at = None
+    if expires_at_raw:
+        try:
+            # Attempt to parse ISO8601
+            expires_at = datetime.fromisoformat(expires_at_raw.replace('Z', '+00:00'))
+        except Exception:
+            return jsonify({"error": "Invalid expires_at format; use ISO8601"}), 400
+
+    if amount <= 0:
+        return jsonify({"error": "amount must be a positive integer"}), 400
+
+    # Ensure user exists
+    user = UserModel.get_by_id(user_id)
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    try:
+        ok, tx = credit_grant(user_id=user_id, amount=amount, reason=reason, source=source, expires_at=expires_at)
+        # Reload user to get updated balance
+        user = UserModel.get_by_id(user_id)
+        return jsonify({
+            "message": "Credits granted",
+            "user_id": user_id,
+            "new_balance": int(user.credits_balance or 0),
+            "transaction": {
+                "id": tx.id if tx else None,
+                "amount": int(tx.amount) if tx else amount,
+                "type": getattr(tx, 'type', 'credit'),
+                "reason": reason,
+                "created_at": tx.created_at.isoformat() if getattr(tx, 'created_at', None) else None,
+            }
+        }), 200
+    except ValueError as ve:
+        return jsonify({"error": str(ve)}), 400
+    except Exception as e:
+        return jsonify({"error": f"Failed to grant credits: {e}"}), 500
 
 # POST /admin/auth/generate-token - Generate admin token for API access
 @admin_bp.route('/auth/generate-token', methods=['POST'])
