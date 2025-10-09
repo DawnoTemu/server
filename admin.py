@@ -370,8 +370,8 @@ def create_user_credits_template(app):
             </tbody>
           </table>
 
-          <a href="{{ url_for('usermodelview.index_view') }}" class="btn btn-secondary">Back</a>
-          <a href="{{ url_for('usermodelview.grant_credits_view') }}?id={{ user.id }}" class="btn btn-primary ms-2">Grant Points</a>
+          <a href="{{ url_for('user.index_view') }}" class="btn btn-secondary">Back</a>
+          <a href="{{ url_for('user.grant_credits_view') }}?id={{ user.id }}" class="btn btn-primary ms-2">Grant Points</a>
         </div>
       </div>
     </div>
@@ -431,7 +431,7 @@ def create_grant_template(app):
               <input type="text" class="form-control" id="expires_at" name="expires_at" placeholder="2025-12-31T23:59:59Z">
             </div>
             <button type="submit" class="btn btn-primary btn-block mt-3">Grant Points</button>
-            <a href="{{ url_for('usermodelview.index_view') }}" class="btn btn-secondary btn-block mt-2">Back</a>
+            <a href="{{ url_for('user.index_view') }}" class="btn btn-secondary btn-block mt-2">Back</a>
           </form>
         </div>
       </div>
@@ -473,8 +473,8 @@ class UserModelView(SecureModelView):
     column_formatters = {
         'last_login': lambda v, c, m, p: m.last_login.strftime('%Y-%m-%d %H:%M:%S') if m.last_login else 'Never',
         'manage_credits': lambda v, c, m, p: Markup(
-            f'<a class="btn btn-sm btn-outline-primary" href="{url_for("usermodelview.user_credits_view")}?id={m.id}">View</a> '
-            f'<a class="btn btn-sm btn-primary" href="{url_for("usermodelview.grant_credits_view")}?id={m.id}">Grant</a>'
+            f'<a class="btn btn-sm btn-outline-primary" href="{url_for("user.user_credits_view")}?id={m.id}">View</a> '
+            f'<a class="btn btn-sm btn-primary" href="{url_for("user.grant_credits_view")}?id={m.id}">Grant</a>'
         )
     }
 
