@@ -42,3 +42,9 @@ def test_minimum_one_credit_with_empty_text():
     assert calculate_required_credits("") == 1
     assert calculate_required_credits(None) == 1
 
+
+def test_invalid_config_unit_size_falls_back(monkeypatch):
+    from config import Config
+    # Misconfigure to 0 -> should fall back to 1000 and not crash
+    monkeypatch.setattr(Config, "CREDITS_UNIT_SIZE", 0, raising=False)
+    assert calculate_required_credits("x" * 1500, unit_size=None) == 2

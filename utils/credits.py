@@ -10,9 +10,16 @@ def get_credit_config() -> Dict[str, int | str]:
     """
     from config import Config
 
+    raw_size = getattr(Config, "CREDITS_UNIT_SIZE", 1000)
+    try:
+        size = int(raw_size)
+    except Exception:
+        size = 1000
+    if size <= 0:
+        size = 1000
     return {
         "unit_label": getattr(Config, "CREDITS_UNIT_LABEL", "Story Points (Punkty Magii)"),
-        "unit_size": int(getattr(Config, "CREDITS_UNIT_SIZE", 1000)),
+        "unit_size": size,
     }
 
 
@@ -55,7 +62,8 @@ def calculate_required_credits(text: str | None, unit_size: int | None = None) -
     if unit_size is None or not isinstance(unit_size, int) or unit_size <= 0:
         try:
             from config import Config
-            unit_size = int(getattr(Config, "CREDITS_UNIT_SIZE", 1000))
+            cfg_val = int(getattr(Config, "CREDITS_UNIT_SIZE", 1000))
+            unit_size = cfg_val if cfg_val > 0 else 1000
         except Exception:
             unit_size = 1000
 
