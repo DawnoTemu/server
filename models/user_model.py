@@ -15,6 +15,8 @@ class User(db.Model):
     email_confirmed = db.Column(db.Boolean, default=False)
     is_active = db.Column(db.Boolean, default=False)
     is_admin = db.Column(db.Boolean, default=False)
+    # Credits balance for Story Points (Punkty Magii)
+    credits_balance = db.Column(db.Integer, nullable=False, default=0)
     last_login = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -38,6 +40,7 @@ class User(db.Model):
             'email_confirmed': self.email_confirmed,
             'is_active': self.is_active,
             'is_admin': self.is_admin,
+            'credits_balance': self.credits_balance,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'last_login': self.last_login.isoformat() if self.last_login else None
         }
@@ -135,7 +138,9 @@ class UserModel:
         Returns:
             User: Newly created user object
         """
-        user = User(email=email, is_admin=is_admin)
+        from config import Config
+        initial_credits = getattr(Config, 'INITIAL_CREDITS', 0) or 0
+        user = User(email=email, is_admin=is_admin, credits_balance=int(initial_credits))
         user.set_password(password)
         
         # Add to database

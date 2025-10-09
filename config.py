@@ -83,6 +83,18 @@ class Config:
     # Voice configuration
     ALLOWED_EXTENSIONS = {"wav", "mp3", "m4a"}
     VOICE_NAME = "MyClonedVoice"
+
+    # Credits configuration
+    CREDITS_UNIT_LABEL = os.getenv("CREDITS_UNIT_LABEL", "Story Points (Punkty Magii)")
+    CREDITS_UNIT_SIZE = int(os.getenv("CREDITS_UNIT_SIZE", "1000"))  # characters per point
+    INITIAL_CREDITS = int(os.getenv("INITIAL_CREDITS", "10"))
+    # Consumption priority: event -> monthly -> referral -> add_on -> free
+    CREDIT_SOURCES_PRIORITY = (
+        os.getenv(
+            "CREDIT_SOURCES_PRIORITY",
+            "event,monthly,referral,add_on,free"
+        ).split(",")
+    )
     
     # Create required directories
     UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
