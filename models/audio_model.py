@@ -41,6 +41,8 @@ class AudioStory(db.Model):
     # Status
     status = db.Column(db.String(20), nullable=False, default=AudioStatus.PENDING.value)
     error_message = db.Column(db.Text, nullable=True)
+    # Credits charged for this synthesis (if any)
+    credits_charged = db.Column(db.Integer, nullable=True)
     
     # S3 storage information
     s3_key = db.Column(db.String(512), nullable=True)
@@ -68,6 +70,7 @@ class AudioStory(db.Model):
             'user_id': self.user_id,
             'status': self.status,
             'error_message': self.error_message,
+            'credits_charged': self.credits_charged,
             'duration_seconds': self.duration_seconds,
             'file_size_bytes': self.file_size_bytes,
             'created_at': self.created_at.isoformat() if self.created_at else None,
