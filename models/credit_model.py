@@ -78,8 +78,17 @@ def _priority_sources() -> List[str]:
 
 
 def _lock_user(user_id: int) -> User:
-    # Lock the user row for update to avoid concurrent mutations
-    stmt = select(User).where(User.id == user_id).with_for_update()
+    """Fetch the user row, using FOR UPDATE when supported.
+
+    SQLite does not support SELECT ... FOR UPDATE; in that case we fall back
+    to a plain SELECT so dev/test remains functional. On Postgres and others,
+    we keep row-level locking to prevent races.
+    """
+    bind = db.session.get_bind()
+    dialect = bind.dialect.name if bind is not None else None
+    stmt = select(User).where(User.id == user_id)
+    if dialect not in ("sqlite", None):
+        stmt = stmt.with_for_update()
     user = db.session.execute(stmt).scalar_one()
     return user
 
