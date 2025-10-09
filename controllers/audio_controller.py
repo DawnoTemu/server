@@ -1,7 +1,7 @@
 from models.audio_model import AudioModel, AudioStatus, AudioStory
 from models.story_model import StoryModel
 from models.voice_model import VoiceModel, Voice, VoiceStatus
-from models.credit_model import debit as credit_debit, InsufficientCreditsError
+from models.credit_model import debit as credit_debit, refund_by_audio, InsufficientCreditsError
 from utils.credits import calculate_required_credits
 from database import db
 import logging
@@ -185,11 +185,25 @@ class AudioController:
                 logger.error(f"Error debiting credits: {e}")
                 return False, {"error": "Failed to charge credits"}, 500
 
-            # Queue async task
-            from tasks.audio_tasks import synthesize_audio_task
-            task = synthesize_audio_task.delay(audio_record.id, voice.id, story_id, text)
-
-            logger.info(f"Queued audio synthesis task {task.id} for audio ID {audio_record.id}")
+            # Queue async task; if queueing fails, refund credits and mark error
+            try:
+                from tasks.audio_tasks import synthesize_audio_task
+                task = synthesize_audio_task.delay(audio_record.id, voice.id, story_id, text)
+                logger.info(f"Queued audio synthesis task {task.id} for audio ID {audio_record.id}")
+            except Exception as qe:
+                logger.error(f"Queueing synthesis task failed: {qe}")
+                try:
+                    refund_by_audio(audio_record.id, reason="queue_failed")
+                except Exception as re:
+                    logger.error(f"Refund after queue failure also failed: {re}")
+                # Mark record as error to unblock future attempts
+                try:
+                    audio_record.status = AudioStatus.ERROR.value
+                    audio_record.error_message = "Queueing failed"
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
+                return False, {"error": "Failed to queue synthesis task"}, 503
 
             return True, {
                 "status": "pending",
