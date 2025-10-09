@@ -6,6 +6,7 @@ Create Date: 2025-03-24 14:05:00.000000
 
 """
 from alembic import op
+import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
@@ -16,29 +17,44 @@ depends_on = None
 
 
 def upgrade():
-    # Seed a non-expiring 'free' credit lot of 10 points for users with no lots
-    # and bump cached credits_balance accordingly.
-    # This prevents immediate 402s for existing users after enabling charging.
-    op.execute(
+    """Seed non-expiring 'free' credit lots for existing users without any lots,
+    and bump cached balances ONLY for those users. Uses Python to compute the
+    eligible set to avoid double-counting when the app already created lots.
+    """
+    bind = op.get_bind()
+    # 1) Find users with no credit lots at all
+    eligible = [
+        row[0]
+        for row in bind.execute(sa.text(
+            """
+            SELECT u.id
+            FROM users u
+            WHERE NOT EXISTS (
+                SELECT 1 FROM credit_lots cl WHERE cl.user_id = u.id
+            )
+            """
+        )).fetchall()
+    ]
+
+    if not eligible:
+        return
+
+    # 2) Insert a free lot for each eligible user
+    insert_stmt = sa.text(
         """
         INSERT INTO credit_lots (user_id, source, amount_granted, amount_remaining, expires_at, created_at, updated_at)
-        SELECT u.id, 'free', 10, 10, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-        FROM users u
-        LEFT JOIN credit_lots cl ON cl.user_id = u.id
-        WHERE cl.user_id IS NULL
+        VALUES (:uid, 'free', 10, 10, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         """
     )
-
-    # Update cached balances for those users we just seeded
-    op.execute(
+    update_stmt = sa.text(
         """
-        UPDATE users AS u
-        SET credits_balance = COALESCE(credits_balance, 0) + 10
-        WHERE NOT EXISTS (
-            SELECT 1 FROM credit_lots cl WHERE cl.user_id = u.id AND cl.amount_granted > 0 AND cl.source = 'free' AND cl.created_at >= CURRENT_DATE
-        ) IS FALSE
+        UPDATE users SET credits_balance = COALESCE(credits_balance, 0) + 10
+        WHERE id = :uid
         """
     )
+    for uid in eligible:
+        bind.execute(insert_stmt, {"uid": uid})
+        bind.execute(update_stmt, {"uid": uid})
 
 
 def downgrade():
@@ -51,4 +67,3 @@ def downgrade():
     )
     # Cannot reliably decrement credits_balance on downgrade due to unknown concurrent mutations
     # so we leave balances as-is.
-
