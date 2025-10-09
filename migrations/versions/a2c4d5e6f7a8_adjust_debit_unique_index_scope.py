@@ -20,12 +20,13 @@ def upgrade():
     dialect = bind.dialect.name if bind is not None else None
     if dialect in ('postgresql', 'sqlite'):
         # Replace prior partial unique index with one scoped to (audio_story_id, user_id)
+        # and only for open debits (status='applied') to allow retries after refunds.
         op.execute("DROP INDEX IF EXISTS uq_credit_tx_debit_per_audio")
         op.execute(
             """
             CREATE UNIQUE INDEX IF NOT EXISTS uq_credit_tx_debit_per_audio_user
             ON credit_transactions (audio_story_id, user_id)
-            WHERE type = 'debit'
+            WHERE type = 'debit' AND status = 'applied'
             """
         )
     else:
@@ -42,10 +43,9 @@ def downgrade():
             """
             CREATE UNIQUE INDEX IF NOT EXISTS uq_credit_tx_debit_per_audio
             ON credit_transactions (audio_story_id)
-            WHERE type = 'debit'
+            WHERE type = 'debit' AND status = 'applied'
             """
         )
     else:
         # No-op
         pass
-
