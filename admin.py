@@ -19,6 +19,7 @@ from models.story_model import Story
 from models.user_model import User
 from models.voice_model import Voice, VoiceModel
 from models.audio_model import AudioStory, AudioStatus
+from models.credit_model import CreditLot, CreditTransaction
 from config import Config
 
 # Constants
@@ -787,6 +788,46 @@ class AudioStoryModelView(SecureModelView):
     def action_regenerate_audio(self, ids):
         return self._regenerate_audio_action(ids)
 
+
+class CreditLotModelView(SecureModelView):
+    """Read-only admin view for credit lots."""
+    can_create = False
+    can_edit = False
+    can_delete = False
+
+    column_list = (
+        'id', 'user_id', 'source', 'amount_granted', 'amount_remaining', 'expires_at', 'created_at', 'updated_at'
+    )
+    column_labels = {
+        'user_id': 'User',
+        'amount_granted': 'Granted',
+        'amount_remaining': 'Remaining',
+    }
+    column_filters = (
+        'user_id', 'source', 'expires_at', 'created_at'
+    )
+    column_searchable_list = ('source',)
+
+
+class CreditTransactionModelView(SecureModelView):
+    """Read-only admin view for credit transactions."""
+    can_create = False
+    can_edit = False
+    can_delete = False
+
+    column_list = (
+        'id', 'user_id', 'type', 'amount', 'status', 'reason', 'audio_story_id', 'story_id', 'created_at'
+    )
+    column_labels = {
+        'user_id': 'User',
+        'audio_story_id': 'Audio ID',
+        'story_id': 'Story ID',
+    }
+    column_filters = (
+        'user_id', 'type', 'status', 'created_at'
+    )
+    column_searchable_list = ('type', 'status', 'reason')
+
 def init_admin(app):
     """Initialize the admin interface."""
     # Create login template
@@ -806,6 +847,8 @@ def init_admin(app):
     admin.add_view(UserModelView(User, db.session, name='Users'))
     admin.add_view(VoiceModelView(Voice, db.session, name='Voices'))
     admin.add_view(AudioStoryModelView(AudioStory, db.session, name='Audio Stories'))
+    admin.add_view(CreditLotModelView(CreditLot, db.session, name='Credit Lots'))
+    admin.add_view(CreditTransactionModelView(CreditTransaction, db.session, name='Credit Transactions'))
 
     # Setup session configuration
     app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(
