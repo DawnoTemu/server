@@ -84,17 +84,23 @@ class Config:
     ALLOWED_EXTENSIONS = {"wav", "mp3", "m4a"}
     VOICE_NAME = "MyClonedVoice"
 
-    # Credits configuration
+    # Credits configuration (tolerant to invalid env input)
     CREDITS_UNIT_LABEL = os.getenv("CREDITS_UNIT_LABEL", "Story Points (Punkty Magii)")
-    CREDITS_UNIT_SIZE = int(os.getenv("CREDITS_UNIT_SIZE", "1000"))  # characters per point
-    INITIAL_CREDITS = int(os.getenv("INITIAL_CREDITS", "10"))
+    try:
+        _cus_raw = os.getenv("CREDITS_UNIT_SIZE", "1000")
+        _cus_val = int(_cus_raw) if str(_cus_raw).strip() != "" else 1000
+    except Exception:
+        _cus_val = 1000
+    CREDITS_UNIT_SIZE = _cus_val if _cus_val > 0 else 1000
+    try:
+        _ic_raw = os.getenv("INITIAL_CREDITS", "10")
+        _ic_val = int(_ic_raw) if str(_ic_raw).strip() != "" else 10
+    except Exception:
+        _ic_val = 10
+    INITIAL_CREDITS = _ic_val if _ic_val >= 0 else 10
     # Consumption priority: event -> monthly -> referral -> add_on -> free
-    CREDIT_SOURCES_PRIORITY = (
-        os.getenv(
-            "CREDIT_SOURCES_PRIORITY",
-            "event,monthly,referral,add_on,free"
-        ).split(",")
-    )
+    _csp_raw = os.getenv("CREDIT_SOURCES_PRIORITY", "event,monthly,referral,add_on,free")
+    CREDIT_SOURCES_PRIORITY = [s.strip() for s in _csp_raw.split(',') if s.strip()]
     
     # Create required directories
     UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
