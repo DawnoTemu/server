@@ -22,6 +22,7 @@ from models.voice_model import Voice, VoiceModel
 from models.audio_model import AudioStory, AudioStatus
 from models.credit_model import CreditLot, CreditTransaction
 from config import Config
+from utils.credits import calculate_required_credits
 
 # Constants
 DEFAULT_SESSION_TIMEOUT = 3600  # 1 hour in seconds
@@ -148,15 +149,20 @@ class SecureModelView(ModelView):
 
 class StoryModelView(SecureModelView):
     """Admin view for managing stories."""
-    column_list = ('id', 'title', 'author', 'created_at', 'updated_at')
+    column_list = ('id', 'title', 'author', 'credits_cost', 'created_at', 'updated_at')
     column_searchable_list = ('title', 'author', 'content')
     column_filters = ('author', 'created_at')
     form_excluded_columns = ('created_at', 'updated_at', 's3_cover_key', 'id') 
+    column_labels = {
+        'credits_cost': 'Credits',
+    }
     
     # Add preview of cover image
     column_formatters = {
         'cover_filename': lambda v, c, m, p: f'<img src="{Config.get_s3_url(m.s3_cover_key)}" width="100">' 
                                              if m.s3_cover_key else ''
+        ,
+        'credits_cost': lambda v, c, m, p: calculate_required_credits((m.content or ''))
     }
     
     column_formatters_args = {
