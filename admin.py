@@ -313,6 +313,71 @@ def create_login_template(app):
 {% endblock %}"""
             )
 
+def create_user_credits_template(app):
+    """Create user credits template if it doesn't exist."""
+    admin_templates_dir = os.path.join(app.root_path, 'templates', 'admin')
+    os.makedirs(admin_templates_dir, exist_ok=True)
+    tpl_path = os.path.join(admin_templates_dir, 'user_credits.html')
+    if not os.path.exists(tpl_path):
+        with open(tpl_path, 'w') as f:
+            f.write(
+                """{% extends 'admin/master.html' %}
+{% block body %}
+<div class="container">
+  <div class="row">
+    <div class="col-md-10 offset-md-1">
+      <div class="card mt-4">
+        <div class="card-header">
+          <h3>User Credits</h3>
+          <p>User: {{ user.email }} (ID: {{ user.id }}) — Balance: {{ user.credits_balance }}</p>
+        </div>
+        <div class="card-body">
+          <h5>Active Lots</h5>
+          <table class="table table-sm table-striped">
+            <thead><tr><th>Source</th><th>Remaining</th><th>Expires At</th><th>Created</th></tr></thead>
+            <tbody>
+              {% for lot in lots %}
+              <tr>
+                <td>{{ lot.source }}</td>
+                <td>{{ lot.amount_remaining }}</td>
+                <td>{% if lot.expires_at %}{{ lot.expires_at }}{% else %}—{% endif %}</td>
+                <td>{{ lot.created_at }}</td>
+              </tr>
+              {% else %}
+              <tr><td colspan="4" class="text-center">No active lots</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+
+          <h5 class="mt-4">Recent Transactions</h5>
+          <table class="table table-sm table-striped">
+            <thead><tr><th>At</th><th>Type</th><th>Amount</th><th>Status</th><th>Reason</th><th>Audio ID</th><th>Story ID</th></tr></thead>
+            <tbody>
+              {% for tx in transactions %}
+              <tr>
+                <td>{{ tx.created_at }}</td>
+                <td>{{ tx.type }}</td>
+                <td>{{ tx.amount }}</td>
+                <td>{{ tx.status }}</td>
+                <td>{{ tx.reason }}</td>
+                <td>{{ tx.audio_story_id or '—' }}</td>
+                <td>{{ tx.story_id or '—' }}</td>
+              </tr>
+              {% else %}
+              <tr><td colspan="7" class="text-center">No transactions</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+
+          <a href="{{ url_for('usermodelview.index_view') }}" class="btn btn-secondary">Back</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+"""
+            )
 def create_grant_template(app):
     """Create grant credits template if missing."""
     admin_templates_dir = os.path.join(app.root_path, 'templates', 'admin')
@@ -406,6 +471,12 @@ class UserModelView(SecureModelView):
         'last_login': lambda v, c, m, p: m.last_login.strftime('%Y-%m-%d %H:%M:%S') if m.last_login else 'Never'
     }
 
+    # Enable built-in details page
+    can_view_details = True
+    column_details_list = (
+        'id', 'email', 'credits_balance', 'email_confirmed', 'is_active', 'last_login', 'created_at'
+    )
+
     # Create a form with password field for user creation
     def create_form(self):
         form = super(UserModelView, self).create_form()
@@ -471,6 +542,47 @@ class UserModelView(SecureModelView):
                 return self.render('admin/grant_credits.html', user=user)
 
         return self.render('admin/grant_credits.html', user=user)
+
+    @expose('/credits', methods=['GET'])
+    def user_credits_view(self):
+        """Read-only panel showing active lots and recent transactions for a user."""
+        if not is_authenticated():
+            return redirect(url_for('admin.login_view'))
+        from models.user_model import UserModel
+        from models.credit_model import CreditLot, CreditTransaction
+        user_id = request.args.get('id')
+        if not user_id:
+            flash('Missing user id', 'error')
+            return redirect(url_for('.index_view'))
+        try:
+            user_id = int(user_id)
+        except Exception:
+            flash('Invalid user id', 'error')
+            return redirect(url_for('.index_view'))
+
+        user = UserModel.get_by_id(user_id)
+        if not user:
+            flash('User not found', 'error')
+            return redirect(url_for('.index_view'))
+
+        now = datetime.utcnow()
+        lots = (
+            CreditLot.query
+            .filter(
+                CreditLot.user_id == user.id,
+                (CreditLot.expires_at.is_(None) | (CreditLot.expires_at > now)),
+            )
+            .order_by(CreditLot.expires_at.asc(), CreditLot.created_at)
+            .all()
+        )
+        transactions = (
+            CreditTransaction.query
+            .filter(CreditTransaction.user_id == user.id)
+            .order_by(CreditTransaction.created_at.desc())
+            .limit(20)
+            .all()
+        )
+        return self.render('admin/user_credits.html', user=user, lots=lots, transactions=transactions)
     
     # Add custom actions
     @staticmethod
@@ -833,6 +945,7 @@ def init_admin(app):
     # Create login template
     create_login_template(app)
     create_grant_template(app)
+    create_user_credits_template(app)
     
     # Setup admin interface
     admin = Admin(
