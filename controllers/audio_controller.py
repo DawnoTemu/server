@@ -1,6 +1,9 @@
-from models.audio_model import AudioModel, AudioStatus
+from models.audio_model import AudioModel, AudioStatus, AudioStory
 from models.story_model import StoryModel
 from models.voice_model import VoiceModel, Voice, VoiceStatus
+from models.credit_model import debit as credit_debit, InsufficientCreditsError
+from utils.credits import calculate_required_credits
+from database import db
 import logging
 
 # Configure logger
@@ -145,18 +148,54 @@ class AudioController:
             if not text:
                 return False, {"error": "Story text not found in story"}, 400
                 
-            # Queue audio synthesis job
-            success, result = AudioModel.synthesize_audio(voice.id, story_id, user_id, text)
-            
-            if not success:
-                return False, result, 500
-            
-            # For already generated audio, return 200 OK    
-            if result.get("status") == "ready":
-                return True, result, 200
-                
-            # For async operations in progress, return 202 Accepted
-            return True, result, 202
+            # Calculate required credits for this text
+            required = calculate_required_credits(text)
+
+            # Find or create audio record to inspect current status
+            audio_record = AudioModel.find_or_create_audio_record(story_id, voice.id, user_id)
+
+            # If already ready, return URL and do not charge
+            if audio_record.status == AudioStatus.READY.value and audio_record.s3_key:
+                success, url = AudioModel.get_audio_presigned_url(voice.id, story_id)
+                if success:
+                    return True, {"status": "ready", "url": url, "id": audio_record.id}, 200
+                return False, {"error": "Failed to generate URL"}, 500
+
+            # If processing, don't double-charge
+            if audio_record.status == AudioStatus.PROCESSING.value:
+                return True, {
+                    "status": "processing",
+                    "id": audio_record.id,
+                    "message": "Audio synthesis is already in progress"
+                }, 202
+
+            # Prepare record for new processing attempt and attempt to charge
+            audio_record.status = AudioStatus.PENDING.value
+            audio_record.error_message = None
+            audio_record.credits_charged = required
+            try:
+                # Debit will also commit the session; pending changes will be included
+                credit_debit(user_id=user_id, amount=required, reason=f"audio_synthesis:{story_id}", audio_story_id=audio_record.id, story_id=story_id)
+            except InsufficientCreditsError as e:
+                # Roll back and return 402 Payment Required
+                db.session.rollback()
+                return False, {"error": str(e), "required": required}, 402
+            except Exception as e:
+                db.session.rollback()
+                logger.error(f"Error debiting credits: {e}")
+                return False, {"error": "Failed to charge credits"}, 500
+
+            # Queue async task
+            from tasks.audio_tasks import synthesize_audio_task
+            task = synthesize_audio_task.delay(audio_record.id, voice.id, story_id, text)
+
+            logger.info(f"Queued audio synthesis task {task.id} for audio ID {audio_record.id}")
+
+            return True, {
+                "status": "pending",
+                "id": audio_record.id,
+                "message": "Audio synthesis has been queued"
+            }, 202
             
         except Exception as e:
             logger.error(f"Error synthesizing audio: {str(e)}")
