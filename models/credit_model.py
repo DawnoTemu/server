@@ -127,6 +127,7 @@ def debit(user_id: int, amount: int, reason: str, audio_story_id: Optional[int] 
             db.session.query(CreditTransaction)
             .filter(
                 CreditTransaction.audio_story_id == audio_story_id,
+                CreditTransaction.user_id == user_id,
                 CreditTransaction.type == 'debit',
             )
             .first()
@@ -256,4 +257,3 @@ def refund_by_audio(audio_story_id: int, reason: str):
 
     db.session.commit()
     return True, refund_tx
-
