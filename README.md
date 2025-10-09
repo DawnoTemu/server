@@ -32,7 +32,7 @@ DawnoTemu is an AI-powered platform that creates personalized bedtime stories us
 - **🔄 Voice Quality Comparison**: Built-in testing system for voice quality optimization
 - **👨‍💼 Admin Interface**: Flask-Admin dashboard for content management
 - **🚀 Production Ready**: Comprehensive logging, error handling, and monitoring
- - **🪄 Story Points (Punkty Magii)**: Credit system to control story generation costs (1 point per 1,000 characters; rounded up)
+- **🪄 Story Points (Punkty Magii)**: Credit system to control story generation costs (1 point per 1,000 characters; rounded up)
 
 ## 🏗️ Architecture
 
@@ -126,6 +126,14 @@ CREDITS_UNIT_SIZE=1000
 INITIAL_CREDITS=10
 # Optional: override consumption order if needed
 CREDIT_SOURCES_PRIORITY=event,monthly,referral,add_on,free
+
+### 5. Credits & Billing
+
+- How it works: see `docs/CREDITS.md`.
+- Estimating cost: `GET /stories/{id}/credits` → `{ required_credits }`.
+- Checking balance: `GET /me/credits` (Bearer) → `{ balance, lots, recent_transactions }`.
+- Insufficient funds: endpoints may return `402 Payment Required`.
+- Admin grants: `POST /admin/users/{user_id}/credits/grant` with `{ amount, reason?, source?, expires_at? }`.
 
 # Celery Configuration
 REDIS_URL=redis://localhost:6379/0

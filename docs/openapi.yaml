@@ -295,6 +295,68 @@ components:
           type: string
           example: "Operation completed successfully"
 
+    CreditLot:
+      type: object
+      properties:
+        source:
+          type: string
+          example: monthly
+        amount_remaining:
+          type: integer
+          example: 120
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+          example: "2025-07-01T00:00:00Z"
+
+    CreditTransactionSummary:
+      type: object
+      properties:
+        type:
+          type: string
+          example: debit
+        amount:
+          type: integer
+          example: -3
+        status:
+          type: string
+          example: applied
+        reason:
+          type: string
+          example: audio_synthesis:42
+        audio_story_id:
+          type: integer
+          example: 123
+        story_id:
+          type: integer
+          example: 42
+        created_at:
+          type: string
+          format: date-time
+          example: "2025-05-15T12:00:00Z"
+
+    CreditsResponse:
+      type: object
+      properties:
+        balance:
+          type: integer
+          example: 25
+        unit_label:
+          type: string
+          example: Story Points (Punkty Magii)
+        unit_size:
+          type: integer
+          example: 1000
+        lots:
+          type: array
+          items:
+            $ref: '#/components/schemas/CreditLot'
+        recent_transactions:
+          type: array
+          items:
+            $ref: '#/components/schemas/CreditTransactionSummary'
+
 paths:
   /auth/register:
     post:
@@ -1148,6 +1210,123 @@ paths:
                     example: "User deactivated successfully"
         '401':
           description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /me/credits:
+    get:
+      tags:
+        - Billing
+      summary: Get current user's credit balance and history
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Current balance and recent transactions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreditsResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Account inactive or email not confirmed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /stories/{story_id}/credits:
+    get:
+      tags:
+        - Billing
+      summary: Estimate required credits for a story
+      parameters:
+        - name: story_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Required credits for the story
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  required_credits:
+                    type: integer
+                    example: 3
+        '404':
+          description: Story not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /admin/users/{user_id}/credits/grant:
+    post:
+      tags:
+        - Admin
+      summary: Grant credits to a user
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                amount:
+                  type: integer
+                  example: 100
+                reason:
+                  type: string
+                  example: support_compensation
+                source:
+                  type: string
+                  example: add_on
+                expires_at:
+                  type: string
+                  format: date-time
+                  example: "2025-09-01T00:00:00Z"
+      responses:
+        '200':
+          description: Credits granted
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Forbidden (not admin)
           content:
             application/json:
               schema:
