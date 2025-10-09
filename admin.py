@@ -571,6 +571,7 @@ class UserModelView(SecureModelView):
             .filter(
                 CreditLot.user_id == user.id,
                 (CreditLot.expires_at.is_(None) | (CreditLot.expires_at > now)),
+                CreditLot.amount_remaining > 0,
             )
             .order_by(CreditLot.expires_at.asc(), CreditLot.created_at)
             .all()
