@@ -16,16 +16,29 @@ def get_credit_config() -> Dict[str, int | str]:
 
 
 def get_credit_sources_priority() -> list[str]:
-    """Return the configured credit sources consumption priority order."""
+    """Return normalized credit source priority order.
+
+    - Strips whitespace and lowercases items
+    - Deduplicates while preserving order
+    - Accepts list/tuple or comma-separated string
+    """
     from config import Config
 
-    priority = getattr(Config, "CREDIT_SOURCES_PRIORITY", [
-        "event",
-        "monthly",
-        "referral",
-        "add_on",
-        "free",
-    ])
-    # Ensure it's a list even if configured as a tuple
-    return list(priority)
+    raw = getattr(
+        Config,
+        "CREDIT_SOURCES_PRIORITY",
+        ["event", "monthly", "referral", "add_on", "free"],
+    )
 
+    if isinstance(raw, (list, tuple)):
+        items = [str(x).strip().lower() for x in raw if str(x).strip()]
+    else:
+        items = [s.strip().lower() for s in str(raw).split(",") if s.strip()]
+
+    seen = set()
+    normalized: list[str] = []
+    for s in items:
+        if s not in seen:
+            seen.add(s)
+            normalized.append(s)
+    return normalized

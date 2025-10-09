@@ -101,7 +101,7 @@ def grant(user_id: int, amount: int, reason: str, source: str, expires_at: Optio
 
     lot = CreditLot(
         user_id=user_id,
-        source=source,
+        source=(source or '').strip().lower(),
         amount_granted=amount,
         amount_remaining=amount,
         expires_at=expires_at,
@@ -161,14 +161,16 @@ def debit(user_id: int, amount: int, reason: str, audio_story_id: Optional[int] 
 
     user = _lock_user(user_id)
 
-    # Gather active lots ordered by configured priority and soonest expiry
-    lots_by_source = {s: [] for s in _priority_sources()}
-    for lot in _active_lots_query(user_id).all():
-        lots_by_source.setdefault(lot.source, []).append(lot)
+    # Gather active lots and order by configured priority and soonest expiry
+    active_lots = _active_lots_query(user_id).all()
+    lots_by_source: dict[str, list[CreditLot]] = {}
+    for lot in active_lots:
+        key = (lot.source or '').strip().lower()
+        lots_by_source.setdefault(key, []).append(lot)
 
     # Sort each source by (expires_at asc, created_at asc)
-    for src, lots in lots_by_source.items():
-        lots.sort(key=lambda l: (l.expires_at or datetime.max, l.created_at))
+    for src in list(lots_by_source.keys()):
+        lots_by_source[src].sort(key=lambda l: (l.expires_at or datetime.max, l.created_at))
 
     total_available = sum(l.amount_remaining for lots in lots_by_source.values() for l in lots)
     if total_available < amount:
@@ -176,7 +178,19 @@ def debit(user_id: int, amount: int, reason: str, audio_story_id: Optional[int] 
 
     remaining = amount
     allocations: List[Tuple[CreditLot, int]] = []
-    for src in _priority_sources():
+    # Build final ordered source list: configured priority first, then any remaining sources
+    prio = _priority_sources()
+    seen: set[str] = set()
+    ordered_sources: list[str] = []
+    for s in prio:
+        if s in lots_by_source and s not in seen:
+            ordered_sources.append(s)
+            seen.add(s)
+    for s in lots_by_source.keys():
+        if s not in seen:
+            ordered_sources.append(s)
+
+    for src in ordered_sources:
         for lot in lots_by_source.get(src, []):
             if remaining <= 0:
                 break
@@ -187,6 +201,12 @@ def debit(user_id: int, amount: int, reason: str, audio_story_id: Optional[int] 
                 remaining -= take
         if remaining <= 0:
             break
+
+    if remaining > 0:
+        # Allocation failed to satisfy requested amount; do not create a debit
+        raise InsufficientCreditsError(
+            f"Insufficient Story Points after allocation: need {amount}, allocated {amount - remaining}"
+        )
 
     # Create the debit transaction (negative amount)
     tx = CreditTransaction(
