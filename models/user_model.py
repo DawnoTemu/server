@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 import jwt
 import uuid
+import logging
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask import current_app
 from database import db
@@ -153,9 +154,15 @@ class UserModel:
             from models.credit_model import grant  # local import to avoid circular deps
             try:
                 grant(user.id, int(initial_credits), reason="initial_grant", source="free", expires_at=None)
-            except Exception:
-                # If the grant fails, leave the account at 0; upstream can handle/report
-                pass
+            except Exception as e:
+                # Roll back failed transaction to keep session usable
+                try:
+                    db.session.rollback()
+                except Exception:
+                    pass
+                logging.getLogger(__name__).warning(
+                    "Initial credit grant failed for user %s: %s", email, str(e)
+                )
 
         return user
     
