@@ -101,6 +101,13 @@ class Config:
     # Consumption priority: event -> monthly -> referral -> add_on -> free
     _csp_raw = os.getenv("CREDIT_SOURCES_PRIORITY", "event,monthly,referral,add_on,free")
     CREDIT_SOURCES_PRIORITY = [s.strip() for s in _csp_raw.split(',') if s.strip()]
+    # Default monthly grant amount (0 disables scheduler grants)
+    try:
+        _mc_raw = os.getenv("MONTHLY_CREDITS_DEFAULT", "0")
+        _mc_val = int(_mc_raw) if str(_mc_raw).strip() != "" else 0
+    except Exception:
+        _mc_val = 0
+    MONTHLY_CREDITS_DEFAULT = _mc_val if _mc_val >= 0 else 0
     
     # Create required directories
     UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
