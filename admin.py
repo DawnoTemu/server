@@ -312,6 +312,68 @@ def create_login_template(app):
 {% endblock %}"""
             )
 
+def create_grant_template(app):
+    """Create grant credits template if missing."""
+    admin_templates_dir = os.path.join(app.root_path, 'templates', 'admin')
+    os.makedirs(admin_templates_dir, exist_ok=True)
+    grant_template_path = os.path.join(admin_templates_dir, 'grant_credits.html')
+    if not os.path.exists(grant_template_path):
+        with open(grant_template_path, 'w') as f:
+            f.write(
+                """{% extends 'admin/master.html' %}
+{% block body %}
+<div class="container">
+  <div class="row">
+    <div class="col-md-6 offset-md-3">
+      <div class="card mt-5">
+        <div class="card-header">
+          <h3 class="text-center">Grant Story Points</h3>
+          <p>User: {{ user.email }} (ID: {{ user.id }})</p>
+        </div>
+        <div class="card-body">
+          {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+              {% for category, message in messages %}
+                <div class="alert alert-{{ category }}">{{ message }}</div>
+              {% endfor %}
+            {% endif %}
+          {% endwith %}
+          <form method="POST">
+            <input type="hidden" name="user_id" value="{{ user.id }}" />
+            <div class="form-group">
+              <label for="amount">Amount (points)</label>
+              <input type="number" min="1" class="form-control" id="amount" name="amount" required>
+            </div>
+            <div class="form-group mt-2">
+              <label for="reason">Reason</label>
+              <input type="text" class="form-control" id="reason" name="reason" placeholder="admin_grant">
+            </div>
+            <div class="form-group mt-2">
+              <label for="source">Source</label>
+              <select class="form-control" id="source" name="source">
+                <option value="add_on">add_on</option>
+                <option value="referral">referral</option>
+                <option value="free">free</option>
+                <option value="monthly">monthly</option>
+                <option value="event">event</option>
+              </select>
+            </div>
+            <div class="form-group mt-2">
+              <label for="expires_at">Expires At (ISO8601, optional)</label>
+              <input type="text" class="form-control" id="expires_at" name="expires_at" placeholder="2025-12-31T23:59:59Z">
+            </div>
+            <button type="submit" class="btn btn-primary btn-block mt-3">Grant Points</button>
+            <a href="{{ url_for('usermodelview.index_view') }}" class="btn btn-secondary btn-block mt-2">Back</a>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+  </div>
+{% endblock %}
+"""
+            )
+
 class UserModelView(SecureModelView):
     """Admin view for managing users"""
     
@@ -357,6 +419,57 @@ class UserModelView(SecureModelView):
         if is_created and not model.password_hash:
             model.password_hash = generate_password_hash('changeme')
             flash('User created with default password: "changeme". Please change this immediately.', 'warning')
+
+    @expose('/grant-credits', methods=['GET', 'POST'])
+    def grant_credits_view(self):
+        """Form to grant Story Points to a single user."""
+        if not is_authenticated():
+            return redirect(url_for('admin.login_view'))
+        from models.user_model import UserModel
+        from models.credit_model import grant as credit_grant
+        user_id = request.args.get('id') or request.form.get('user_id')
+        if not user_id:
+            flash('Missing user id', 'error')
+            return redirect(url_for('.index_view'))
+        try:
+            user_id = int(user_id)
+        except Exception:
+            flash('Invalid user id', 'error')
+            return redirect(url_for('.index_view'))
+
+        user = UserModel.get_by_id(user_id)
+        if not user:
+            flash('User not found', 'error')
+            return redirect(url_for('.index_view'))
+
+        if request.method == 'POST':
+            try:
+                amount = int(request.form.get('amount', '0'))
+            except Exception:
+                amount = 0
+            reason = request.form.get('reason') or 'admin_grant'
+            source = (request.form.get('source') or 'add_on').strip().lower()
+            expires_at_raw = request.form.get('expires_at')
+            expires_at = None
+            if expires_at_raw:
+                try:
+                    expires_at = datetime.fromisoformat(expires_at_raw.replace('Z', '+00:00'))
+                except Exception:
+                    flash('Invalid expires_at format. Use ISO8601.', 'error')
+                    return self.render('admin/grant_credits.html', user=user)
+            if amount <= 0:
+                flash('Amount must be a positive integer', 'error')
+                return self.render('admin/grant_credits.html', user=user)
+            try:
+                credit_grant(user_id=user.id, amount=amount, reason=reason, source=source, expires_at=expires_at)
+                flash(f'Granted {amount} Story Points to {user.email}', 'success')
+                return redirect(url_for('.index_view'))
+            except Exception as e:
+                db.session.rollback()
+                flash(f'Failed to grant credits: {e}', 'error')
+                return self.render('admin/grant_credits.html', user=user)
+
+        return self.render('admin/grant_credits.html', user=user)
     
     # Add custom actions
     @staticmethod
@@ -678,6 +791,7 @@ def init_admin(app):
     """Initialize the admin interface."""
     # Create login template
     create_login_template(app)
+    create_grant_template(app)
     
     # Setup admin interface
     admin = Admin(
