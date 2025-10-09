@@ -140,13 +140,23 @@ class UserModel:
         """
         from config import Config
         initial_credits = getattr(Config, 'INITIAL_CREDITS', 0) or 0
-        user = User(email=email, is_admin=is_admin, credits_balance=int(initial_credits))
+        # Create the user with zero cached balance; grant will create a free lot and update balance
+        user = User(email=email, is_admin=is_admin, credits_balance=0)
         user.set_password(password)
         
         # Add to database
         db.session.add(user)
         db.session.commit()
         
+        # Seed initial credits as a non-expiring free lot so debits can allocate properly
+        if initial_credits and int(initial_credits) > 0:
+            from models.credit_model import grant  # local import to avoid circular deps
+            try:
+                grant(user.id, int(initial_credits), reason="initial_grant", source="free", expires_at=None)
+            except Exception:
+                # If the grant fails, leave the account at 0; upstream can handle/report
+                pass
+
         return user
     
     @staticmethod
