@@ -873,11 +873,11 @@ class AudioStoryModelView(SecureModelView):
         errors = []
         for audio_id in ids:
             try:
-                ok, _ = refund_by_audio(int(audio_id), reason='admin_refund')
-                if ok:
+                ok, refund_tx = refund_by_audio(int(audio_id), reason='admin_refund')
+                if ok and refund_tx is not None:
                     success += 1
                 else:
-                    errors.append(f"Audio ID {audio_id}: refund not applied")
+                    errors.append(f"Audio ID {audio_id}: no outstanding debit to refund")
             except Exception as e:
                 db.session.rollback()
                 errors.append(f"Audio ID {audio_id}: {e}")
@@ -950,7 +950,7 @@ class CreditLotModelView(SecureModelView):
 
     # Custom action to expire selected lots now
     def _expire_lots_action(self, ids):
-        from models.credit_model import CreditLot
+        from models.credit_model import CreditLot, CreditTransaction, CreditTransactionAllocation
         from models.user_model import User
         success = 0
         errors = []
@@ -963,6 +963,22 @@ class CreditLotModelView(SecureModelView):
                 delta = int(lot.amount_remaining or 0)
                 if delta <= 0:
                     continue
+                # Create an 'expire' transaction and allocation to keep ledger consistent
+                tx = CreditTransaction(
+                    user_id=lot.user_id,
+                    amount=-delta,
+                    type='expire',
+                    reason='admin_expire',
+                    audio_story_id=None,
+                    story_id=None,
+                    status='applied',
+                )
+                db.session.add(tx)
+                db.session.flush()
+                db.session.add(
+                    CreditTransactionAllocation(transaction_id=tx.id, lot_id=lot.id, amount=-delta)
+                )
+                # Zero out the lot and adjust cached balance
                 lot.amount_remaining = 0
                 user = db.session.get(User, lot.user_id)
                 if user:
