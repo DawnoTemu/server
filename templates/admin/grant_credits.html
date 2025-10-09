@@ -1,0 +1,51 @@
+{% extends 'admin/master.html' %}
+{% block body %}
+<div class="container">
+  <div class="row">
+    <div class="col-md-6 offset-md-3">
+      <div class="card mt-5">
+        <div class="card-header">
+          <h3 class="text-center">Grant Story Points</h3>
+          <p>User: {{ user.email }} (ID: {{ user.id }})</p>
+        </div>
+        <div class="card-body">
+          {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+              {% for category, message in messages %}
+                <div class="alert alert-{{ category }}">{{ message }}</div>
+              {% endfor %}
+            {% endif %}
+          {% endwith %}
+          <form method="POST">
+            <input type="hidden" name="user_id" value="{{ user.id }}" />
+            <div class="form-group">
+              <label for="amount">Amount (points)</label>
+              <input type="number" min="1" class="form-control" id="amount" name="amount" required>
+            </div>
+            <div class="form-group mt-2">
+              <label for="reason">Reason</label>
+              <input type="text" class="form-control" id="reason" name="reason" placeholder="admin_grant">
+            </div>
+            <div class="form-group mt-2">
+              <label for="source">Source</label>
+              <select class="form-control" id="source" name="source">
+                <option value="add_on">add_on</option>
+                <option value="referral">referral</option>
+                <option value="free">free</option>
+                <option value="monthly">monthly</option>
+                <option value="event">event</option>
+              </select>
+            </div>
+            <div class="form-group mt-2">
+              <label for="expires_at">Expires At (ISO8601, optional)</label>
+              <input type="text" class="form-control" id="expires_at" name="expires_at" placeholder="2025-12-31T23:59:59Z">
+            </div>
+            <button type="submit" class="btn btn-primary btn-block mt-3">Grant Points</button>
+            <a href="{{ url_for('user.index_view') }}" class="btn btn-secondary btn-block mt-2">Back</a>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+  </div>
+{% endblock %}
