@@ -160,7 +160,7 @@ def debit(user_id: int, amount: int, reason: str, audio_story_id: Optional[int] 
                 # Existing debit already covers the requested amount.
                 # Commit to persist any upstream changes (e.g., AudioStory status/credits_charged).
                 db.session.commit()
-                return True, existing
+                return True, existing, 0
             # Need to charge the difference on top of existing debit
             extra_needed = amount - outstanding
             user = _lock_user(user_id)
@@ -224,7 +224,7 @@ def debit(user_id: int, amount: int, reason: str, audio_story_id: Optional[int] 
                     )
             user.credits_balance = int(user.credits_balance or 0) - extra_needed
             db.session.commit()
-            return True, existing
+            return True, existing, extra_needed
 
     user = _lock_user(user_id)
 
@@ -297,7 +297,7 @@ def debit(user_id: int, amount: int, reason: str, audio_story_id: Optional[int] 
     user.credits_balance = int(user.credits_balance or 0) - amount
 
     db.session.commit()
-    return True, tx
+    return True, tx, amount
 
 
 def refund_by_audio(audio_story_id: int, reason: str):

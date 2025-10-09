@@ -175,7 +175,13 @@ class AudioController:
             audio_record.credits_charged = required
             try:
                 # Debit will also commit the session; pending changes will be included
-                credit_debit(user_id=user_id, amount=required, reason=f"audio_synthesis:{story_id}", audio_story_id=audio_record.id, story_id=story_id)
+                _, debit_tx, charged_delta = credit_debit(
+                    user_id=user_id,
+                    amount=required,
+                    reason=f"audio_synthesis:{story_id}",
+                    audio_story_id=audio_record.id,
+                    story_id=story_id,
+                )
             except InsufficientCreditsError as e:
                 # Roll back and return 402 Payment Required
                 db.session.rollback()
@@ -192,10 +198,12 @@ class AudioController:
                 logger.info(f"Queued audio synthesis task {task.id} for audio ID {audio_record.id}")
             except Exception as qe:
                 logger.error(f"Queueing synthesis task failed: {qe}")
-                try:
-                    refund_by_audio(audio_record.id, reason="queue_failed")
-                except Exception as re:
-                    logger.error(f"Refund after queue failure also failed: {re}")
+                # Refund only if this call actually charged any delta
+                if 'charged_delta' in locals() and charged_delta and charged_delta > 0:
+                    try:
+                        refund_by_audio(audio_record.id, reason="queue_failed")
+                    except Exception as re:
+                        logger.error(f"Refund after queue failure also failed: {re}")
                 # Mark record as error to unblock future attempts
                 try:
                     audio_record.status = AudioStatus.ERROR.value
