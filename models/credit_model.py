@@ -22,7 +22,7 @@ class CreditTransaction(db.Model):
     audio_story_id: Mapped[Optional[int]] = mapped_column(db.Integer, db.ForeignKey('audio_stories.id', ondelete='SET NULL'), index=True)
     story_id: Mapped[Optional[int]] = mapped_column(db.Integer, db.ForeignKey('stories.id', ondelete='SET NULL'), index=True)
     status: Mapped[str] = mapped_column(db.String(20), nullable=False, default='applied')
-    metadata: Mapped[Optional[dict]] = mapped_column(db.JSON)
+    metadata_json: Mapped[Optional[dict]] = mapped_column('metadata', db.JSON)
     created_at: Mapped[datetime] = mapped_column(db.DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
