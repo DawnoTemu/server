@@ -45,13 +45,17 @@ def upgrade():
             ON credit_transactions (audio_story_id)
             WHERE type = 'debit'
         """)
+    elif dialect == 'sqlite':
+        # SQLite supports partial indexes; scope uniqueness to debit only
+        op.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_credit_tx_debit_per_audio
+            ON credit_transactions (audio_story_id)
+            WHERE type = 'debit'
+        """)
     else:
-        # Fallback: only one transaction per (audio_story_id, type)
-        op.create_unique_constraint(
-            'uq_credit_tx_audio_type',
-            'credit_transactions',
-            ['audio_story_id', 'type']
-        )
+        # Other dialects without partial indexes: skip uniqueness here and
+        # enforce at application level to avoid blocking non-debit transactions.
+        pass
 
     # 3) credit_lots to support sources and expirations
     op.create_table(
@@ -89,12 +93,12 @@ def downgrade():
     # Drop unique constraint or partial index depending on dialect
     bind = op.get_bind()
     dialect = bind.dialect.name if bind is not None else None
-    if dialect == 'postgresql':
+    if dialect in ('postgresql', 'sqlite'):
         op.execute("DROP INDEX IF EXISTS uq_credit_tx_debit_per_audio")
     else:
-        op.drop_constraint('uq_credit_tx_audio_type', 'credit_transactions', type_='unique')
+        # No index/constraint was created for other dialects in upgrade()
+        pass
     op.drop_table('credit_transactions')
 
     # Finally drop audio_stories column
     op.drop_column('audio_stories', 'credits_charged')
-
