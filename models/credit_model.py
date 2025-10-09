@@ -157,7 +157,9 @@ def debit(user_id: int, amount: int, reason: str, audio_story_id: Optional[int] 
             )
             outstanding = (-existing.amount) - refunded_amount
             if amount <= outstanding:
-                # Existing debit already covers the requested amount
+                # Existing debit already covers the requested amount.
+                # Commit to persist any upstream changes (e.g., AudioStory status/credits_charged).
+                db.session.commit()
                 return True, existing
             # Need to charge the difference on top of existing debit
             extra_needed = amount - outstanding
