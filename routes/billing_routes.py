@@ -1,15 +1,11 @@
 from flask import jsonify
 from datetime import datetime
 
-from routes import admin_bp  # unused import guard
-from flask import Blueprint
+from routes import billing_bp
 from utils.auth_middleware import token_required
 from utils.credits import get_credit_config, calculate_required_credits
 from models.credit_model import CreditLot, CreditTransaction
 from models.story_model import StoryModel
-
-
-billing_bp = Blueprint('billing_api', __name__)
 
 
 @billing_bp.route('/me/credits', methods=['GET'])
@@ -26,7 +22,7 @@ def get_my_credits(current_user):
             CreditLot.amount_remaining > 0,
             (CreditLot.expires_at.is_(None) | (CreditLot.expires_at > now)),
         )
-        .order_by(CreditLot.expires_at().asc() if hasattr(CreditLot.expires_at, '__call__') else CreditLot.expires_at, CreditLot.created_at)
+        .order_by(CreditLot.expires_at.asc(), CreditLot.created_at)
     )
     lots = [
         {
@@ -74,4 +70,3 @@ def get_story_credits(story_id):
     text = story.get('content') or ''
     required = calculate_required_credits(text)
     return jsonify({'required_credits': required}), 200
-
