@@ -2,10 +2,10 @@ openapi: 3.0.3
 info:
   title: StoryVoice API
   description: |
-    This is the API specification for the StoryVoice application, which allows users to clone their voice 
-    and use it to narrate children's stories. The API provides endpoints for user authentication, 
-    voice cloning, story access, and audio synthesis.
-  version: 1.0.0
+    API for DawnoTemu/StoryVoice — user auth, voice cloning, story access, audio synthesis,
+    and credits (Story Points) billing. This spec reflects the current server capabilities
+    used by mobile apps, including credit charging, refunds, and status endpoints.
+  version: 1.2.0
   contact:
     email: api@storyvoice.app
 
@@ -356,6 +356,80 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/CreditTransactionSummary'
+    AudioStatusResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 101
+        status:
+          type: string
+          enum: [pending, processing, ready, error]
+        story_id:
+          type: integer
+          example: 42
+        voice_id:
+          type: integer
+          example: 7
+        duration_seconds:
+          type: number
+          format: float
+          nullable: true
+        file_size_bytes:
+          type: integer
+          nullable: true
+        url:
+          type: string
+          format: uri
+          nullable: true
+        error:
+          type: string
+          nullable: true
+        task_status:
+          type: object
+          nullable: true
+          properties:
+            state:
+              type: string
+            ready:
+              type: boolean
+            successful:
+              type: boolean
+              nullable: true
+            info:
+              type: string
+              nullable: true
+    VoiceStatusResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        status:
+          type: string
+          enum: [pending, processing, ready, error]
+        elevenlabs_voice_id:
+          type: string
+          nullable: true
+        sample_url:
+          type: string
+          format: uri
+          nullable: true
+        task_status:
+          type: object
+          nullable: true
+          properties:
+            state:
+              type: string
+            ready:
+              type: boolean
+            successful:
+              type: boolean
+              nullable: true
+            info:
+              type: string
+              nullable: true
 
 paths:
   /auth/register:
@@ -519,6 +593,413 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+
+  /auth/resend-confirmation:
+    post:
+      tags:
+        - Authentication
+      summary: Resend confirmation email
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        '200':
+          description: Email sent (if account exists)
+        '400':
+          description: Missing email
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /auth/reset-password-request:
+    post:
+      tags:
+        - Authentication
+      summary: Request password reset email
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResetPasswordRequest'
+      responses:
+        '200':
+          description: Request processed
+        '400':
+          description: Missing email
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /auth/reset-password/{token}:
+    post:
+      tags:
+        - Authentication
+      summary: Reset password with token
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NewPasswordRequest'
+      responses:
+        '200':
+          description: Password reset successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NewPasswordResponse'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Invalid or expired token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /stories:
+    get:
+      tags:
+        - Stories
+      summary: List available stories
+      responses:
+        '200':
+          description: List of stories
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StoryList'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /stories/{story_id}:
+    get:
+      tags:
+        - Stories
+      summary: Get story details
+      parameters:
+        - name: story_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Story
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Story'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /stories/{story_id}/cover:
+    get:
+      tags:
+        - Stories
+      summary: Get story cover (redirect)
+      parameters:
+        - name: story_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '302':
+          description: Redirect to presigned image URL
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /voices:
+    get:
+      tags:
+        - Voices
+      summary: List current user's voices
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: List of voices
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoiceList'
+        '401': { description: Unauthorized }
+    post:
+      tags:
+        - Voices
+      summary: Create a new voice clone
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                name:
+                  type: string
+      responses:
+        '202': { description: Voice cloning accepted }
+        '200': { description: Voice created }
+        '400': { description: Bad request }
+        '401': { description: Unauthorized }
+
+  /voices/{voice_id}:
+    get:
+      tags:
+        - Voices
+      summary: Get a voice by ID
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: voice_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200': { description: Success }
+        '403': { description: Forbidden }
+        '404': { description: Not found }
+    delete:
+      tags:
+        - Voices
+      summary: Delete a voice
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: voice_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200': { description: Deleted }
+        '403': { description: Forbidden }
+        '404': { description: Not found }
+
+  /voices/{voice_id}/sample:
+    get:
+      tags:
+        - Voices
+      summary: Get voice sample URL (or redirect)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: voice_id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: redirect
+          in: query
+          required: false
+          schema:
+            type: boolean
+      responses:
+        '200': { description: Sample URL JSON }
+        '302': { description: Redirect to sample URL }
+        '403': { description: Forbidden }
+        '404': { description: Not found }
+
+  /voices/{voice_external_id}/stories/{story_id}/audio:
+    get:
+      tags:
+        - Audio
+      summary: Get synthesized audio (stream or redirect)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: voice_external_id
+          in: path
+          description: External voice ID (e.g., ElevenLabs)
+          required: true
+          schema:
+            type: string
+        - name: story_id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: redirect
+          in: query
+          required: false
+          schema:
+            type: boolean
+        - name: Range
+          in: header
+          required: false
+          schema:
+            type: string
+            example: bytes=0-1023
+      responses:
+        '200':
+          description: Audio stream
+          content:
+            audio/mpeg:
+              schema:
+                type: string
+                format: binary
+        '206': { description: Partial content }
+        '302': { description: Redirect to presigned URL }
+        '403': { description: Forbidden }
+        '404': { description: Not found }
+    head:
+      tags:
+        - Audio
+      summary: Check if audio exists
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: voice_external_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: story_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200': { description: Exists }
+        '404': { description: Not found }
+    post:
+      tags:
+        - Audio
+      summary: Queue audio synthesis
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: voice_external_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: story_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '202': { description: Queued (pending) }
+        '200': { description: Already ready }
+        '400': { description: Bad request }
+        '401': { description: Unauthorized }
+        '402': { description: Payment Required (insufficient credits) }
+        '403': { description: Forbidden }
+        '404': { description: Not found }
+        '503': { description: Queue unavailable }
+
+  /voices/{voice_id}/status:
+    get:
+      tags:
+        - Tasks
+      summary: Get voice cloning status
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: voice_id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: task_id
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoiceStatusResponse'
+        '403': { description: Forbidden }
+        '404': { description: Not found }
+
+  /audio/{audio_id}/status:
+    get:
+      tags:
+        - Tasks
+      summary: Get audio synthesis status
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: audio_id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: task_id
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AudioStatusResponse'
+        '403': { description: Forbidden }
+        '404': { description: Not found }
+
+  /tasks/{task_id}:
+    get:
+      tags:
+        - Tasks
+      summary: Get Celery task status
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200': { description: Status }
+        '500': { description: Error checking status }
 
   /auth/reset-password-request:
     post:

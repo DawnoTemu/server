@@ -17,11 +17,15 @@ depends_on = None
 
 
 def upgrade():
-    # PostgreSQL-specific command to reset the sequence
-    # This will set the sequence to start after the maximum existing ID
-    op.execute("""
-    SELECT setval('stories_id_seq', (SELECT MAX(id) FROM stories), true);
-    """)
+    # Run only on PostgreSQL; no-op elsewhere (e.g., SQLite in dev/test)
+    bind = op.get_bind()
+    dialect = bind.dialect.name if bind is not None else None
+    if dialect == 'postgresql':
+        op.execute(
+            """
+            SELECT setval('stories_id_seq', (SELECT MAX(id) FROM stories), true);
+            """
+        )
 
 
 def downgrade():

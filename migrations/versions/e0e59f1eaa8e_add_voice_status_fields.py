@@ -19,18 +19,21 @@ def upgrade():
     # Add status and error_message to voices table if not already present
     # Use batch_alter_table to handle SQLite compatibility if needed
     with op.batch_alter_table('voices', schema=None) as batch_op:
-        # Check if status column already exists (migration-safe approach)
         conn = op.get_bind()
-        insp = sa.inspect(conn)
-        columns = insp.get_columns('voices')
-        column_names = [col['name'] for col in columns]
-        
-        # Add status column if it doesn't exist
-        if 'status' not in column_names:
+        try:
+            # Try to inspect existing columns (online mode)
+            insp = sa.inspect(conn)
+            columns = insp.get_columns('voices')
+            column_names = [col['name'] for col in columns]
+            # Add status column if it doesn't exist
+            if 'status' not in column_names:
+                batch_op.add_column(sa.Column('status', sa.String(20), nullable=True))
+            # Add error_message column if it doesn't exist
+            if 'error_message' not in column_names:
+                batch_op.add_column(sa.Column('error_message', sa.Text(), nullable=True))
+        except Exception:
+            # Offline SQL generation: emit both adds; execution will happen elsewhere
             batch_op.add_column(sa.Column('status', sa.String(20), nullable=True))
-        
-        # Add error_message column if it doesn't exist
-        if 'error_message' not in column_names:
             batch_op.add_column(sa.Column('error_message', sa.Text(), nullable=True))
 
     # Update existing voices to "ready" status
