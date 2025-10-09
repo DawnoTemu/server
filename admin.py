@@ -315,11 +315,14 @@ def create_login_template(app):
 class UserModelView(SecureModelView):
     """Admin view for managing users"""
     
-    column_list = ('id', 'email', 'email_confirmed', 'is_active', 'last_login', 'created_at')
+    column_list = ('id', 'email', 'credits_balance', 'email_confirmed', 'is_active', 'last_login', 'created_at')
+    column_labels = {
+        'credits_balance': 'Story Points',
+    }
     
     column_searchable_list = ('email',)
     
-    column_filters = ('email_confirmed', 'is_active', 'created_at', 'last_login')
+    column_filters = ('email_confirmed', 'is_active', 'created_at', 'last_login', 'credits_balance')
     
     form_columns = ('email', 'password_hash', 'email_confirmed', 'is_active')
     
@@ -333,6 +336,7 @@ class UserModelView(SecureModelView):
     column_descriptions = {
         'email_confirmed': 'Whether the user has confirmed their email address',
         'is_active': 'Whether the user account is active (can log in)',
+        'credits_balance': 'Current Story Points available to the user (read-only)',
     }
     
     column_formatters = {
