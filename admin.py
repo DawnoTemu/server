@@ -867,6 +867,28 @@ class AudioStoryModelView(SecureModelView):
         
         return success_count > 0
     
+    def _refund_audio_action(self, ids):
+        from models.credit_model import refund_by_audio
+        success = 0
+        errors = []
+        for audio_id in ids:
+            try:
+                ok, _ = refund_by_audio(int(audio_id), reason='admin_refund')
+                if ok:
+                    success += 1
+                else:
+                    errors.append(f"Audio ID {audio_id}: refund not applied")
+            except Exception as e:
+                db.session.rollback()
+                errors.append(f"Audio ID {audio_id}: {e}")
+        if success > 0:
+            db.session.commit()
+        if errors:
+            flash(f"Refunded {success} audios. Errors: {', '.join(errors)}", 'warning')
+        else:
+            flash(f"Refunded {success} audios.", 'success')
+        return success > 0
+    
     # Register custom actions
     def get_actions_list(self):
         # Get the original actions and confirmations
@@ -886,10 +908,12 @@ class AudioStoryModelView(SecureModelView):
         # Add our custom actions
         actions_list.append(('delete_audio', 'Delete Audio Files and Records'))
         actions_list.append(('regenerate_audio', 'Regenerate Failed Audio'))
+        actions_list.append(('refund_audio', 'Refund Credits for Selected Audio'))
         
         # Add confirmation messages
         confirmation_messages['delete_audio'] = 'Are you sure you want to delete these audio files and records?'
         confirmation_messages['regenerate_audio'] = 'Are you sure you want to regenerate these audio files?'
+        confirmation_messages['refund_audio'] = 'Refund credits for the selected audio items?'
         
         # Return the expected format
         return actions_list, confirmation_messages
@@ -900,6 +924,9 @@ class AudioStoryModelView(SecureModelView):
     
     def action_regenerate_audio(self, ids):
         return self._regenerate_audio_action(ids)
+    
+    def action_refund_audio(self, ids):
+        return self._refund_audio_action(ids)
 
 
 class CreditLotModelView(SecureModelView):
@@ -920,6 +947,52 @@ class CreditLotModelView(SecureModelView):
         'user_id', 'source', 'expires_at', 'created_at'
     )
     column_searchable_list = ('source',)
+
+    # Custom action to expire selected lots now
+    def _expire_lots_action(self, ids):
+        from models.credit_model import CreditLot
+        from models.user_model import User
+        success = 0
+        errors = []
+        for lot_id in ids:
+            lot = CreditLot.query.get(lot_id)
+            if not lot:
+                errors.append(f"Lot {lot_id}: not found")
+                continue
+            try:
+                delta = int(lot.amount_remaining or 0)
+                if delta <= 0:
+                    continue
+                lot.amount_remaining = 0
+                user = db.session.get(User, lot.user_id)
+                if user:
+                    user.credits_balance = max(0, int(user.credits_balance or 0) - delta)
+                success += 1
+            except Exception as e:
+                db.session.rollback()
+                errors.append(f"Lot {lot_id}: {e}")
+        if success > 0:
+            db.session.commit()
+        if errors:
+            flash(f"Expired {success} lots. Errors: {', '.join(errors)}", 'warning')
+        else:
+            flash(f"Expired {success} lots.", 'success')
+        return success > 0
+
+    def get_actions_list(self):
+        actions_tuple = super(CreditLotModelView, self).get_actions_list()
+        if len(actions_tuple) == 2:
+            actions, confirmation_messages = actions_tuple
+        else:
+            actions = actions_tuple[0] if actions_tuple else []
+            confirmation_messages = {}
+        actions_list = list(actions) if isinstance(actions, tuple) else actions
+        actions_list.append(('expire_lots', 'Expire selected lots now'))
+        confirmation_messages['expire_lots'] = 'Expire these lots now and reduce users\' balances?'
+        return actions_list, confirmation_messages
+
+    def action_expire_lots(self, ids):
+        return self._expire_lots_action(ids)
 
 
 class CreditTransactionModelView(SecureModelView):
