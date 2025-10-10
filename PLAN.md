@@ -1,73 +1,84 @@
 # Task & Context
-Implement a credit-based system (public label: "Story Stars"; internal: credits) for story audio generation. Each story consumes credits based on text length: ceil(char_count / 1000). Deduct credits when queueing synthesis; refund on technical failure. Subscription plans may follow later.
+Design and ship “Elastic Voice Slots for ElevenLabs”: keep user voice recordings in-house, allocate ElevenLabs voices just-in-time during story generation, and recycle limited voice slots fairly so we never exceed the remote cap while preserving a smooth user experience.
 
 ## Current State (codebase scan)
-- API flow: `routes/audio_routes.py` -> `AudioController.synthesize_audio` -> `AudioModel.synthesize_audio` -> Celery `tasks/audio_tasks.py`.
-- Data models: `models/user_model.py` (no credits field), `models/story_model.py` (has `content`), `models/audio_model.py` (audio job records), `database.py` (SQLAlchemy setup), Alembic under `migrations/`.
-- Auth & ownership: `utils/auth_middleware.py` used in audio routes.
-- Tests: `tests/` includes endpoint and service tests; pytest configured via `pytest.ini`.
+- Voice capture & cloning: `routes/voice_routes.py` → `VoiceController.clone_voice` which immediately queues `VoiceModel.clone_voice` to create an ElevenLabs voice; recordings are pushed to S3 temp keys and converted to READY voices in `tasks/voice_tasks.py`.
+- Voice data model: `models/voice_model.py` (table `voices`) stores `elevenlabs_voice_id`, sample S3 key, `status` (PENDING/PROCESSING/READY/ERROR); no notion of “recording only” or slot allocation metadata.
+- Story synthesis: `routes/audio_routes.py` + `controllers/audio_controller.AudioController.synthesize_audio` require an existing `elevenlabs_voice_id`; Celery worker `tasks/audio_tasks.py` assumes the voice is READY and calls `AudioModel.synthesize_speech`.
+- Voice services: `utils/voice_service.py` routes between ElevenLabs/Cartesia with current clone/delete/synthesize helpers; `utils/elevenlabs_service.py` provides direct API calls but has no slot bookkeeping.
+- Credits & prioritisation inputs: `models/credit_model.py` maintains per-user balances and last transactions; `models/user_model.py` stores `credits_balance`; no linkage yet to voice eviction decisions.
+- Background processing: Celery app exists (see `tasks/__init__.py`), but there is no queue dedicated to slot arbitration or eviction.
+- Tests / docs: coverage lives under `tests/test_models/test_voice_model.py`, `tests/test_routes/test_voice_routes.py`, `tests/test_routes/test_audio_routes.py`; docs under `docs/` have no guidance on slot limits or user messaging.
 
 ## Proposed Changes (files & functions)
-- Schema/migrations:
-  - Add `users.credits_balance` (int, default 0).
-  - Add `audio_stories.credits_charged` (int, nullable).
-  - New table `credit_transactions` with fields: `id`, `user_id`, `amount` (signed int), `type` (`debit`|`credit`|`refund`), `reason` (str), `audio_story_id` (nullable), `story_id` (nullable), `status` (`applied`|`refunded`), `metadata` (JSON), timestamps. Unique index to prevent duplicate debits per `audio_story_id`.
-- Business logic:
-  - New `models/credit_model.py` with `CreditModel.debit(user_id, amount, reason, audio_story_id, story_id)`, `CreditModel.refund_by_audio(audio_story_id, reason)`, `CreditModel.grant(user_id, amount, reason)`. Use row lock (`SELECT FOR UPDATE`) on `User` to ensure atomic balance updates.
-  - Utility `utils/credits.py`: `calculate_required_credits(text: str, unit_size=1000) -> int` (ceil, min 1).
-- Controller changes:
-  - `controllers/audio_controller.py::synthesize_audio`: compute `required = calculate_required_credits(text)`. If audio already READY -> do not charge. If PROCESSING -> do not charge. For new/failed -> within one DB transaction: set audio status to PENDING, set `credits_charged = required`, attempt `CreditModel.debit(...)`. On insufficient balance -> rollback and return 402 with message.
-- Task changes:
-  - `tasks/audio_tasks.py`: on any failure (including `on_failure`), call `CreditModel.refund_by_audio(audio_story_id, reason="synthesis_failed")` if not already refunded; leave successful runs as-is (no extra action).
-- Routes/endpoints:
-  - `routes/billing_routes.py` (new blueprint):
-    - `GET /me/credits` (auth) -> `{ balance, unit_label: "Story Stars" }` and optional recent transactions.
-    - `GET /stories/<id>/credits` -> `{ required_credits }` based on stored `content`.
-  - Admin: `POST /admin/users/<user_id>/credits/grant` with `{ amount, reason }` to grant credits.
-- Config:
-  - `Config.INITIAL_CREDITS` (default 0), `Config.CREDITS_UNIT_SIZE=1000`.
-- Docs: `docs/CREDITS.md` explaining the model, examples, refund policy; update `README.md` briefly.
-- Tests:
-  - New `tests/test_credits.py`: unit tests for calculator and debit/refund logic.
-  - Endpoint tests: insufficient credits returns 402; successful debit on queue; no double-charge when status is READY/PROCESSING; refund on task failure.
+- **Schema & models**
+  - Extend `voices` table: add fields such as `recording_s3_key`, `recording_filesize`, `elevenlabs_allocated_at`, `last_used_at`, `slot_lock_expires_at`, `allocation_status` (Recorded|Allocating|Ready|Cooling|Evicted), and `service_provider`. Consider nullable `elevenlabs_voice_id` with unique index only when populated.
+  - Optional new table `voice_slot_events` (audit trail of allocations/evictions) if we need historical data for debugging and fairness scoring.
+  - Update SQLAlchemy model (`models/voice_model.Voice`) with new columns + helper methods (`mark_recorded`, `mark_allocation_started`, `mark_ready`, `mark_evicted`).
+- **Recording flow**
+  - Rework `VoiceController.clone_voice` to store the uploaded audio (encrypted S3 object) and create/update a `Voice` row in “Recorded” state without contacting ElevenLabs; return metadata & status.
+  - Update `VoiceModel.clone_voice` (and tests) to align with the new behaviour, ensuring we keep storing the original sample for later.
+  - Adjust `tasks/voice_tasks.clone_voice_task` or replace it with a new `process_voice_recording` task that just handles post-processing (noise removal, encryption) but does not allocate ElevenLabs.
+- **Slot allocation service**
+  - Introduce `utils/voice_slot_manager.py` encapsulating:
+    - `ensure_active_voice(user_id, voice_id=None)` that acquires a distributed lock, checks if an active ElevenLabs voice exists, and if not triggers allocation workflow.
+    - Slot accounting against configured limit (`Config.ELEVENLABS_SLOT_LIMIT`), cached list of active voices, and eviction policy using user activity (`credits_balance`, recent `AudioStory` usage, `last_used_at`, `slot_lock_expires_at`).
+    - `select_voice_for_eviction()` implementing fairness rules (inactive, zero credits, oldest last-used, outside warm hold window).
+    - API integrations (`create_remote_voice`, `delete_remote_voice`) invoking `utils/elevenlabs_service` and handling drift (missing remote voice).
+- **Audio generation changes**
+  - Update `AudioController.synthesize_audio` (and corresponding route) to accept an internal voice id or user default, call `VoiceSlotManager.ensure_active_voice` before debiting credits, and receive either the ready remote voice id or a queued/allocating status.
+  - Enhance response contract to surface states like `allocating_voice`, `queued_for_slot`, `processing`, aligning with UX messaging expectations.
+  - Modify `tasks/audio_tasks.synthesize_audio_task` to wait/retry until allocation finalises (respecting Celery retry/backoff) and to refresh `Voice` metadata (`last_used_at`).
+- **Asynchronous orchestration**
+  - Add Celery tasks for `allocate_voice_slot` and `evict_voice_slot`; ensure they serialise operations via Redis locks to avoid over-allocation.
+  - Implement a lightweight queue/backoff when slots are full using Redis-backed data structures and status flags on the `AudioStory` row (e.g., `allocation_pending`).
+  - Provide scheduled cleanup task (`tasks/voice_tasks.reclaim_idle_voices`) to periodically evict voices past cooling window or with missing recordings.
+- **API & UX adjustments**
+  - Possibly add endpoint `GET /voices/<id>/status` to poll allocation state, or extend existing responses.
+  - Update docs (`docs/openapi.yaml`, README voice section) to describe new states and policies.
+  - Add admin tools (optional) to inspect current slot usage via `admin.py` or dedicated route.
+- **Configuration & secrets**
+  - Extend `Config` with `ELEVENLABS_SLOT_LIMIT`, `VOICE_WARM_HOLD_SECONDS`, `VOICE_ALLOCATION_RETRY_LIMIT`, encryption toggles for S3 uploads.
+- **Testing**
+  - New unit tests for `VoiceSlotManager` (allocation, eviction decision matrix) using pytest-mock.
+  - Update route/controller tests to cover allocating responses, queued states, and eviction-trigger scenarios.
+  - Add Celery task tests for allocation pipeline (can be mocked).
 
 ## Step-by-Step Plan
-1) Add `utils/credits.py` with calculator + tests.
-2) Alembic migration: add user and audio columns; create `credit_transactions`.
-3) Implement `models/credit_model.py` (ledger + atomic debit/refund/grant).
-4) Wire `AudioController.synthesize_audio` to calculate, debit, and set `credits_charged` atomically.
-5) Update Celery task failure paths to trigger refund by `audio_story_id`.
-6) Add `routes/billing_routes.py`, register blueprint, and admin grant endpoint.
-7) Seed `INITIAL_CREDITS` in `UserModel.create_user`.
-8) Write tests (calculator, debit/refund, endpoints, admin grant).
-9) Update docs and minimal README note.
+1. **Define data model extensions**: draft Alembic migration for new columns/table, update `models/voice_model.Voice` and ensure relationships/indexes support nullable remote IDs; add helper enums/consts for allocation statuses.
+2. **Refactor recording endpoint**: rewrite `VoiceController.clone_voice`/`VoiceModel.clone_voice` to save encrypted recordings without invoking ElevenLabs; adjust tests & documentation.
+3. **Implement VoiceSlotManager**: create utility module handling slot limit config, selection heuristics, eviction routines, and remote API wrappers with comprehensive logging/error handling.
+4. **Wire allocation into audio flow**: modify `AudioController.synthesize_audio` and Celery `synthesize_audio_task` to call the manager, manage status transitions, and handle queued/allocating responses while preserving credit charging behaviour.
+5. **Add eviction & cleanup tasks**: create Celery tasks for allocation queue processing and periodic reclamation; ensure they update `Voice` records and notify waiting audio jobs.
+6. **Update routes & serialization**: adapt `routes/audio_routes.py` (and possibly `voice_routes.py`) to accept internal IDs, expose new statuses, and maintain backward compatibility where required; update OpenAPI spec and user-facing docs.
+7. **Testing & validation**: expand pytest coverage (unit + functional) for the new manager, controller changes, and task flows; add fixtures/mocks for ElevenLabs responses.
+8. **Operational polish**: document configuration/env expectations, add admin visibility if needed, verify logging/metrics, and run sanity tests (end-to-end voice recording → story generation with slot recycling).
 
 ## Risks & Assumptions
-- Concurrency: two synth requests racing; solved via user row lock + unique debit per `audio_story_id`.
-- Refund idempotency: ensure a single refund applies per audio story.
-- Endpoint status code: use 402 Payment Required for insufficient credits.
-- Text length source: use `Story.content` length; rounding is ceil(len(content)/1000), min 1.
-- Debiting timing: charge only when a new job is queued (not when READY/PROCESSING).
+- **Concurrency & locking**: multiple generate requests may race for the same slot; we must rely on DB row locks or Redis distributed locks to avoid over-allocation.
+- **Remote API limits & latency**: ElevenLabs allocation/deletion calls may be slow or fail; plan requires robust retries and consistent state reconciliation.
+- **Eviction policy accuracy**: fairness rules depend on accurate `last_used_at`, credit balance, and warm-hold windows—assumes existing credit ledger is up to date and accessible during allocation.
+- **Backwards compatibility**: existing clients may still send `elevenlabs_voice_id`; we need translation or dual support during transition.
+- **S3 storage & encryption**: assumes current `S3Client` can apply server-side encryption; may require additional parameters/enforcement.
+- **Queue complexity**: introducing allocation queues could stall audio synthesis if not carefully instrumented; need visibility/logging to troubleshoot.
 
 ## Validation & Done Criteria
-- Migrations apply cleanly; new fields/tables exist.
-- `POST /voices/{voice}/stories/{story}/audio`:
-  - 202 and balance decreases by required credits when queueing new synthesis.
-  - 200 and no charge when audio already READY.
-  - 202 and no extra charge when already PROCESSING.
-  - 402 with clear message when balance is insufficient.
-- On task failure, user balance is fully refunded; ledger reflects debit + refund.
-- `GET /me/credits` returns correct balance; admin grant works and is audited.
-- Tests pass in CI (`pytest -v`).
+- Recording endpoint stores samples without creating ElevenLabs voices; database shows `allocation_status=recorded`.
+- Audio synthesis request triggers allocation when needed, respecting slot limit and returning appropriate state transitions; once a slot frees, queued request completes successfully.
+- Eviction logic removes low-priority voices and reuses slots without exceeding configured cap (validated via logs/tests).
+- Tests covering allocation manager, eviction heuristics, and updated routes/controllers pass (`pytest -v`).
+- Documentation (OpenAPI + README) reflects new workflow and user-visible statuses.
+- Observed telemetry/logs confirm slot operations are serialized and recover from failures (e.g., remote voice missing is re-created).
 
 ## Open Questions
-- Final public unit name (Story Stars, Story Points, Fairy Dust?).
-Story Points (in polish Punkty Magii)
-- Default `INITIAL_CREDITS` for new users and dev/test values.
-Default INITIAL_CREDITS should be abotu 10 so we can generate 2 5 minutes stories.
-- Should we expose transaction history to end users now?
-Yes
-- Any max story length or per-request cap to prevent surprise charges?
-No
-- Future: monthly subscription allotments and expiration order of credits.
-
+- Should we introduce a dedicated queue table to persist waiting requests, or is in-memory/Celery retry sufficient?
+in-memory/Celery is good
+- What is the exact ElevenLabs slot cap (configurable per env) and desired warm-hold duration?
+ElevenLabs slot cap can be hanging (we must both set it on ENV current 30 but be reade if eleven labs return Error of non slots available)
+ desired warm-hold duratio set something logical 15 minutes?
+- Do we need administrative overrides to pin certain voices so they are never evicted?
+no
+- How should we communicate allocation delays to clients—polling endpoint, WebSocket, or relying on existing job status polling?
+Relying on existing job status polling
+- Are there compliance requirements for encrypting stored voice recordings beyond S3 server-side encryption (e.g., client-side)?
+something trusted aligned with EU GDPR
