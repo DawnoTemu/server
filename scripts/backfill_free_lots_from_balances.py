@@ -12,7 +12,14 @@ Behavior:
 """
 
 import argparse
+import os
+import sys
 from datetime import datetime
+
+# Ensure project root is on sys.path for 'import app'
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
 
 from app import app as flask_app
 from database import db
@@ -74,4 +81,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

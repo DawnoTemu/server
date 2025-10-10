@@ -602,6 +602,7 @@ paths:
       tags:
         - Authentication
       summary: Resend confirmation email
+      operationId: resendConfirmation
       requestBody:
         required: true
         content:
@@ -627,6 +628,7 @@ paths:
       tags:
         - Authentication
       summary: Request password reset email
+      operationId: requestPasswordReset
       requestBody:
         required: true
         content:
@@ -648,6 +650,7 @@ paths:
       tags:
         - Authentication
       summary: Reset password with token
+      operationId: resetPasswordWithToken
       parameters:
         - name: token
           in: path
@@ -685,6 +688,7 @@ paths:
       tags:
         - Stories
       summary: List available stories
+      operationId: listStories
       responses:
         '200':
           description: List of stories
@@ -692,6 +696,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/StoryList'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '500':
           description: Server error
           content:
@@ -704,6 +714,7 @@ paths:
       tags:
         - Stories
       summary: Get story details
+      operationId: getStory
       parameters:
         - name: story_id
           in: path
@@ -729,6 +740,7 @@ paths:
       tags:
         - Stories
       summary: Get story cover (redirect)
+      operationId: getStoryCover
       parameters:
         - name: story_id
           in: path
@@ -964,6 +976,7 @@ paths:
       tags:
         - Tasks
       summary: Get audio synthesis status
+      operationId: getAudioStatus
       security:
         - bearerAuth: []
       parameters:
@@ -992,6 +1005,7 @@ paths:
       tags:
         - Tasks
       summary: Get Celery task status
+      operationId: getTaskStatus
       security:
         - bearerAuth: []
       parameters:
@@ -1002,6 +1016,7 @@ paths:
             type: string
       responses:
         '200': { description: Status }
+        '404': { description: Not found }
         '500': { description: Error checking status }
 
 
@@ -1010,6 +1025,7 @@ paths:
       tags:
         - Billing
       summary: Get current user's credit balance and history
+      operationId: getMyCredits
       security:
         - bearerAuth: []
       responses:
@@ -1037,6 +1053,7 @@ paths:
       tags:
         - Billing
       summary: Estimate required credits for a story
+      operationId: getStoryCredits
       parameters:
         - name: story_id
           in: path
@@ -1066,6 +1083,7 @@ paths:
       tags:
         - Admin
       summary: Grant credits to a user
+      operationId: adminGrantCredits
       security:
         - bearerAuth: []
       parameters:
