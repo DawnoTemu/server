@@ -11,6 +11,7 @@ from flask import flash, redirect, url_for
 from werkzeug.security import generate_password_hash
 from models.user_model import User
 from flask_admin.form import FileUploadField
+from markupsafe import Markup
 from werkzeug.utils import secure_filename
 from werkzeug.security import check_password_hash
 
@@ -19,7 +20,9 @@ from models.story_model import Story
 from models.user_model import User
 from models.voice_model import Voice, VoiceModel
 from models.audio_model import AudioStory, AudioStatus
+from models.credit_model import CreditLot, CreditTransaction
 from config import Config
+from utils.credits import calculate_required_credits
 
 # Constants
 DEFAULT_SESSION_TIMEOUT = 3600  # 1 hour in seconds
@@ -146,15 +149,20 @@ class SecureModelView(ModelView):
 
 class StoryModelView(SecureModelView):
     """Admin view for managing stories."""
-    column_list = ('id', 'title', 'author', 'created_at', 'updated_at')
+    column_list = ('id', 'title', 'author', 'credits_cost', 'created_at', 'updated_at')
     column_searchable_list = ('title', 'author', 'content')
     column_filters = ('author', 'created_at')
     form_excluded_columns = ('created_at', 'updated_at', 's3_cover_key', 'id') 
+    column_labels = {
+        'credits_cost': 'Credits',
+    }
     
     # Add preview of cover image
     column_formatters = {
         'cover_filename': lambda v, c, m, p: f'<img src="{Config.get_s3_url(m.s3_cover_key)}" width="100">' 
                                              if m.s3_cover_key else ''
+        ,
+        'credits_cost': lambda v, c, m, p: calculate_required_credits((m.content or ''))
     }
     
     column_formatters_args = {
@@ -312,14 +320,146 @@ def create_login_template(app):
 {% endblock %}"""
             )
 
+def create_user_credits_template(app):
+    """Create user credits template if it doesn't exist."""
+    admin_templates_dir = os.path.join(app.root_path, 'templates', 'admin')
+    os.makedirs(admin_templates_dir, exist_ok=True)
+    tpl_path = os.path.join(admin_templates_dir, 'user_credits.html')
+    if not os.path.exists(tpl_path):
+        with open(tpl_path, 'w') as f:
+            f.write(
+                """{% extends 'admin/master.html' %}
+{% block body %}
+<div class="container">
+  <div class="row">
+    <div class="col-md-10 offset-md-1">
+      <div class="card mt-4">
+        <div class="card-header">
+          <h3>User Credits</h3>
+          <p>User: {{ user.email }} (ID: {{ user.id }}) — Balance: {{ user.credits_balance }}</p>
+        </div>
+        <div class="card-body">
+          <h5>Active Lots</h5>
+          <table class="table table-sm table-striped">
+            <thead><tr><th>Source</th><th>Remaining</th><th>Expires At</th><th>Created</th></tr></thead>
+            <tbody>
+              {% for lot in lots %}
+              <tr>
+                <td>{{ lot.source }}</td>
+                <td>{{ lot.amount_remaining }}</td>
+                <td>{% if lot.expires_at %}{{ lot.expires_at }}{% else %}—{% endif %}</td>
+                <td>{{ lot.created_at }}</td>
+              </tr>
+              {% else %}
+              <tr><td colspan="4" class="text-center">No active lots</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+
+          <h5 class="mt-4">Recent Transactions</h5>
+          <table class="table table-sm table-striped">
+            <thead><tr><th>At</th><th>Type</th><th>Amount</th><th>Status</th><th>Reason</th><th>Audio ID</th><th>Story ID</th></tr></thead>
+            <tbody>
+              {% for tx in transactions %}
+              <tr>
+                <td>{{ tx.created_at }}</td>
+                <td>{{ tx.type }}</td>
+                <td>{{ tx.amount }}</td>
+                <td>{{ tx.status }}</td>
+                <td>{{ tx.reason }}</td>
+                <td>{{ tx.audio_story_id or '—' }}</td>
+                <td>{{ tx.story_id or '—' }}</td>
+              </tr>
+              {% else %}
+              <tr><td colspan="7" class="text-center">No transactions</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+
+          <a href="{{ url_for('user.index_view') }}" class="btn btn-secondary">Back</a>
+          <a href="{{ url_for('user.grant_credits_view') }}?id={{ user.id }}" class="btn btn-primary ms-2">Grant Points</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+"""
+            )
+def create_grant_template(app):
+    """Create grant credits template if missing."""
+    admin_templates_dir = os.path.join(app.root_path, 'templates', 'admin')
+    os.makedirs(admin_templates_dir, exist_ok=True)
+    grant_template_path = os.path.join(admin_templates_dir, 'grant_credits.html')
+    if not os.path.exists(grant_template_path):
+        with open(grant_template_path, 'w') as f:
+            f.write(
+                """{% extends 'admin/master.html' %}
+{% block body %}
+<div class="container">
+  <div class="row">
+    <div class="col-md-6 offset-md-3">
+      <div class="card mt-5">
+        <div class="card-header">
+          <h3 class="text-center">Grant Story Points</h3>
+          <p>User: {{ user.email }} (ID: {{ user.id }})</p>
+        </div>
+        <div class="card-body">
+          {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+              {% for category, message in messages %}
+                <div class="alert alert-{{ category }}">{{ message }}</div>
+              {% endfor %}
+            {% endif %}
+          {% endwith %}
+          <form method="POST">
+            <input type="hidden" name="user_id" value="{{ user.id }}" />
+            <div class="form-group">
+              <label for="amount">Amount (points)</label>
+              <input type="number" min="1" class="form-control" id="amount" name="amount" required>
+            </div>
+            <div class="form-group mt-2">
+              <label for="reason">Reason</label>
+              <input type="text" class="form-control" id="reason" name="reason" placeholder="admin_grant">
+            </div>
+            <div class="form-group mt-2">
+              <label for="source">Source</label>
+              <select class="form-control" id="source" name="source">
+                <option value="add_on">add_on</option>
+                <option value="referral">referral</option>
+                <option value="free">free</option>
+                <option value="monthly">monthly</option>
+                <option value="event">event</option>
+              </select>
+            </div>
+            <div class="form-group mt-2">
+              <label for="expires_at">Expires At (ISO8601, optional)</label>
+              <input type="text" class="form-control" id="expires_at" name="expires_at" placeholder="2025-12-31T23:59:59Z">
+            </div>
+            <button type="submit" class="btn btn-primary btn-block mt-3">Grant Points</button>
+            <a href="{{ url_for('user.index_view') }}" class="btn btn-secondary btn-block mt-2">Back</a>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+  </div>
+{% endblock %}
+"""
+            )
+
 class UserModelView(SecureModelView):
     """Admin view for managing users"""
     
-    column_list = ('id', 'email', 'email_confirmed', 'is_active', 'last_login', 'created_at')
+    column_list = ('id', 'email', 'credits_balance', 'manage_credits', 'email_confirmed', 'is_active', 'last_login', 'created_at')
+    column_labels = {
+        'credits_balance': 'Story Points',
+        'manage_credits': 'Manage Credits',
+    }
     
     column_searchable_list = ('email',)
     
-    column_filters = ('email_confirmed', 'is_active', 'created_at', 'last_login')
+    column_filters = ('email_confirmed', 'is_active', 'created_at', 'last_login', 'credits_balance')
     
     form_columns = ('email', 'password_hash', 'email_confirmed', 'is_active')
     
@@ -333,11 +473,22 @@ class UserModelView(SecureModelView):
     column_descriptions = {
         'email_confirmed': 'Whether the user has confirmed their email address',
         'is_active': 'Whether the user account is active (can log in)',
+        'credits_balance': 'Current Story Points available to the user (read-only)',
     }
     
     column_formatters = {
-        'last_login': lambda v, c, m, p: m.last_login.strftime('%Y-%m-%d %H:%M:%S') if m.last_login else 'Never'
+        'last_login': lambda v, c, m, p: m.last_login.strftime('%Y-%m-%d %H:%M:%S') if m.last_login else 'Never',
+        'manage_credits': lambda v, c, m, p: Markup(
+            f'<a class="btn btn-sm btn-outline-primary" href="{url_for("user.user_credits_view")}?id={m.id}">View</a> '
+            f'<a class="btn btn-sm btn-primary" href="{url_for("user.grant_credits_view")}?id={m.id}">Grant</a>'
+        )
     }
+
+    # Enable built-in details page
+    can_view_details = True
+    column_details_list = (
+        'id', 'email', 'credits_balance', 'email_confirmed', 'is_active', 'last_login', 'created_at'
+    )
 
     # Create a form with password field for user creation
     def create_form(self):
@@ -353,6 +504,99 @@ class UserModelView(SecureModelView):
         if is_created and not model.password_hash:
             model.password_hash = generate_password_hash('changeme')
             flash('User created with default password: "changeme". Please change this immediately.', 'warning')
+
+    @expose('/grant-credits', methods=['GET', 'POST'])
+    def grant_credits_view(self):
+        """Form to grant Story Points to a single user."""
+        if not is_authenticated():
+            return redirect(url_for('admin.login_view'))
+        from models.user_model import UserModel
+        from models.credit_model import grant as credit_grant
+        user_id = request.args.get('id') or request.form.get('user_id')
+        if not user_id:
+            flash('Missing user id', 'error')
+            return redirect(url_for('.index_view'))
+        try:
+            user_id = int(user_id)
+        except Exception:
+            flash('Invalid user id', 'error')
+            return redirect(url_for('.index_view'))
+
+        user = UserModel.get_by_id(user_id)
+        if not user:
+            flash('User not found', 'error')
+            return redirect(url_for('.index_view'))
+
+        if request.method == 'POST':
+            try:
+                amount = int(request.form.get('amount', '0'))
+            except Exception:
+                amount = 0
+            reason = request.form.get('reason') or 'admin_grant'
+            source = (request.form.get('source') or 'add_on').strip().lower()
+            expires_at_raw = request.form.get('expires_at')
+            expires_at = None
+            if expires_at_raw:
+                try:
+                    expires_at = datetime.fromisoformat(expires_at_raw.replace('Z', '+00:00'))
+                except Exception:
+                    flash('Invalid expires_at format. Use ISO8601.', 'error')
+                    return self.render('admin/grant_credits.html', user=user)
+            if amount <= 0:
+                flash('Amount must be a positive integer', 'error')
+                return self.render('admin/grant_credits.html', user=user)
+            try:
+                credit_grant(user_id=user.id, amount=amount, reason=reason, source=source, expires_at=expires_at)
+                flash(f'Granted {amount} Story Points to {user.email}', 'success')
+                return redirect(url_for('.index_view'))
+            except Exception as e:
+                db.session.rollback()
+                flash(f'Failed to grant credits: {e}', 'error')
+                return self.render('admin/grant_credits.html', user=user)
+
+        return self.render('admin/grant_credits.html', user=user)
+
+    @expose('/credits', methods=['GET'])
+    def user_credits_view(self):
+        """Read-only panel showing active lots and recent transactions for a user."""
+        if not is_authenticated():
+            return redirect(url_for('admin.login_view'))
+        from models.user_model import UserModel
+        from models.credit_model import CreditLot, CreditTransaction
+        user_id = request.args.get('id')
+        if not user_id:
+            flash('Missing user id', 'error')
+            return redirect(url_for('.index_view'))
+        try:
+            user_id = int(user_id)
+        except Exception:
+            flash('Invalid user id', 'error')
+            return redirect(url_for('.index_view'))
+
+        user = UserModel.get_by_id(user_id)
+        if not user:
+            flash('User not found', 'error')
+            return redirect(url_for('.index_view'))
+
+        now = datetime.utcnow()
+        lots = (
+            CreditLot.query
+            .filter(
+                CreditLot.user_id == user.id,
+                (CreditLot.expires_at.is_(None) | (CreditLot.expires_at > now)),
+                CreditLot.amount_remaining > 0,
+            )
+            .order_by(CreditLot.expires_at.asc(), CreditLot.created_at)
+            .all()
+        )
+        transactions = (
+            CreditTransaction.query
+            .filter(CreditTransaction.user_id == user.id)
+            .order_by(CreditTransaction.created_at.desc())
+            .limit(20)
+            .all()
+        )
+        return self.render('admin/user_credits.html', user=user, lots=lots, transactions=transactions)
     
     # Add custom actions
     @staticmethod
@@ -636,6 +880,28 @@ class AudioStoryModelView(SecureModelView):
         
         return success_count > 0
     
+    def _refund_audio_action(self, ids):
+        from models.credit_model import refund_by_audio
+        success = 0
+        errors = []
+        for audio_id in ids:
+            try:
+                ok, refund_tx = refund_by_audio(int(audio_id), reason='admin_refund')
+                if ok and refund_tx is not None:
+                    success += 1
+                else:
+                    errors.append(f"Audio ID {audio_id}: no outstanding debit to refund")
+            except Exception as e:
+                db.session.rollback()
+                errors.append(f"Audio ID {audio_id}: {e}")
+        if success > 0:
+            db.session.commit()
+        if errors:
+            flash(f"Refunded {success} audios. Errors: {', '.join(errors)}", 'warning')
+        else:
+            flash(f"Refunded {success} audios.", 'success')
+        return success > 0
+    
     # Register custom actions
     def get_actions_list(self):
         # Get the original actions and confirmations
@@ -655,10 +921,12 @@ class AudioStoryModelView(SecureModelView):
         # Add our custom actions
         actions_list.append(('delete_audio', 'Delete Audio Files and Records'))
         actions_list.append(('regenerate_audio', 'Regenerate Failed Audio'))
+        actions_list.append(('refund_audio', 'Refund Credits for Selected Audio'))
         
         # Add confirmation messages
         confirmation_messages['delete_audio'] = 'Are you sure you want to delete these audio files and records?'
         confirmation_messages['regenerate_audio'] = 'Are you sure you want to regenerate these audio files?'
+        confirmation_messages['refund_audio'] = 'Refund credits for the selected audio items?'
         
         # Return the expected format
         return actions_list, confirmation_messages
@@ -669,11 +937,118 @@ class AudioStoryModelView(SecureModelView):
     
     def action_regenerate_audio(self, ids):
         return self._regenerate_audio_action(ids)
+    
+    def action_refund_audio(self, ids):
+        return self._refund_audio_action(ids)
+
+
+class CreditLotModelView(SecureModelView):
+    """Read-only admin view for credit lots."""
+    can_create = False
+    can_edit = False
+    can_delete = False
+
+    column_list = (
+        'id', 'user_id', 'source', 'amount_granted', 'amount_remaining', 'expires_at', 'created_at', 'updated_at'
+    )
+    column_labels = {
+        'user_id': 'User',
+        'amount_granted': 'Granted',
+        'amount_remaining': 'Remaining',
+    }
+    column_filters = (
+        'user_id', 'source', 'expires_at', 'created_at'
+    )
+    column_searchable_list = ('source',)
+
+    # Custom action to expire selected lots now
+    def _expire_lots_action(self, ids):
+        from models.credit_model import CreditLot, CreditTransaction, CreditTransactionAllocation
+        from models.user_model import User
+        success = 0
+        errors = []
+        for lot_id in ids:
+            lot = CreditLot.query.get(lot_id)
+            if not lot:
+                errors.append(f"Lot {lot_id}: not found")
+                continue
+            try:
+                delta = int(lot.amount_remaining or 0)
+                if delta <= 0:
+                    continue
+                # Create an 'expire' transaction and allocation to keep ledger consistent
+                tx = CreditTransaction(
+                    user_id=lot.user_id,
+                    amount=-delta,
+                    type='expire',
+                    reason='admin_expire',
+                    audio_story_id=None,
+                    story_id=None,
+                    status='applied',
+                )
+                db.session.add(tx)
+                db.session.flush()
+                db.session.add(
+                    CreditTransactionAllocation(transaction_id=tx.id, lot_id=lot.id, amount=-delta)
+                )
+                # Zero out the lot and adjust cached balance
+                lot.amount_remaining = 0
+                user = db.session.get(User, lot.user_id)
+                if user:
+                    user.credits_balance = max(0, int(user.credits_balance or 0) - delta)
+                success += 1
+            except Exception as e:
+                db.session.rollback()
+                errors.append(f"Lot {lot_id}: {e}")
+        if success > 0:
+            db.session.commit()
+        if errors:
+            flash(f"Expired {success} lots. Errors: {', '.join(errors)}", 'warning')
+        else:
+            flash(f"Expired {success} lots.", 'success')
+        return success > 0
+
+    def get_actions_list(self):
+        actions_tuple = super(CreditLotModelView, self).get_actions_list()
+        if len(actions_tuple) == 2:
+            actions, confirmation_messages = actions_tuple
+        else:
+            actions = actions_tuple[0] if actions_tuple else []
+            confirmation_messages = {}
+        actions_list = list(actions) if isinstance(actions, tuple) else actions
+        actions_list.append(('expire_lots', 'Expire selected lots now'))
+        confirmation_messages['expire_lots'] = 'Expire these lots now and reduce users\' balances?'
+        return actions_list, confirmation_messages
+
+    def action_expire_lots(self, ids):
+        return self._expire_lots_action(ids)
+
+
+class CreditTransactionModelView(SecureModelView):
+    """Read-only admin view for credit transactions."""
+    can_create = False
+    can_edit = False
+    can_delete = False
+
+    column_list = (
+        'id', 'user_id', 'type', 'amount', 'status', 'reason', 'audio_story_id', 'story_id', 'created_at'
+    )
+    column_labels = {
+        'user_id': 'User',
+        'audio_story_id': 'Audio ID',
+        'story_id': 'Story ID',
+    }
+    column_filters = (
+        'user_id', 'type', 'status', 'created_at'
+    )
+    column_searchable_list = ('type', 'status', 'reason')
 
 def init_admin(app):
     """Initialize the admin interface."""
     # Create login template
     create_login_template(app)
+    create_grant_template(app)
+    create_user_credits_template(app)
     
     # Setup admin interface
     admin = Admin(
@@ -688,6 +1063,8 @@ def init_admin(app):
     admin.add_view(UserModelView(User, db.session, name='Users'))
     admin.add_view(VoiceModelView(Voice, db.session, name='Voices'))
     admin.add_view(AudioStoryModelView(AudioStory, db.session, name='Audio Stories'))
+    admin.add_view(CreditLotModelView(CreditLot, db.session, name='Credit Lots'))
+    admin.add_view(CreditTransactionModelView(CreditTransaction, db.session, name='Credit Transactions'))
 
     # Setup session configuration
     app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(

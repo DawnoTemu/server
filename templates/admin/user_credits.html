@@ -1,0 +1,55 @@
+{% extends 'admin/master.html' %}
+{% block body %}
+<div class="container">
+  <div class="row">
+    <div class="col-md-10 offset-md-1">
+      <div class="card mt-4">
+        <div class="card-header">
+          <h3>User Credits</h3>
+          <p>User: {{ user.email }} (ID: {{ user.id }}) — Balance: {{ user.credits_balance }}</p>
+        </div>
+        <div class="card-body">
+          <h5>Active Lots</h5>
+          <table class="table table-sm table-striped">
+            <thead><tr><th>Source</th><th>Remaining</th><th>Expires At</th><th>Created</th></tr></thead>
+            <tbody>
+              {% for lot in lots %}
+              <tr>
+                <td>{{ lot.source }}</td>
+                <td>{{ lot.amount_remaining }}</td>
+                <td>{% if lot.expires_at %}{{ lot.expires_at }}{% else %}—{% endif %}</td>
+                <td>{{ lot.created_at }}</td>
+              </tr>
+              {% else %}
+              <tr><td colspan="4" class="text-center">No active lots</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+
+          <h5 class="mt-4">Recent Transactions</h5>
+          <table class="table table-sm table-striped">
+            <thead><tr><th>At</th><th>Type</th><th>Amount</th><th>Status</th><th>Reason</th><th>Audio ID</th><th>Story ID</th></tr></thead>
+            <tbody>
+              {% for tx in transactions %}
+              <tr>
+                <td>{{ tx.created_at }}</td>
+                <td>{{ tx.type }}</td>
+                <td>{{ tx.amount }}</td>
+                <td>{{ tx.status }}</td>
+                <td>{{ tx.reason }}</td>
+                <td>{{ tx.audio_story_id or '—' }}</td>
+                <td>{{ tx.story_id or '—' }}</td>
+              </tr>
+              {% else %}
+              <tr><td colspan="7" class="text-center">No transactions</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+
+          <a href="{{ url_for('user.index_view') }}" class="btn btn-secondary">Back</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -35,12 +35,19 @@ class AudioTask(Task):
                 if args and args[0]:  # First argument should be audio_story_id
                     audio_id = args[0]
                     from models.audio_model import AudioStory, AudioStatus
+                    from models.credit_model import refund_by_audio
                     audio = AudioStory.query.get(audio_id)
                     if audio:
                         audio.status = AudioStatus.ERROR.value
                         audio.error_message = str(exc)
                         db.session.commit()
                         logger.info(f"Updated audio {audio_id} status to ERROR")
+                        # Refund credits for this audio attempt (idempotent)
+                        try:
+                            refund_by_audio(audio_id, reason="task_exception")
+                            logger.info(f"Refunded credits for audio {audio_id} due to task failure")
+                        except Exception as re:
+                            logger.error(f"Failed to refund credits for audio {audio_id}: {re}")
             except Exception as e:
                 logger.error(f"Error in on_failure handler: {e}")
 
@@ -80,6 +87,12 @@ def synthesize_audio_task(self, audio_story_id, voice_id, story_id, text):
             audio_story.status = AudioStatus.ERROR.value
             audio_story.error_message = "Voice not found"
             db.session.commit()
+            # Refund on failure
+            try:
+                from models.credit_model import refund_by_audio
+                refund_by_audio(audio_story_id, reason="voice_not_found")
+            except Exception as re:
+                logger.error(f"Refund failed for audio {audio_story_id}: {re}")
             return False
             
         if voice.status != VoiceStatus.READY:
@@ -87,6 +100,11 @@ def synthesize_audio_task(self, audio_story_id, voice_id, story_id, text):
             audio_story.status = AudioStatus.ERROR.value
             audio_story.error_message = f"Voice is not ready (status: {voice.status})"
             db.session.commit()
+            try:
+                from models.credit_model import refund_by_audio
+                refund_by_audio(audio_story_id, reason="voice_not_ready")
+            except Exception as re:
+                logger.error(f"Refund failed for audio {audio_story_id}: {re}")
             return False
             
         if not voice.elevenlabs_voice_id:
@@ -94,6 +112,11 @@ def synthesize_audio_task(self, audio_story_id, voice_id, story_id, text):
             audio_story.status = AudioStatus.ERROR.value
             audio_story.error_message = "Voice has no ElevenLabs ID"
             db.session.commit()
+            try:
+                from models.credit_model import refund_by_audio
+                refund_by_audio(audio_story_id, reason="missing_external_voice_id")
+            except Exception as re:
+                logger.error(f"Refund failed for audio {audio_story_id}: {re}")
             return False
             
         # Update status
@@ -108,6 +131,11 @@ def synthesize_audio_task(self, audio_story_id, voice_id, story_id, text):
             audio_story.status = AudioStatus.ERROR.value
             audio_story.error_message = str(audio_data)
             db.session.commit()
+            try:
+                from models.credit_model import refund_by_audio
+                refund_by_audio(audio_story_id, reason="synthesis_failed")
+            except Exception as re:
+                logger.error(f"Refund failed for audio {audio_story_id}: {re}")
             return False
             
         # Store audio
@@ -118,6 +146,11 @@ def synthesize_audio_task(self, audio_story_id, voice_id, story_id, text):
             audio_story.status = AudioStatus.ERROR.value
             audio_story.error_message = message
             db.session.commit()
+            try:
+                from models.credit_model import refund_by_audio
+                refund_by_audio(audio_story_id, reason="storage_failed")
+            except Exception as re:
+                logger.error(f"Refund failed for audio {audio_story_id}: {re}")
             return False
             
         logger.info(f"Audio synthesis successful for audio ID {audio_story_id}")

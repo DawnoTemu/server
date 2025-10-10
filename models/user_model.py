@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 import jwt
 import uuid
+import logging
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask import current_app
 from database import db
@@ -15,6 +16,8 @@ class User(db.Model):
     email_confirmed = db.Column(db.Boolean, default=False)
     is_active = db.Column(db.Boolean, default=False)
     is_admin = db.Column(db.Boolean, default=False)
+    # Credits balance for Story Points (Punkty Magii)
+    credits_balance = db.Column(db.Integer, nullable=False, default=0)
     last_login = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -38,6 +41,7 @@ class User(db.Model):
             'email_confirmed': self.email_confirmed,
             'is_active': self.is_active,
             'is_admin': self.is_admin,
+            'credits_balance': self.credits_balance,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'last_login': self.last_login.isoformat() if self.last_login else None
         }
@@ -135,13 +139,31 @@ class UserModel:
         Returns:
             User: Newly created user object
         """
-        user = User(email=email, is_admin=is_admin)
+        from config import Config
+        initial_credits = getattr(Config, 'INITIAL_CREDITS', 0) or 0
+        # Create the user with zero cached balance; grant will create a free lot and update balance
+        user = User(email=email, is_admin=is_admin, credits_balance=0)
         user.set_password(password)
         
         # Add to database
         db.session.add(user)
         db.session.commit()
         
+        # Seed initial credits as a non-expiring free lot so debits can allocate properly
+        if initial_credits and int(initial_credits) > 0:
+            from models.credit_model import grant  # local import to avoid circular deps
+            try:
+                grant(user.id, int(initial_credits), reason="initial_grant", source="free", expires_at=None)
+            except Exception as e:
+                # Roll back failed transaction to keep session usable
+                try:
+                    db.session.rollback()
+                except Exception:
+                    pass
+                logging.getLogger(__name__).warning(
+                    "Initial credit grant failed for user %s: %s", email, str(e)
+                )
+
         return user
     
     @staticmethod
