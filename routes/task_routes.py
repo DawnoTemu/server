@@ -42,6 +42,10 @@ def get_voice_status(current_user, voice_id):
         "id": voice.id,
         "name": voice.name,
         "status": voice.status,
+        "allocation_status": voice.allocation_status,
+        "service_provider": voice.service_provider,
+        "recording_s3_key": voice.recording_s3_key,
+        "recording_filesize": voice.recording_filesize,
         "created_at": voice.created_at.isoformat() if voice.created_at else None,
         "updated_at": voice.updated_at.isoformat() if voice.updated_at else None,
     }

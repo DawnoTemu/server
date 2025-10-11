@@ -73,6 +73,9 @@ components:
         content:
           type: string
           example: "Once upon a time..."
+        required_credits:
+          type: integer
+          example: 3
         cover_path:
           type: string
           example: "/stories/1/cover"
@@ -103,6 +106,9 @@ components:
           description:
             type: string
             example: "A classic fairy tale about two children who discover a house made of candy..."
+          required_credits:
+            type: integer
+            example: 3
           cover_path:
             type: string
             example: "/stories/1/cover"
@@ -125,9 +131,50 @@ components:
         name:
           type: string
           example: "My Voice"
+        status:
+          type: string
+          enum: [pending, processing, recorded, ready, error]
+          example: "recorded"
+        allocation_status:
+          type: string
+          example: "recorded"
+        service_provider:
+          type: string
+          example: "elevenlabs"
         elevenlabs_voice_id:
           type: string
           example: "pNInz6obpgDQGcFmaJgB"
+          nullable: true
+        recording_s3_key:
+          type: string
+          example: "voice_samples/42/voice_7_e2f3.wav"
+        recording_filesize:
+          type: integer
+          example: 2048000
+          nullable: true
+        s3_sample_key:
+          type: string
+          example: "voice_samples/42/voice_7_e2f3.wav"
+          nullable: true
+        sample_filename:
+          type: string
+          example: "sample.wav"
+          nullable: true
+        elevenlabs_allocated_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_used_at:
+          type: string
+          format: date-time
+          nullable: true
+        slot_lock_expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        error_message:
+          type: string
+          nullable: true
         user_id:
           type: integer
           format: int64
@@ -411,9 +458,21 @@ components:
           type: string
         status:
           type: string
-          enum: [pending, processing, ready, error]
+          enum: [pending, processing, recorded, ready, error]
         elevenlabs_voice_id:
           type: string
+          nullable: true
+        allocation_status:
+          type: string
+          example: "recorded"
+        service_provider:
+          type: string
+          nullable: true
+        recording_s3_key:
+          type: string
+          nullable: true
+        recording_filesize:
+          type: integer
           nullable: true
         sample_url:
           type: string
@@ -775,7 +834,7 @@ paths:
     post:
       tags:
         - Voices
-      summary: Create a new voice clone
+      summary: Upload a new voice recording
       security:
         - bearerAuth: []
       requestBody:
@@ -791,8 +850,7 @@ paths:
                 name:
                   type: string
       responses:
-        '202': { description: Voice cloning accepted }
-        '200': { description: Voice created }
+        '201': { description: Voice recorded }
         '400': { description: Bad request }
         '401': { description: Unauthorized }
 

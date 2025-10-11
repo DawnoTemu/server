@@ -350,7 +350,7 @@ Get all voice clones created by the authenticated user.
 POST /voices
 ```
 
-Create a new voice clone from an audio sample.
+Upload a new voice recording. The voice remains in a `recorded` state until a slot allocation job promotes it to READY.
 
 **Headers:**
 - Authorization: Bearer {access_token}
@@ -364,13 +364,16 @@ Create a new voice clone from an audio sample.
 ```json
 {
   "id": 1,
-  "voice_id": "pNInz6obpgDQGcFmaJgB",
-  "name": "My Voice"
+  "name": "My Voice",
+  "status": "recorded",
+  "allocation_status": "recorded",
+  "elevenlabs_voice_id": null,
+  "task_id": "9d6e1c88-0f83-4a07-9b4c-78fe7f21c712"
 }
 ```
 
 **Status Codes:**
-- 200: Voice clone created successfully
+- 201: Voice recorded successfully
 - 400: Invalid request (missing file or invalid file type)
 - 401: Unauthorized
 - 500: Voice cloning failed
@@ -394,7 +397,14 @@ Get details of a specific voice clone.
 {
   "id": 1,
   "name": "My Voice",
-  "elevenlabs_voice_id": "pNInz6obpgDQGcFmaJgB",
+  "status": "recorded",
+  "allocation_status": "recorded",
+  "service_provider": "elevenlabs",
+  "elevenlabs_voice_id": null,
+  "recording_s3_key": "voice_samples/1/voice_1_abcd.wav",
+  "recording_filesize": 2048000,
+  "s3_sample_key": "voice_samples/1/voice_1_abcd.wav",
+  "sample_filename": "sample.wav",
   "user_id": 1,
   "created_at": "2025-03-20T15:45:22Z",
   "updated_at": "2025-03-20T15:45:22Z"

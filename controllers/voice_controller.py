@@ -38,9 +38,9 @@ class VoiceController:
         )
         
         if success:
-            # For async operations, return 202 Accepted
-            if isinstance(result, dict) and result.get('status') == VoiceStatus.PENDING:
-                return True, result, 202
+            # Recording flow now returns immediately with recorded state
+            if isinstance(result, dict) and result.get('status') == VoiceStatus.RECORDED:
+                return True, result, 201
             return True, result, 200
         else:
             return False, {"error": result}, 500

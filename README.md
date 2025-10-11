@@ -130,7 +130,7 @@ CREDIT_SOURCES_PRIORITY=event,monthly,referral,add_on,free
 ### 5. Credits & Billing
 
 - How it works: see `docs/CREDITS.md`.
-- Estimating cost: `GET /stories/{id}/credits` → `{ required_credits }`.
+- Estimating cost: Story payloads now include a `required_credits` field; you can still call `GET /stories/{id}/credits` → `{ required_credits }` when you need to revalidate.
 - Checking balance: `GET /me/credits` (Bearer) → `{ balance, lots, recent_transactions }`.
 - Insufficient funds: endpoints may return `402 Payment Required`.
 - Admin grants: `POST /admin/users/{user_id}/credits/grant` with `{ amount, reason?, source?, expires_at? }`.

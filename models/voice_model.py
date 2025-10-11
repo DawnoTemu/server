@@ -5,10 +5,12 @@ import os
 import sys
 import uuid
 import tempfile
+from typing import Any, Dict, Optional
 
 from config import Config
 from database import db
 from datetime import datetime
+from sqlalchemy import text
 from utils.voice_service import VoiceService
 
 # Configure logger
@@ -18,34 +20,89 @@ logger = logging.getLogger('voice_model_service')
 class VoiceStatus:
     PENDING = "pending"
     PROCESSING = "processing"
+    RECORDED = "recorded"
     READY = "ready"
     ERROR = "error"
+
+
+class VoiceAllocationStatus:
+    RECORDED = "recorded"
+    ALLOCATING = "allocating"
+    READY = "ready"
+    COOLING = "cooling"
+    EVICTED = "evicted"
+
+
+class VoiceServiceProvider:
+    ELEVENLABS = "elevenlabs"
+    CARTESIA = "cartesia"
+
+
+class VoiceSlotEventType:
+    RECORDING_UPLOADED = "recording_uploaded"
+    RECORDING_PROCESSING_QUEUED = "recording_processing_queued"
+    RECORDING_PROCESSED = "recording_processed"
+    RECORDING_PROCESSING_FAILED = "recording_processing_failed"
+    ALLOCATION_STARTED = "allocation_started"
+    ALLOCATION_COMPLETED = "allocation_completed"
+    ALLOCATION_FAILED = "allocation_failed"
+    SLOT_LOCK_ACQUIRED = "slot_lock_acquired"
+    SLOT_LOCK_RELEASED = "slot_lock_released"
+    SLOT_EVICTED = "slot_evicted"
 
 class Voice(db.Model):
     """Database model for voice recordings"""
     __tablename__ = 'voices'
+    __table_args__ = (
+        db.Index(
+            'ix_voices_elevenlabs_voice_id_populated',
+            'elevenlabs_voice_id',
+            unique=True,
+            postgresql_where=text("elevenlabs_voice_id IS NOT NULL AND elevenlabs_voice_id <> ''"),
+            sqlite_where=text("elevenlabs_voice_id IS NOT NULL AND elevenlabs_voice_id <> ''")
+        ),
+    )
     
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(255), nullable=False)
-    elevenlabs_voice_id = db.Column(db.String(255), nullable=True, unique=True)  # Now nullable while pending
-    s3_sample_key = db.Column(db.String(512), nullable=True)  # S3 key for the original sample
+    elevenlabs_voice_id = db.Column(db.String(255), nullable=True)  # Nullable while pending
+    s3_sample_key = db.Column(db.String(512), nullable=True)  # Permanent S3 key for the allocated sample
     sample_filename = db.Column(db.String(255), nullable=True)
+    recording_s3_key = db.Column(db.String(512), nullable=True)  # Raw recording sample location
+    recording_filesize = db.Column(db.BigInteger, nullable=True)
     
     # Status tracking for async processing
     status = db.Column(db.String(20), nullable=False, default=VoiceStatus.PENDING)
+    allocation_status = db.Column(db.String(50), nullable=False, default=VoiceAllocationStatus.RECORDED)
+    service_provider = db.Column(db.String(50), nullable=False, default=VoiceServiceProvider.ELEVENLABS)
     error_message = db.Column(db.Text, nullable=True)
+    
+    elevenlabs_allocated_at = db.Column(db.DateTime, nullable=True)
+    last_used_at = db.Column(db.DateTime, nullable=True)
+    slot_lock_expires_at = db.Column(db.DateTime, nullable=True)
     
     # Foreign key to user table
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     
     # Relationship with User model
     user = db.relationship('User', backref=db.backref('voices', lazy=True))
+    slot_events = db.relationship(
+        'VoiceSlotEvent',
+        back_populates='voice',
+        cascade='save-update, merge',
+        passive_deletes=True,
+        lazy=True
+    )
     
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     def __repr__(self):
-        return f"<Voice {self.id}: {self.name} (ElevenLabs ID: {self.elevenlabs_voice_id})>"
+        return (
+            f"<Voice {self.id}: {self.name} "
+            f"(status={self.status}, allocation_status={self.allocation_status}, "
+            f"elevenlabs_id={self.elevenlabs_voice_id})>"
+        )
     
     def to_dict(self):
         """Convert voice to dictionary"""
@@ -53,12 +110,71 @@ class Voice(db.Model):
             'id': self.id,
             'name': self.name,
             'elevenlabs_voice_id': self.elevenlabs_voice_id,
+            'recording_s3_key': self.recording_s3_key,
+            'recording_filesize': self.recording_filesize,
+            'allocation_status': self.allocation_status,
+            'service_provider': self.service_provider,
+            'elevenlabs_allocated_at': self.elevenlabs_allocated_at.isoformat() if self.elevenlabs_allocated_at else None,
+            'last_used_at': self.last_used_at.isoformat() if self.last_used_at else None,
+            'slot_lock_expires_at': self.slot_lock_expires_at.isoformat() if self.slot_lock_expires_at else None,
             'user_id': self.user_id,
-            'status': self.status,  # Include status in API response
+            'status': self.status,
+            'error_message': self.error_message,
+            's3_sample_key': self.s3_sample_key,
+            'sample_filename': self.sample_filename,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
         }
-    
+
+
+class VoiceSlotEvent(db.Model):
+    """Audit log for voice slot lifecycle events."""
+    __tablename__ = 'voice_slot_events'
+
+    id = db.Column(db.Integer, primary_key=True)
+    voice_id = db.Column(db.Integer, db.ForeignKey('voices.id', ondelete='SET NULL'), nullable=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    event_type = db.Column(db.String(50), nullable=False)
+    reason = db.Column(db.String(255), nullable=True)
+    event_metadata = db.Column('metadata', db.JSON, nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    voice = db.relationship('Voice', back_populates='slot_events')
+    user = db.relationship('User', backref=db.backref('voice_slot_events', lazy=True))
+
+    def __repr__(self):
+        return f"<VoiceSlotEvent {self.id}: voice={self.voice_id}, event={self.event_type}>"
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'voice_id': self.voice_id,
+            'user_id': self.user_id,
+            'event_type': self.event_type,
+            'reason': self.reason,
+            'metadata': self.event_metadata or {},
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+        }
+
+    @staticmethod
+    def log_event(
+        voice_id: Optional[int],
+        event_type: str,
+        user_id: Optional[int] = None,
+        reason: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> "VoiceSlotEvent":
+        """Persist a new slot event helper."""
+        event = VoiceSlotEvent(
+            voice_id=voice_id,
+            user_id=user_id,
+            event_type=event_type,
+            reason=reason,
+            event_metadata=metadata or {},
+        )
+        db.session.add(event)
+        return event
+
 class VoiceModel:
     """Model for voice cloning operations"""
     
@@ -93,66 +209,127 @@ class VoiceModel:
         """
         try:
             # Set voice name and description
-            if not voice_name:               
+            if not voice_name:
                 voice_name = f"{user_id}_MAIN"
-            
-            # Create a voice record with pending status
+
+            service_provider = VoiceModel._resolve_service_provider()
+            voice_id = None
+
+            # Create a voice record with pending status until asset persistence succeeds
             new_voice = Voice(
                 name=voice_name,
                 user_id=user_id,
                 status=VoiceStatus.PENDING,
-                elevenlabs_voice_id=None  # Will be set when async task completes
+                allocation_status=VoiceAllocationStatus.RECORDED,
+                service_provider=service_provider,
+                elevenlabs_voice_id=None,
             )
-            
+
             db.session.add(new_voice)
-            db.session.commit()
-            
-            # Upload file to S3 for Celery worker to access
+            db.session.flush()  # obtain primary key before uploading to S3
+            voice_id = new_voice.id
+
             from utils.s3_client import S3Client
-            
-            # Generate a temporary S3 key for the upload
-            temp_s3_key = f"temp_uploads/{user_id}/voice_{new_voice.id}_{uuid.uuid4()}.{filename.split('.')[-1]}"
-            
-            # Reset file position and upload to S3
-            file_data.seek(0)
+
+            file_extension = (filename.rsplit('.', 1)[1] if '.' in filename else 'wav').lower()
+            recording_filesize = VoiceModel._determine_stream_size(file_data)
+            try:
+                file_data.seek(0)
+            except (OSError, AttributeError):
+                pass
+
+            permanent_s3_key = (
+                f"{VoiceModel.VOICE_SAMPLES_PREFIX}{user_id}/voice_{voice_id}_{uuid.uuid4()}.{file_extension}"
+            )
             extra_args = {
-                'ContentType': 'audio/mpeg' if filename.lower().endswith('.mp3') else 'audio/wav',
+                'ContentType': 'audio/mpeg' if file_extension == 'mp3' else 'audio/wav',
                 'Metadata': {
                     'user_id': str(user_id),
-                    'voice_id': str(new_voice.id),
-                    'original_filename': filename
-                }
+                    'voice_id': str(voice_id),
+                    'original_filename': filename,
+                },
+                'ServerSideEncryption': 'AES256',
             }
-            
-            S3Client.upload_fileobj(file_data, temp_s3_key, extra_args)
-            logger.info(f"Uploaded temporary file to S3: {temp_s3_key}")
-            
-            # Queue async task with S3 key instead of file path
-            from tasks.voice_tasks import clone_voice_task
-            task = clone_voice_task.delay(new_voice.id, temp_s3_key, filename, user_id, voice_name)
-            
-            logger.info(f"Queued voice cloning task {task.id} for voice ID {new_voice.id}")
-            
-            # Return voice ID and status
+
+            upload_success = S3Client.upload_fileobj(file_data, permanent_s3_key, extra_args)
+            if not upload_success:
+                raise RuntimeError("Failed to upload voice sample to S3")
+
+            logger.info("Stored voice recording at %s", permanent_s3_key)
+
+            new_voice.recording_s3_key = permanent_s3_key
+            new_voice.recording_filesize = recording_filesize
+            new_voice.s3_sample_key = permanent_s3_key
+            new_voice.sample_filename = filename
+            new_voice.status = VoiceStatus.RECORDED
+            new_voice.error_message = None
+
+            VoiceSlotEvent.log_event(
+                voice_id=voice_id,
+                user_id=user_id,
+                event_type=VoiceSlotEventType.RECORDING_UPLOADED,
+                reason="initial_recording_uploaded",
+                metadata={
+                    's3_key': permanent_s3_key,
+                    'filesize': recording_filesize,
+                    'server_side_encryption': 'AES256',
+                },
+            )
+
+            db.session.commit()
+
+            # Queue async processing task for any additional hygiene/analysis
+            from tasks.voice_tasks import process_voice_recording
+
+            task = process_voice_recording.delay(
+                voice_id=voice_id,
+                s3_key=permanent_s3_key,
+                filename=filename,
+                user_id=user_id,
+                voice_name=voice_name,
+            )
+
+            VoiceSlotEvent.log_event(
+                voice_id=voice_id,
+                user_id=user_id,
+                event_type=VoiceSlotEventType.RECORDING_PROCESSING_QUEUED,
+                reason="post_upload_processing",
+                metadata={
+                    'task_id': task.id,
+                    's3_key': permanent_s3_key,
+                },
+            )
+            db.session.commit()
+
             return True, {
-                "id": new_voice.id,
+                "id": voice_id,
                 "name": voice_name,
-                "status": VoiceStatus.PENDING
+                "status": VoiceStatus.RECORDED,
+                "allocation_status": VoiceAllocationStatus.RECORDED,
+                "task_id": task.id,
             }
-                
+
         except Exception as e:
-            logger.error(f"Exception in clone_voice: {str(e)}")
-            
-            # If we have created a voice record but failed to queue the task,
-            # update its status to ERROR
-            if 'new_voice' in locals() and new_voice.id:
+            logger.error("Exception in clone_voice: %s", str(e))
+
+            if 'voice_id' in locals() and voice_id:
                 try:
-                    new_voice.status = VoiceStatus.ERROR
-                    new_voice.error_message = str(e)
-                    db.session.commit()
-                except:
-                    pass  # Don't let this cause another exception
-                    
+                    voice = Voice.query.get(voice_id)
+                    if voice:
+                        voice.status = VoiceStatus.ERROR
+                        voice.allocation_status = VoiceAllocationStatus.RECORDED
+                        voice.error_message = str(e)
+                        VoiceSlotEvent.log_event(
+                            voice_id=voice.id,
+                            user_id=user_id,
+                            event_type=VoiceSlotEventType.RECORDING_PROCESSING_FAILED,
+                            reason="clone_voice_exception",
+                            metadata={'error': str(e)},
+                        )
+                        db.session.commit()
+                except Exception:
+                    pass
+
             return False, str(e)
     
     @staticmethod
@@ -182,9 +359,10 @@ class VoiceModel:
             
             # Get the language from config - default to 'pl' if not specified
             language = getattr(Config, 'DEFAULT_LANGUAGE', 'pl')
+            service_provider = VoiceModel._resolve_service_provider()
             
             # For ElevenLabs, we need to split the audio
-            if Config.PREFERRED_VOICE_SERVICE == "elevenlabs":
+            if service_provider == VoiceServiceProvider.ELEVENLABS:
                 # Split audio into chunks if needed
                 audio_chunks = split_audio_file(file_data, filename)
                 logger.info(f"Split audio into {len(audio_chunks)} chunks")
@@ -195,7 +373,7 @@ class VoiceModel:
                     filename=filename,
                     user_id=user_id,
                     voice_name=voice_name,
-                    service="elevenlabs"
+                    service=service_provider
                 )
             else:
                 # Use the CartesiaService through VoiceService
@@ -205,7 +383,7 @@ class VoiceModel:
                     user_id=user_id,
                     voice_name=voice_name,
                     language=language,
-                    service="cartesia"
+                    service=service_provider
                 )
                 
         except Exception as e:
@@ -225,7 +403,7 @@ class VoiceModel:
         """
         try:
             # Get the voice from the database
-            voice = Voice.query.get(voice_id)
+            voice = VoiceModel.get_voice_by_id(voice_id)
             
             if not voice:
                 return False, "Voice not found in database"
@@ -239,21 +417,35 @@ class VoiceModel:
                 # Delete the voice from the external service
                 api_success, api_message = VoiceService.delete_voice(
                     voice_id=voice_id,
-                    external_voice_id=external_voice_id
+                    external_voice_id=external_voice_id,
+                    service=voice.service_provider
                 )
             
             # Delete any S3 samples
             s3_success = True
             s3_message = "Voice sample deleted from S3"
             
-            if voice.s3_sample_key:
+            keys_to_delete = {key for key in [voice.s3_sample_key, voice.recording_s3_key] if key}
+            if keys_to_delete:
                 try:
                     from utils.s3_client import S3Client
-                    S3Client.delete_objects([voice.s3_sample_key])
+                    S3Client.delete_objects(list(keys_to_delete))
                 except Exception as e:
                     s3_success = False
                     s3_message = str(e)
                     logger.error(f"Exception deleting S3 sample: {str(e)}")
+            
+            # Log eviction event before deletion
+            VoiceSlotEvent.log_event(
+                voice_id=voice.id,
+                user_id=voice.user_id,
+                event_type=VoiceSlotEventType.SLOT_EVICTED,
+                reason="manual_voice_delete",
+                metadata={
+                    'voice_id': voice_id,
+                    'had_external_id': bool(external_voice_id),
+                }
+            )
             
             # Delete the voice from the database
             db.session.delete(voice)
@@ -329,15 +521,19 @@ class VoiceModel:
             from utils.s3_client import S3Client
             
             voice = Voice.query.get(voice_id)
-            if not voice or not voice.s3_sample_key:
+            if not voice:
                 return False, "Voice sample not found"
-                
-            # Check if voice is ready
-            if voice.status != VoiceStatus.READY:
+
+            object_key = voice.s3_sample_key or voice.recording_s3_key
+            if not object_key:
+                return False, "Voice sample not found"
+
+            # Allow recorded or ready voices to surface their sample
+            if voice.status not in {VoiceStatus.RECORDED, VoiceStatus.READY}:
                 return False, f"Voice is not ready (status: {voice.status})"
-                
+
             url = S3Client.generate_presigned_url(
-                voice.s3_sample_key,
+                object_key,
                 expires_in,
                 {'ResponseContentType': 'audio/mpeg'}
             )
@@ -346,3 +542,43 @@ class VoiceModel:
         except Exception as e:
             logger.error(f"Exception getting sample URL: {str(e)}")
             return False, str(e)
+
+    @staticmethod
+    def _determine_stream_size(file_data) -> Optional[int]:
+        """Best-effort helper to determine the size of an uploaded audio stream."""
+        size: Optional[int] = None
+        original_position: Optional[int] = None
+        try:
+            original_position = file_data.tell()
+        except (AttributeError, OSError):
+            original_position = None
+
+        try:
+            file_data.seek(0, os.SEEK_END)
+            size = file_data.tell()
+        except (AttributeError, OSError):
+            size = None
+        finally:
+            try:
+                if original_position is not None:
+                    file_data.seek(original_position)
+                else:
+                    file_data.seek(0)
+            except (AttributeError, OSError):
+                pass
+
+        return size
+
+    @staticmethod
+    def _resolve_service_provider() -> str:
+        """Normalize configured service provider into a known constant."""
+        provider = getattr(Config, 'PREFERRED_VOICE_SERVICE', VoiceServiceProvider.ELEVENLABS)
+        if not provider:
+            return VoiceServiceProvider.ELEVENLABS
+
+        normalized = str(provider).strip().lower()
+        if normalized in (VoiceServiceProvider.ELEVENLABS, VoiceServiceProvider.CARTESIA):
+            return normalized
+
+        logger.warning("Unknown voice service provider '%s'; defaulting to ElevenLabs.", provider)
+        return VoiceServiceProvider.ELEVENLABS

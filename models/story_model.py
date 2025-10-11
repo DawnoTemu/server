@@ -2,6 +2,7 @@ from pathlib import Path
 from datetime import datetime
 from config import Config
 from database import db
+from utils.credits import calculate_required_credits
 
 # Database Model
 class Story(db.Model):
@@ -29,6 +30,7 @@ class Story(db.Model):
             'author': self.author,
             'description': self.description,
             'content': self.content,
+            'required_credits': calculate_required_credits(self.content),
             'cover_path': f'/stories/{self.id}/cover',
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None

@@ -13,8 +13,8 @@ class TestStoryRoutes:
         """Test successfully listing all stories"""
         # Arrange
         mock_stories = [
-            {"id": 1, "title": "Story 1"},
-            {"id": 2, "title": "Story 2"}
+            {"id": 1, "title": "Story 1", "required_credits": 3},
+            {"id": 2, "title": "Story 2", "required_credits": 1}
         ]
         mock_get_all.return_value = (True, mock_stories, 200)
         
@@ -27,6 +27,8 @@ class TestStoryRoutes:
         assert len(data) == 2
         assert data[0]["title"] == "Story 1"
         assert data[1]["title"] == "Story 2"
+        assert data[0]["required_credits"] == 3
+        assert data[1]["required_credits"] == 1
         mock_get_all.assert_called_once()
 
     @patch('controllers.story_controller.StoryController.get_all_stories')
@@ -57,6 +59,7 @@ class TestStoryRoutes:
         data = json.loads(response.data)
         assert data["id"] == story_id
         assert data["title"] == f"Test Story {story_id}"
+        assert "required_credits" in data
 
     @patch('controllers.story_controller.StoryController.get_story_path')
     def test_get_story_not_found(self, mock_get_path, client):

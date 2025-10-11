@@ -21,6 +21,7 @@ class TestStoryModel:
             assert "title" in stories[0]
             assert "author" in stories[0]
             assert "content" in stories[0]
+            assert "required_credits" in stories[0]
 
     def test_get_all_stories_error(self):
         """Test error handling when loading stories fails"""
@@ -47,6 +48,7 @@ class TestStoryModel:
         assert story is not None
         assert story["id"] == story_id
         assert "title" in story
+        assert "required_credits" in story
 
     def test_get_story_by_id_not_exists(self, sample_stories_directory):
         """Test retrieving a story that doesn't exist"""

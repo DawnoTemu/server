@@ -190,6 +190,7 @@ def test_list_stories():
         
         if stories and len(stories) > 0:
             test_story_id = stories[0].get("id", test_story_id)
+            assert "required_credits" in stories[0]
             print(f"Successfully retrieved stories, using story ID: {test_story_id}")
             return True
     
@@ -208,6 +209,8 @@ def test_get_story():
     )
     
     if response and response.status_code == 200:
+        data = response.json()
+        assert "required_credits" in data
         print("Successfully retrieved story details")
         return True
     

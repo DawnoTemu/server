@@ -7,7 +7,12 @@ from tasks import celery_app
 from database import db
 from config import Config
 from models.user_model import User
-from models.credit_model import CreditLot, grant as credit_grant
+from models.credit_model import (
+    CreditLot,
+    CreditTransaction,
+    CreditTransactionAllocation,
+    grant as credit_grant,
+)
 
 logger = logging.getLogger('billing_tasks')
 
@@ -74,6 +79,7 @@ def expire_credit_lots():
     Behavior:
     - Finds lots where expires_at <= now AND amount_remaining > 0.
     - Zeros out amount_remaining for those lots.
+    - Records ledger entries (CreditTransaction + allocations) describing each expiry.
     - Decreases users.credits_balance by the total amount removed per user (not below 0).
     """
     now = datetime.utcnow()
@@ -95,6 +101,25 @@ def expire_credit_lots():
         amt = int(lot.amount_remaining or 0)
         if amt <= 0:
             continue
+        tx = CreditTransaction(
+            user_id=lot.user_id,
+            amount=-amt,
+            type='expire',
+            reason='auto_expire',
+            audio_story_id=None,
+            story_id=None,
+            status='applied',
+            metadata_json={
+                'lot_id': lot.id,
+                'lot_source': lot.source,
+                'lot_amount_granted': int(lot.amount_granted or 0),
+                'expired_at': now.isoformat(),
+                'source_task': 'billing.expire_credit_lots',
+            },
+        )
+        allocation = CreditTransactionAllocation(transaction=tx, lot=lot, amount=-amt)
+        db.session.add(tx)
+        db.session.add(allocation)
         lot.amount_remaining = 0
         delta_by_user[lot.user_id] = delta_by_user.get(lot.user_id, 0) + amt
 

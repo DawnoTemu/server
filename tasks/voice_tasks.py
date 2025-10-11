@@ -1,11 +1,11 @@
 """
-Voice cloning tasks for StoryVoice.
-This module contains Celery tasks for processing voice cloning operations asynchronously.
+Voice recording post-processing tasks for StoryVoice.
+This module contains Celery tasks for handling audio hygiene and metadata updates.
 """
 
-import os
 import logging
 import sentry_sdk
+from datetime import datetime
 from io import BytesIO
 from celery import Task
 from tasks import celery_app
@@ -39,123 +39,270 @@ class VoiceTask(Task):
             try:
                 if args and args[0]:  # First argument should be voice_id
                     voice_id = args[0]
-                    from models.voice_model import Voice, VoiceStatus
+                    from models.voice_model import (
+                        Voice,
+                        VoiceStatus,
+                        VoiceAllocationStatus,
+                        VoiceSlotEvent,
+                        VoiceSlotEventType,
+                    )
                     voice = Voice.query.get(voice_id)
                     if voice:
                         voice.status = VoiceStatus.ERROR
+                        voice.allocation_status = VoiceAllocationStatus.RECORDED
                         voice.error_message = str(exc)
+                        VoiceSlotEvent.log_event(
+                            voice_id=voice.id,
+                            user_id=voice.user_id,
+                            event_type=VoiceSlotEventType.ALLOCATION_FAILED
+                            if self.name == 'voice.allocate_voice_slot'
+                            else VoiceSlotEventType.RECORDING_PROCESSING_FAILED,
+                            reason="allocate_voice_slot_failure" if self.name == 'voice.allocate_voice_slot' else "process_voice_recording_failure",
+                            metadata={'error': str(exc)},
+                        )
                         db.session.commit()
                         logger.info(f"Updated voice {voice_id} status to ERROR")
             except Exception as e:
                 logger.error(f"Error in on_failure handler: {e}")
 
 
-@celery_app.task(bind=True, base=VoiceTask, max_retries=2, 
-                 autoretry_for=(Exception,), retry_backoff=True)
-def clone_voice_task(self, voice_id, s3_key, filename, user_id, voice_name=None):
+@celery_app.task(
+    bind=True,
+    base=VoiceTask,
+    max_retries=1,
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    name='voice.process_voice_recording',
+)
+def process_voice_recording(self, voice_id, s3_key, filename, user_id, voice_name=None):
     """
-    Asynchronous task to clone a voice using voice synthesis APIs
-    
+    Asynchronous task to perform lightweight processing on uploaded recordings.
+
     Args:
         voice_id: ID of the voice record in the database
-        s3_key: S3 key where the audio file is temporarily stored
+        s3_key: Permanent S3 key where the audio file is stored
         filename: Original filename
         user_id: ID of the user who owns this voice
         voice_name: Optional name for the voice
-        
+
     Returns:
         bool: Success status
     """
-    logger.info(f"Starting voice cloning task for voice ID {voice_id}")
-    
+    logger.info("Processing voice recording %s (voice_id=%s)", s3_key, voice_id)
+
     try:
-        # Import models here to avoid circular imports
-        from models.voice_model import Voice, VoiceModel, VoiceStatus
+        from models.voice_model import (
+            Voice,
+            VoiceSlotEvent,
+            VoiceSlotEventType,
+            VoiceStatus,
+        )
         from utils.s3_client import S3Client
-        
-        # Get the voice record
+
         voice = Voice.query.get(voice_id)
         if not voice:
-            logger.error(f"Voice record {voice_id} not found")
+            logger.error("Voice record %s not found during processing", voice_id)
             return False
-            
-        # Update status to processing
-        voice.status = VoiceStatus.PROCESSING
-        db.session.commit()
-        
-        # Download file data from S3
+
+        # Capture current metadata from S3 (size, encryption, storage class, etc.)
+        head_metadata = {}
         try:
-            logger.info(f"Downloading file from S3: {s3_key}")
+            head_obj = S3Client.get_client().head_object(
+                Bucket=S3Client.get_bucket_name(),
+                Key=s3_key,
+            )
+            head_metadata = {
+                'filesize': head_obj.get('ContentLength'),
+                'encryption': head_obj.get('ServerSideEncryption'),
+                'storage_class': head_obj.get('StorageClass'),
+                'content_type': head_obj.get('ContentType'),
+            }
+            if head_metadata['filesize'] is not None:
+                voice.recording_filesize = int(head_metadata['filesize'])
+        except Exception as e:
+            logger.warning("Failed to inspect S3 metadata for %s: %s", s3_key, e)
+            head_metadata['inspection_error'] = str(e)
+
+        # Ensure voice remains in recorded state
+        voice.status = VoiceStatus.RECORDED
+        voice.updated_at = datetime.utcnow()
+
+        VoiceSlotEvent.log_event(
+            voice_id=voice.id,
+            user_id=user_id,
+            event_type=VoiceSlotEventType.RECORDING_PROCESSED,
+            reason="post_upload_metadata_refresh",
+            metadata={
+                'filename': filename,
+                's3_key': s3_key,
+                **{k: v for k, v in head_metadata.items() if v is not None},
+            },
+        )
+        db.session.commit()
+
+        logger.info("Completed processing for voice %s", voice_id)
+
+        allocation_task = allocate_voice_slot.delay(
+            voice_id=voice_id,
+            s3_key=voice.recording_s3_key,
+            filename=filename,
+            user_id=user_id,
+            voice_name=voice_name,
+        )
+
+        VoiceSlotEvent.log_event(
+            voice_id=voice.id,
+            user_id=user_id,
+            event_type=VoiceSlotEventType.ALLOCATION_STARTED,
+            reason="automatic_slot_allocation",
+            metadata={
+                'task_id': allocation_task.id,
+                's3_key': voice.recording_s3_key,
+            },
+        )
+        db.session.commit()
+
+        logger.info("Enqueued allocation task %s for voice %s", allocation_task.id, voice_id)
+        return True
+
+    except Exception as e:
+        logger.exception("Exception in process_voice_recording: %s", e)
+        raise
+
+
+@celery_app.task(
+    bind=True,
+    base=VoiceTask,
+    max_retries=2,
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    name='voice.allocate_voice_slot',
+)
+def allocate_voice_slot(self, voice_id, s3_key, filename, user_id, voice_name=None):
+    """Allocate an external voice slot (e.g., ElevenLabs) for an uploaded recording."""
+    logger.info("Allocating voice slot for voice_id=%s", voice_id)
+
+    try:
+        from models.voice_model import (
+            Voice,
+            VoiceAllocationStatus,
+            VoiceModel,
+            VoiceSlotEvent,
+            VoiceSlotEventType,
+            VoiceStatus,
+        )
+        from utils.s3_client import S3Client
+
+        voice = Voice.query.get(voice_id)
+        if not voice:
+            logger.error("Voice record %s not found during allocation", voice_id)
+            return False
+
+        voice.status = VoiceStatus.PROCESSING
+        voice.allocation_status = VoiceAllocationStatus.ALLOCATING
+        VoiceSlotEvent.log_event(
+            voice_id=voice.id,
+            user_id=user_id,
+            event_type=VoiceSlotEventType.ALLOCATION_STARTED,
+            reason="allocate_voice_slot_task",
+            metadata={'s3_key': s3_key, 'filename': filename},
+        )
+        db.session.commit()
+
+        try:
             file_obj = S3Client.download_fileobj(s3_key)
             file_data = BytesIO(file_obj.read())
-            logger.info(f"Successfully downloaded file from S3, size: {len(file_data.getvalue())} bytes")
         except Exception as e:
-            logger.error(f"Error downloading file from S3 {s3_key}: {e}")
+            logger.error("Failed to download recording for allocation: %s", e)
             voice.status = VoiceStatus.ERROR
-            voice.error_message = f"Could not download voice sample from S3: {str(e)}"
+            voice.allocation_status = VoiceAllocationStatus.RECORDED
+            voice.error_message = f"Could not download recording: {e}"
+            VoiceSlotEvent.log_event(
+                voice_id=voice.id,
+                user_id=user_id,
+                event_type=VoiceSlotEventType.ALLOCATION_FAILED,
+                reason="download_failed",
+                metadata={'error': str(e)},
+            )
             db.session.commit()
             return False
-            
-        # Call API to clone voice
+
         success, result = VoiceModel._clone_voice_api(file_data, filename, user_id, voice_name)
-        
+
         if success:
-            # Get the voice ID from the result
             external_voice_id = result.get("voice_id")
-            
             if not external_voice_id:
                 voice.status = VoiceStatus.ERROR
+                voice.allocation_status = VoiceAllocationStatus.RECORDED
                 voice.error_message = "No voice ID returned from voice service"
+                VoiceSlotEvent.log_event(
+                    voice_id=voice.id,
+                    user_id=user_id,
+                    event_type=VoiceSlotEventType.ALLOCATION_FAILED,
+                    reason="missing_external_id",
+                )
                 db.session.commit()
                 return False
-                
-            # Store original sample in S3 (permanent location)
-            permanent_s3_key = None
-            try:
-                # Reset file position
-                file_data.seek(0)
-                
-                # Generate permanent S3 key for the sample
-                permanent_s3_key = f"{VoiceModel.VOICE_SAMPLES_PREFIX}{user_id}/{external_voice_id}.mp3"
-                
-                # Upload to permanent S3 location
-                extra_args = {
-                    'ContentType': 'audio/mpeg',
-                    'CacheControl': 'max-age=31536000',  # Cache for 1 year
-                }
-                
-                S3Client.upload_fileobj(file_data, permanent_s3_key, extra_args)
-                logger.info(f"Stored voice sample in permanent S3 location: {permanent_s3_key}")
-            except Exception as e:
-                logger.error(f"Failed to store voice sample in permanent S3 location: {str(e)}")
-                # Continue even if permanent S3 storage fails
-            
-            # Update voice record with successful results
+
             voice.elevenlabs_voice_id = external_voice_id
-            voice.s3_sample_key = permanent_s3_key
-            voice.sample_filename = filename
             voice.status = VoiceStatus.READY
+            voice.allocation_status = VoiceAllocationStatus.READY
+            voice.service_provider = VoiceModel._resolve_service_provider()
+            voice.elevenlabs_allocated_at = datetime.utcnow()
+            voice.last_used_at = datetime.utcnow()
+
+            VoiceSlotEvent.log_event(
+                voice_id=voice.id,
+                user_id=user_id,
+                event_type=VoiceSlotEventType.ALLOCATION_COMPLETED,
+                reason="voice_ready",
+                metadata={
+                    'external_voice_id': external_voice_id,
+                    's3_key': s3_key,
+                },
+            )
             db.session.commit()
-            
-            logger.info(f"Voice cloning successful for voice ID {voice_id}, External Voice ID: {external_voice_id}")
+            logger.info("Voice %s allocated with external ID %s", voice_id, external_voice_id)
             return True
-        else:
-            # Update with error
-            voice.status = VoiceStatus.ERROR
-            voice.error_message = str(result)
-            db.session.commit()
-            logger.error(f"Voice cloning failed for voice ID {voice_id}: {result}")
-            return False
-    
+
+        voice.status = VoiceStatus.ERROR
+        voice.allocation_status = VoiceAllocationStatus.RECORDED
+        voice.error_message = str(result)
+        VoiceSlotEvent.log_event(
+            voice_id=voice.id,
+            user_id=user_id,
+            event_type=VoiceSlotEventType.ALLOCATION_FAILED,
+            reason="voice_service_error",
+            metadata={'error': str(result)},
+        )
+        db.session.commit()
+        logger.error("Voice allocation failed for voice_id=%s: %s", voice_id, result)
+        return False
+
     except Exception as e:
-        logger.exception(f"Exception in clone_voice_task: {e}")
-        raise  # Let the task retry mechanism handle it
-        
-    finally:
-        # Clean up temporary S3 file
+        logger.exception("Exception in allocate_voice_slot: %s", e)
         try:
-            from utils.s3_client import S3Client
-            S3Client.delete_objects([s3_key])
-            logger.info(f"Cleaned up temporary S3 file: {s3_key}")
-        except Exception as e:
-            logger.error(f"Failed to clean up temporary S3 file {s3_key}: {e}")
+            from models.voice_model import (
+                Voice,
+                VoiceAllocationStatus,
+                VoiceSlotEvent,
+                VoiceSlotEventType,
+                VoiceStatus,
+            )
+            voice = Voice.query.get(voice_id)
+            if voice:
+                voice.status = VoiceStatus.ERROR
+                voice.allocation_status = VoiceAllocationStatus.RECORDED
+                voice.error_message = str(e)
+                VoiceSlotEvent.log_event(
+                    voice_id=voice.id,
+                    user_id=user_id,
+                    event_type=VoiceSlotEventType.ALLOCATION_FAILED,
+                    reason="allocate_voice_slot_exception",
+                    metadata={'error': str(e)},
+                )
+                db.session.commit()
+        except Exception as inner_exc:
+            logger.error("Failed to record allocation failure for voice %s: %s", voice_id, inner_exc)
+            db.session.rollback()
+        raise
