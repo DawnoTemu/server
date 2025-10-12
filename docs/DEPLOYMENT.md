@@ -220,6 +220,44 @@ For enterprise-grade deployment on AWS:
 }
 ```
 
+
+## Elastic Voice Slots Rollout Checklist
+
+1. **Configuration**
+   - Confirm `ELEVENLABS_SLOT_LIMIT`, `VOICE_WARM_HOLD_SECONDS`, `VOICE_QUEUE_POLL_INTERVAL`, and `VOICE_SLOT_LOCK_SECONDS` are set per environment.
+   - Ensure Redis has persistence enabled (RDB or AOF) so queue entries survive restarts.
+   - Configure feature flag (e.g., `ENABLE_ELASTIC_VOICES=true`) if you need a phased rollout.
+
+2. **Automated Tests**
+   - Run `pytest tests/test_utils/test_voice_slot_manager.py tests/test_tasks/test_voice_tasks.py tests/test_controllers/test_audio_controller.py tests/test_routes/test_audio_routes.py` to cover allocation, queueing, and reclaim flows.
+   - Add ElevenLabs API mocks (`mock_elevenlabs_session` fixture) when extending scenarios that touch external services.
+
+3. **Manual Smoke Test (Staging)**
+   - Record at least one voice.
+   - Trigger more than 30 synth requests (e.g., loop POST `/voices/{id}/stories/{story}/audio`) to force queueing.
+   - Monitor `/admin/voice-slots/status` and verify queued requests drain after eviction/reallocation.
+   - Confirm final audio outputs are playable and `voice_slot_events` show `ALLOCATION_COMPLETED` → `SLOT_LOCK_RELEASED`.
+
+4. **Monitoring & Alerts**
+   - Dashboards should track:
+     - Queue depth (`VoiceSlotQueue.length()` via custom metric).
+     - Allocation failures (`voice_slot_events` of type `allocation_failed`).
+     - Reclaim rate and idle voice count.
+   - Set alerts for:
+     - Queue depth > N (e.g., 10) for >5 minutes.
+     - Allocation failures > X per 15 minutes.
+     - Redis connection errors from workers.
+
+5. **Rollback Plan**
+   - Toggle feature flag off or set `ELEVENLABS_SLOT_LIMIT` to 0 to pause new allocations.
+   - Restart workers to clear in-flight retry loops if ElevenLabs downtime occurs.
+   - Restore `Voice` rows from the latest DB snapshot if state drift is suspected.
+
+6. **Support / Product Communication**
+   - Share status copy with support (“Queued for slot”, “Allocating voice”).
+   - Update FAQ/help center to explain the queued experience.
+
+Only promote to production once staging confirms queue drain time is acceptable and monitoring dashboards show healthy metrics.
 **Worker Service Task Definition:**
 ```json
 {
