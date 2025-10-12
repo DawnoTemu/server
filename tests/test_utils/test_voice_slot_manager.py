@@ -112,7 +112,7 @@ def test_enqueue_when_capacity_full(monkeypatch, dummy_session):
         lambda voice_id, payload: enqueue_calls.append((voice_id, payload)),
     )
     monkeypatch.setattr(
-        "utils.voice_slot_manager.process_voice_queue.delay",
+        "tasks.voice_tasks.process_voice_queue.delay",
         lambda: enqueue_calls.append(("process", None)),
     )
     monkeypatch.setattr(
@@ -150,7 +150,7 @@ def test_initiate_allocation_sets_processing(monkeypatch, dummy_session):
     )
     task_stub = MagicMock()
     task_stub.delay.return_value = MagicMock(id="task-123")
-    monkeypatch.setattr("utils.voice_slot_manager.allocate_voice_slot", task_stub)
+    monkeypatch.setattr("tasks.voice_tasks.allocate_voice_slot", task_stub)
 
     state = VoiceSlotManager.ensure_active_voice(voice)
 

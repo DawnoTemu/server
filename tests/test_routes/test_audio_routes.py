@@ -78,17 +78,22 @@ class TestAudioRoutes:
     @patch("utils.auth_middleware.UserModel.get_by_id", return_value=SimpleNamespace(id=1, is_active=True, email_confirmed=True))
     @patch("utils.auth_middleware.jwt.decode", return_value={"type": "access", "sub": 1})
     def test_check_audio_exists(self, mock_jwt, mock_user, client):
+        from routes import audio_routes
         voice = SimpleNamespace(id=3, user_id=1)
-        with patch("models.voice_model.VoiceModel.get_voice_by_elevenlabs_id", return_value=voice), \
-             patch("models.voice_model.VoiceModel.get_voice_by_id", return_value=None), \
-             patch("controllers.audio_controller.AudioController.check_audio_exists", return_value=(True, {"exists": True}, 200)) as mock_check:
-            response = client.head(
-                "/voices/ext-voice-check/stories/5/audio",
-                headers={"Authorization": "Bearer test-token"},
-            )
+        current_user = SimpleNamespace(id=1)
+        with client.application.test_request_context(
+            "/voices/ext-voice-check/stories/5/audio",
+            method="HEAD",
+            headers={"Authorization": "Bearer test-token"},
+        ), \
+            patch("routes.audio_routes._resolve_voice_for_user", return_value=(voice, None)), \
+            patch("controllers.audio_controller.AudioController.check_audio_exists", return_value=(True, {"exists": True}, 200)) as mock_check:
+            body, status = audio_routes.check_audio_exists.__wrapped__(current_user, "ext-voice-check", 5)
 
-        assert response.status_code == 200
+        assert mock_check.call_count == 1
         mock_check.assert_called_once_with(voice.id, 5)
+        assert status == 200
+        assert body == ""
 
     @patch("utils.auth_middleware.UserModel.get_by_id", return_value=SimpleNamespace(id=1, is_active=True, email_confirmed=True))
     @patch("utils.auth_middleware.jwt.decode", return_value={"type": "access", "sub": 1})
