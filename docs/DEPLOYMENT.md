@@ -260,6 +260,9 @@ For enterprise-grade deployment on AWS:
 | `SECRET_KEY` | Flask secret key | Yes | - |
 | `FRONTEND_URL` | Frontend application URL | No | `http://localhost:3000` |
 | `BACKEND_URL` | Backend API URL | No | `http://localhost:8000` |
+| `ELEVENLABS_SLOT_LIMIT` | Maximum concurrent remote voices | No | `30` |
+| `VOICE_WARM_HOLD_SECONDS` | Warm-hold window before eviction | No | `900` |
+| `VOICE_QUEUE_POLL_INTERVAL` | Interval for processing queued allocations (seconds) | No | `60` |
 | `PREFERRED_VOICE_SERVICE` | Voice service preference | No | `cartesia` |
 
 ### AWS S3 Bucket Configuration

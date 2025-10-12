@@ -43,6 +43,7 @@ class VoiceSlotEventType:
     RECORDING_PROCESSING_QUEUED = "recording_processing_queued"
     RECORDING_PROCESSED = "recording_processed"
     RECORDING_PROCESSING_FAILED = "recording_processing_failed"
+    ALLOCATION_QUEUED = "allocation_queued"
     ALLOCATION_STARTED = "allocation_started"
     ALLOCATION_COMPLETED = "allocation_completed"
     ALLOCATION_FAILED = "allocation_failed"
@@ -582,3 +583,42 @@ class VoiceModel:
 
         logger.warning("Unknown voice service provider '%s'; defaulting to ElevenLabs.", provider)
         return VoiceServiceProvider.ELEVENLABS
+
+    @staticmethod
+    def list_active_allocations(limit: Optional[int] = 100) -> list:
+        """List voices currently allocating or holding active slots."""
+        query = Voice.query.filter(
+            Voice.allocation_status.in_(
+                [VoiceAllocationStatus.ALLOCATING, VoiceAllocationStatus.READY]
+            )
+        ).order_by(Voice.updated_at.desc())
+        if limit and limit > 0:
+            query = query.limit(limit)
+        voices = query.all()
+        return [voice.to_dict() for voice in voices]
+
+    @staticmethod
+    def recent_slot_events(limit: Optional[int] = 50) -> list:
+        """Return the most recent slot events for observability."""
+        query = VoiceSlotEvent.query.order_by(VoiceSlotEvent.created_at.desc())
+        if limit and limit > 0:
+            query = query.limit(limit)
+        events = query.all()
+        return [event.to_dict() for event in events]
+
+    @staticmethod
+    def count_ready_slots(service_provider: Optional[str] = None) -> int:
+        """Count READY voices currently holding remote slots."""
+        query = Voice.query.filter(Voice.allocation_status == VoiceAllocationStatus.READY)
+        if service_provider:
+            query = query.filter(Voice.service_provider == service_provider)
+        return query.count()
+
+    @staticmethod
+    def available_slot_capacity(service_provider: Optional[str] = None):
+        """Return remaining slot capacity for the given provider."""
+        limit = getattr(Config, "ELEVENLABS_SLOT_LIMIT", 0) or 0
+        if limit <= 0:
+            return float("inf")
+        used = VoiceModel.count_ready_slots(service_provider)
+        return max(0, limit - used)

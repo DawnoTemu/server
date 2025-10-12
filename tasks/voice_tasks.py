@@ -5,11 +5,15 @@ This module contains Celery tasks for handling audio hygiene and metadata update
 
 import logging
 import sentry_sdk
-from datetime import datetime
+from datetime import datetime, timedelta
+from typing import Optional
 from io import BytesIO
 from celery import Task
 from tasks import celery_app
 from database import db
+from config import Config
+from sqlalchemy import or_
+from utils.voice_slot_queue import VoiceSlotQueue
 
 # Configure logger
 logger = logging.getLogger('voice_tasks')
@@ -150,18 +154,6 @@ def process_voice_recording(self, voice_id, s3_key, filename, user_id, voice_nam
             voice_name=voice_name,
         )
 
-        VoiceSlotEvent.log_event(
-            voice_id=voice.id,
-            user_id=user_id,
-            event_type=VoiceSlotEventType.ALLOCATION_STARTED,
-            reason="automatic_slot_allocation",
-            metadata={
-                'task_id': allocation_task.id,
-                's3_key': voice.recording_s3_key,
-            },
-        )
-        db.session.commit()
-
         logger.info("Enqueued allocation task %s for voice %s", allocation_task.id, voice_id)
         return True
 
@@ -173,12 +165,133 @@ def process_voice_recording(self, voice_id, s3_key, filename, user_id, voice_nam
 @celery_app.task(
     bind=True,
     base=VoiceTask,
+    name='voice.process_voice_queue',
+)
+def process_voice_queue(self):
+    """Attempt to process queued allocation requests based on capacity."""
+    from models.voice_model import VoiceModel
+
+    capacity = VoiceModel.available_slot_capacity()
+    unlimited = capacity == float('inf')
+    processed = 0
+
+    while True:
+        if not unlimited and processed >= capacity:
+            break
+        request = VoiceSlotQueue.dequeue()
+        if not request:
+            break
+        allocate_voice_slot.delay(from_queue=True, **request)
+        processed += 1
+
+    if processed:
+        logger.info("Dispatched %s queued allocation request(s)", processed)
+    return processed
+
+
+@celery_app.task(
+    bind=True,
+    base=VoiceTask,
+    name='voice.reclaim_idle_voices',
+)
+def reclaim_idle_voices(self, max_to_reclaim: Optional[int] = None):
+    """Release idle voices to free slots for queued requests."""
+    from models.voice_model import (
+        Voice,
+        VoiceAllocationStatus,
+        VoiceSlotEvent,
+        VoiceSlotEventType,
+        VoiceStatus,
+    )
+    from utils.voice_service import VoiceService
+
+    queue_length = VoiceSlotQueue.length()
+    if queue_length == 0:
+        return 0
+
+    now = datetime.utcnow()
+    warm_hold_seconds = getattr(Config, "VOICE_WARM_HOLD_SECONDS", 900) or 0
+    threshold = now - timedelta(seconds=warm_hold_seconds) if warm_hold_seconds > 0 else now
+
+    limit = min(queue_length, max_to_reclaim) if max_to_reclaim else queue_length
+
+    candidates = (
+        Voice.query.filter(Voice.allocation_status == VoiceAllocationStatus.READY)
+        .filter(or_(Voice.last_used_at.is_(None), Voice.last_used_at <= threshold))
+        .filter(or_(Voice.slot_lock_expires_at.is_(None), Voice.slot_lock_expires_at <= now))
+        .order_by(Voice.last_used_at.asc())
+        .limit(limit)
+        .all()
+    )
+
+    if not candidates:
+        return 0
+
+    reclaimed = 0
+    for voice in candidates:
+        try:
+            if voice.elevenlabs_voice_id:
+                success, message = VoiceService.delete_voice(
+                    voice_id=voice.id,
+                    external_voice_id=voice.elevenlabs_voice_id,
+                    service=voice.service_provider,
+                )
+                if not success:
+                    logger.error(
+                        "Failed to delete remote voice %s during reclaim: %s",
+                        voice.id,
+                        message,
+                    )
+                    continue
+        except Exception as exc:
+            logger.error("Failed to release remote voice %s: %s", voice.id, exc)
+            continue
+
+        voice.status = VoiceStatus.RECORDED
+        voice.allocation_status = VoiceAllocationStatus.RECORDED
+        voice.elevenlabs_voice_id = None
+        voice.elevenlabs_allocated_at = None
+        voice.slot_lock_expires_at = None
+        voice.last_used_at = now
+        VoiceSlotEvent.log_event(
+            voice_id=voice.id,
+            user_id=voice.user_id,
+            event_type=VoiceSlotEventType.SLOT_EVICTED,
+            reason="idle_reclaim",
+            metadata={'queue_size': queue_length},
+        )
+        reclaimed += 1
+
+    if reclaimed:
+        db.session.commit()
+        process_voice_queue.delay()
+        logger.info("Reclaimed %s idle voices", reclaimed)
+    return reclaimed
+
+
+_existing_schedule = getattr(celery_app.conf, 'beat_schedule', None) or {}
+celery_app.conf.beat_schedule = {
+    **_existing_schedule,
+    'voice-process-queue': {
+        'task': 'voice.process_voice_queue',
+        'schedule': timedelta(seconds=getattr(Config, "VOICE_QUEUE_POLL_INTERVAL", 60) or 60),
+    },
+    'voice-reclaim-idle': {
+        'task': 'voice.reclaim_idle_voices',
+        'schedule': timedelta(minutes=5),
+    },
+}
+
+
+@celery_app.task(
+    bind=True,
+    base=VoiceTask,
     max_retries=2,
     autoretry_for=(Exception,),
     retry_backoff=True,
     name='voice.allocate_voice_slot',
 )
-def allocate_voice_slot(self, voice_id, s3_key, filename, user_id, voice_name=None):
+def allocate_voice_slot(self, voice_id, s3_key, filename, user_id, voice_name=None, *, attempts=0, from_queue=False):
     """Allocate an external voice slot (e.g., ElevenLabs) for an uploaded recording."""
     logger.info("Allocating voice slot for voice_id=%s", voice_id)
 
@@ -198,6 +311,34 @@ def allocate_voice_slot(self, voice_id, s3_key, filename, user_id, voice_name=No
             logger.error("Voice record %s not found during allocation", voice_id)
             return False
 
+        slot_capacity = VoiceModel.available_slot_capacity(voice.service_provider)
+        payload = {
+            'voice_id': voice_id,
+            's3_key': s3_key,
+            'filename': filename,
+            'user_id': user_id,
+            'voice_name': voice_name,
+            'attempts': attempts,
+        }
+
+        if slot_capacity != float('inf') and slot_capacity <= 0 and voice.allocation_status != VoiceAllocationStatus.READY:
+            delay_seconds = max(getattr(Config, "VOICE_QUEUE_POLL_INTERVAL", 30), 5 if from_queue else 0)
+            VoiceSlotQueue.enqueue(voice_id, {**payload, 'attempts': attempts + 1}, delay_seconds=delay_seconds)
+            VoiceSlotEvent.log_event(
+                voice_id=voice.id,
+                user_id=user_id,
+                event_type=VoiceSlotEventType.ALLOCATION_QUEUED,
+                reason="slot_limit_reached",
+                metadata={'attempts': attempts + 1, 'queue_size': VoiceSlotQueue.length()},
+            )
+            voice.status = VoiceStatus.RECORDED
+            voice.allocation_status = VoiceAllocationStatus.RECORDED
+            db.session.commit()
+            if not from_queue:
+                countdown = getattr(Config, "VOICE_QUEUE_POLL_INTERVAL", 30) or 30
+                process_voice_queue.apply_async(countdown=countdown)
+            return {"queued": True}
+
         voice.status = VoiceStatus.PROCESSING
         voice.allocation_status = VoiceAllocationStatus.ALLOCATING
         VoiceSlotEvent.log_event(
@@ -205,7 +346,7 @@ def allocate_voice_slot(self, voice_id, s3_key, filename, user_id, voice_name=No
             user_id=user_id,
             event_type=VoiceSlotEventType.ALLOCATION_STARTED,
             reason="allocate_voice_slot_task",
-            metadata={'s3_key': s3_key, 'filename': filename},
+            metadata={'s3_key': s3_key, 'filename': filename, 'attempts': attempts},
         )
         db.session.commit()
 
@@ -250,6 +391,7 @@ def allocate_voice_slot(self, voice_id, s3_key, filename, user_id, voice_name=No
             voice.service_provider = VoiceModel._resolve_service_provider()
             voice.elevenlabs_allocated_at = datetime.utcnow()
             voice.last_used_at = datetime.utcnow()
+            VoiceSlotQueue.remove(voice.id)
 
             VoiceSlotEvent.log_event(
                 voice_id=voice.id,
@@ -263,6 +405,7 @@ def allocate_voice_slot(self, voice_id, s3_key, filename, user_id, voice_name=No
             )
             db.session.commit()
             logger.info("Voice %s allocated with external ID %s", voice_id, external_voice_id)
+            process_voice_queue.delay()
             return True
 
         voice.status = VoiceStatus.ERROR

@@ -244,6 +244,40 @@ def grant_credits(current_user, user_id):
     except Exception as e:
         return jsonify({"error": f"Failed to grant credits: {e}"}), 500
 
+# GET /admin/voice-slots/status - Snapshot of active slots and queue
+@admin_bp.route('/voice-slots/status', methods=['GET'])
+@admin_required
+def voice_slot_status(current_user):
+    """Return snapshot of voice allocation state (admin only)."""
+    try:
+        limit_active = int(request.args.get('limit_active', 100) or 100)
+    except (TypeError, ValueError):
+        limit_active = 100
+    try:
+        limit_queue = int(request.args.get('limit_queue', 50) or 50)
+    except (TypeError, ValueError):
+        limit_queue = 50
+    try:
+        limit_events = int(request.args.get('limit_events', 50) or 50)
+    except (TypeError, ValueError):
+        limit_events = 50
+
+    success, result, status_code = AdminController.get_voice_slot_status(
+        limit_active=limit_active,
+        limit_queue=limit_queue,
+        limit_events=limit_events,
+    )
+    return jsonify(result), status_code
+
+
+# POST /admin/voice-slots/process-queue - Trigger processing
+@admin_bp.route('/voice-slots/process-queue', methods=['POST'])
+@admin_required
+def voice_slot_process_queue(current_user):
+    """Trigger background processing of queued voice allocation requests."""
+    success, result, status_code = AdminController.trigger_voice_queue_processing()
+    return jsonify(result), status_code
+
 # POST /admin/auth/generate-token - Generate admin token for API access
 @admin_bp.route('/auth/generate-token', methods=['POST'])
 @admin_required

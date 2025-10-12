@@ -209,7 +209,6 @@ class TestVoiceModel:
 
         event_types = [event.event_type for event in events]
         assert VoiceSlotEventType.RECORDING_PROCESSED in event_types
-        assert VoiceSlotEventType.ALLOCATION_STARTED in event_types
 
     def test_delete_voice_success(self, mock_elevenlabs_session, monkeypatch):
         """Test successful voice deletion"""

@@ -1,219 +1,116 @@
-import pytest
 import json
-from unittest.mock import patch, MagicMock
-from io import BytesIO
+from types import SimpleNamespace
+from unittest.mock import patch
 
 
 class TestAudioRoutes:
-    """Tests for the audio routes"""
-    
-    @patch('controllers.audio_controller.AudioController.get_audio')
-    def test_get_audio_success(self, mock_get_audio, client):
-        """Test successfully getting audio data"""
-        # Arrange
-        voice_id = "test-voice-id"
-        story_id = 1
-        mock_audio_data = b'test audio data'
-        mock_get_audio.return_value = (True, mock_audio_data, 200, {'content_length': 14})
-        
-        # Act
-        response = client.get(f'/api/audio/{voice_id}/{story_id}.mp3')
-        
-        # Assert
+    """Tests for the audio routes supporting both external and internal voice IDs."""
+
+    @patch("utils.auth_middleware.UserModel.get_by_id", return_value=SimpleNamespace(id=1, is_active=True, email_confirmed=True))
+    @patch("utils.auth_middleware.jwt.decode", return_value={"type": "access", "sub": 1})
+    def test_get_audio_success_external_id(self, mock_jwt, mock_user, client):
+        voice = SimpleNamespace(id=5, user_id=1)
+        with patch("models.voice_model.VoiceModel.get_voice_by_elevenlabs_id", return_value=voice) as mock_get_external, \
+             patch("models.voice_model.VoiceModel.get_voice_by_id", return_value=None) as mock_get_internal, \
+             patch("controllers.audio_controller.AudioController.get_audio") as mock_get_audio:
+            mock_get_audio.return_value = (True, b"audio-bytes", 200, {"content_length": 11})
+
+            response = client.get(
+                "/voices/ext-voice-123/stories/13/audio",
+                headers={"Authorization": "Bearer test-token"},
+            )
+
         assert response.status_code == 200
-        assert response.data == mock_audio_data
-        assert response.headers.get('Content-Type') == 'audio/mpeg'
-        assert response.headers.get('Accept-Ranges') == 'bytes'
-        assert response.headers.get('Content-Length') == '14'
-        mock_get_audio.assert_called_once_with(voice_id, story_id, None)
+        assert response.data == b"audio-bytes"
+        assert response.headers.get("Content-Length") == "11"
+        mock_get_external.assert_called_once_with("ext-voice-123")
+        mock_get_internal.assert_not_called()
+        mock_get_audio.assert_called_once_with(voice.id, 13, None)
 
-    @patch('controllers.audio_controller.AudioController.get_audio')
-    def test_get_audio_with_range(self, mock_get_audio, client):
-        """Test getting audio data with range header"""
-        # Arrange
-        voice_id = "test-voice-id"
-        story_id = 1
-        range_header = "bytes=0-100"
-        mock_audio_data = b'partial audio data'
-        mock_get_audio.return_value = (
-            True, 
-            mock_audio_data, 
-            206, 
-            {'content_length': 101, 'content_range': 'bytes 0-100/500'}
-        )
-        
-        # Act
-        response = client.get(
-            f'/api/audio/{voice_id}/{story_id}.mp3',
-            headers={'Range': range_header}
-        )
-        
-        # Assert
-        assert response.status_code == 206
-        assert response.data == mock_audio_data
-        assert response.headers.get('Content-Range') == 'bytes 0-100/500'
-        mock_get_audio.assert_called_once_with(voice_id, story_id, range_header)
+    @patch("utils.auth_middleware.UserModel.get_by_id", return_value=SimpleNamespace(id=1, is_active=True, email_confirmed=True))
+    @patch("utils.auth_middleware.jwt.decode", return_value={"type": "access", "sub": 1})
+    def test_get_audio_success_internal_id_fallback(self, mock_jwt, mock_user, client):
+        voice = SimpleNamespace(id=7, user_id=1)
+        with patch("models.voice_model.VoiceModel.get_voice_by_elevenlabs_id", return_value=None) as mock_get_external, \
+             patch("models.voice_model.VoiceModel.get_voice_by_id", return_value=voice) as mock_get_internal, \
+             patch("controllers.audio_controller.AudioController.get_audio") as mock_get_audio:
+            mock_get_audio.return_value = (True, b"audio", 200, {})
 
-    @patch('controllers.audio_controller.AudioController.get_audio')
-    def test_get_audio_not_found(self, mock_get_audio, client):
-        """Test getting audio that doesn't exist"""
-        # Arrange
-        voice_id = "test-voice-id"
-        story_id = 999
-        mock_get_audio.return_value = (False, {"error": "Audio not found"}, 404, None)
-        
-        # Act
-        response = client.get(f'/api/audio/{voice_id}/{story_id}.mp3')
-        
-        # Assert
-        assert response.status_code == 404
-        data = json.loads(response.data)
-        assert "error" in data
-        assert data["error"] == "Audio not found"
+            response = client.get(
+                "/voices/7/stories/42/audio",
+                headers={"Authorization": "Bearer test-token"},
+            )
 
-    @patch('controllers.audio_controller.AudioController.check_audio_exists')
-    def test_check_audio_exists_true(self, mock_check, client):
-        """Test checking if audio exists when it does"""
-        # Arrange
-        voice_id = "test-voice-id"
-        story_id = 1
-        mock_check.return_value = (True, {"exists": True}, 200)
-        
-        # Act
-        response = client.get(f'/api/audio/exists/{voice_id}/{story_id}')
-        
-        # Assert
         assert response.status_code == 200
-        data = json.loads(response.data)
-        assert data["exists"] is True
-        mock_check.assert_called_once_with(voice_id, story_id)
+        mock_get_external.assert_called_once_with("7")
+        mock_get_internal.assert_called_once_with(7)
+        mock_get_audio.assert_called_once_with(voice.id, 42, None)
 
-    @patch('controllers.audio_controller.AudioController.check_audio_exists')
-    def test_check_audio_exists_false(self, mock_check, client):
-        """Test checking if audio exists when it doesn't"""
-        # Arrange
-        voice_id = "test-voice-id"
-        story_id = 999
-        mock_check.return_value = (True, {"exists": False}, 200)
-        
-        # Act
-        response = client.get(f'/api/audio/exists/{voice_id}/{story_id}')
-        
-        # Assert
+    @patch("utils.auth_middleware.UserModel.get_by_id", return_value=SimpleNamespace(id=1, is_active=True, email_confirmed=True))
+    @patch("utils.auth_middleware.jwt.decode", return_value={"type": "access", "sub": 1})
+    def test_get_audio_redirect(self, mock_jwt, mock_user, client):
+        voice = SimpleNamespace(id=6, user_id=1)
+        with patch("models.voice_model.VoiceModel.get_voice_by_elevenlabs_id", return_value=voice), \
+             patch("models.voice_model.VoiceModel.get_voice_by_id", return_value=None), \
+             patch("controllers.audio_controller.AudioController.get_audio_presigned_url", return_value=(True, "https://cdn/audio.mp3", 200)) as mock_presign:
+            response = client.get(
+                "/voices/ext-voice/stories/21/audio?redirect=1",
+                headers={"Authorization": "Bearer test-token"},
+            )
+
+        assert response.status_code == 302
+        assert response.location == "https://cdn/audio.mp3"
+        mock_presign.assert_called_once_with(voice.id, 21, expires_in=3600)
+
+    @patch("utils.auth_middleware.UserModel.get_by_id", return_value=SimpleNamespace(id=1, is_active=True, email_confirmed=True))
+    @patch("utils.auth_middleware.jwt.decode", return_value={"type": "access", "sub": 1})
+    def test_get_audio_unauthorized(self, mock_jwt, mock_user, client):
+        voice = SimpleNamespace(id=9, user_id=2)
+        with patch("models.voice_model.VoiceModel.get_voice_by_elevenlabs_id", return_value=voice), \
+             patch("models.voice_model.VoiceModel.get_voice_by_id", return_value=None):
+            response = client.get(
+                "/voices/ext-voice-unauth/stories/14/audio",
+                headers={"Authorization": "Bearer test-token"},
+            )
+
+        assert response.status_code == 403
+
+    @patch("utils.auth_middleware.UserModel.get_by_id", return_value=SimpleNamespace(id=1, is_active=True, email_confirmed=True))
+    @patch("utils.auth_middleware.jwt.decode", return_value={"type": "access", "sub": 1})
+    def test_check_audio_exists(self, mock_jwt, mock_user, client):
+        voice = SimpleNamespace(id=3, user_id=1)
+        with patch("models.voice_model.VoiceModel.get_voice_by_elevenlabs_id", return_value=voice), \
+             patch("models.voice_model.VoiceModel.get_voice_by_id", return_value=None), \
+             patch("controllers.audio_controller.AudioController.check_audio_exists", return_value=(True, {"exists": True}, 200)) as mock_check:
+            response = client.head(
+                "/voices/ext-voice-check/stories/5/audio",
+                headers={"Authorization": "Bearer test-token"},
+            )
+
         assert response.status_code == 200
-        data = json.loads(response.data)
-        assert data["exists"] is False
+        mock_check.assert_called_once_with(voice.id, 5)
 
-    @patch('controllers.audio_controller.AudioController.check_audio_exists')
-    def test_check_audio_exists_error(self, mock_check, client):
-        """Test error handling when checking if audio exists"""
-        # Arrange
-        voice_id = "test-voice-id"
-        story_id = 1
-        mock_check.return_value = (False, {"error": "S3 connection error"}, 500)
-        
-        # Act
-        response = client.get(f'/api/audio/exists/{voice_id}/{story_id}')
-        
-        # Assert
-        assert response.status_code == 500
-        data = json.loads(response.data)
-        assert "error" in data
-        assert "S3 connection error" in data["error"]
+    @patch("utils.auth_middleware.UserModel.get_by_id", return_value=SimpleNamespace(id=1, is_active=True, email_confirmed=True))
+    @patch("utils.auth_middleware.jwt.decode", return_value={"type": "access", "sub": 1})
+    def test_synthesize_audio_route(self, mock_jwt, mock_user, client):
+        voice = SimpleNamespace(id=11, user_id=1)
+        with patch("models.voice_model.VoiceModel.get_voice_by_elevenlabs_id", return_value=None), \
+             patch("models.voice_model.VoiceModel.get_voice_by_id", return_value=voice), \
+             patch("controllers.audio_controller.AudioController.synthesize_audio") as mock_synthesize:
+            mock_synthesize.return_value = (
+                True,
+                {"status": "processing", "id": 77, "voice": {"queue_position": 2, "queue_length": 5}},
+                202,
+            )
 
-    @patch('controllers.audio_controller.AudioController.synthesize_audio')
-    def test_synthesize_speech_success(self, mock_synthesize, client):
-        """Test successfully synthesizing speech"""
-        # Arrange
-        mock_synthesize.return_value = (
-            True, 
-            {"status": "success", "url": "https://example.com/audio.mp3"}, 
-            200
-        )
-        request_data = {
-            "voice_id": "test-voice-id",
-            "story_id": 1
-        }
-        
-        # Act
-        response = client.post(
-            '/api/synthesize',
-            json=request_data,
-            content_type='application/json'
-        )
-        
-        # Assert
-        assert response.status_code == 200
-        data = json.loads(response.data)
-        assert data["status"] == "success"
-        assert data["url"] == "https://example.com/audio.mp3"
-        mock_synthesize.assert_called_once_with("test-voice-id", 1)
+            response = client.post(
+                "/voices/11/stories/17/audio",
+                headers={"Authorization": "Bearer test-token"},
+            )
 
-    def test_synthesize_speech_missing_voice_id(self, client):
-        """Test synthesizing speech with missing voice_id"""
-        # Arrange
-        request_data = {
-            "story_id": 1
-            # missing voice_id
-        }
-        
-        # Act
-        response = client.post(
-            '/api/synthesize',
-            json=request_data,
-            content_type='application/json'
-        )
-        
-        # Assert
-        assert response.status_code == 400
+        assert response.status_code == 202
         data = json.loads(response.data)
-        assert "error" in data
-        assert "Missing voice_id" in data["error"]
-
-    def test_synthesize_speech_missing_story_id(self, client):
-        """Test synthesizing speech with missing story_id"""
-        # Arrange
-        request_data = {
-            "voice_id": "test-voice-id"
-            # missing story_id
-        }
-        
-        # Act
-        response = client.post(
-            '/api/synthesize',
-            json=request_data,
-            content_type='application/json'
-        )
-        
-        # Assert
-        assert response.status_code == 400
-        data = json.loads(response.data)
-        assert "error" in data
-        assert "Missing story_id" in data["error"]
-
-    @patch('controllers.audio_controller.AudioController.synthesize_audio')
-    def test_synthesize_speech_synthesis_error(self, mock_synthesize, client):
-        """Test error handling during speech synthesis"""
-        # Arrange
-        mock_synthesize.return_value = (
-            False, 
-            {"error": "Synthesis failed"}, 
-            500
-        )
-        request_data = {
-            "voice_id": "test-voice-id",
-            "story_id": 1
-        }
-        
-        # Act
-        response = client.post(
-            '/api/synthesize',
-            json=request_data,
-            content_type='application/json'
-        )
-        
-        # Assert
-        assert response.status_code == 500
-        data = json.loads(response.data)
-        assert "error" in data
-        assert "Synthesis failed" in data["error"]
+        assert data["status"] == "processing"
+        mock_synthesize.assert_called_once_with(voice.id, 17)
+        assert response.headers.get("X-Voice-Queue-Position") == "2"
+        assert response.headers.get("X-Voice-Queue-Length") == "5"

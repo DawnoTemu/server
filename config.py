@@ -83,6 +83,9 @@ class Config:
     # Voice configuration
     ALLOWED_EXTENSIONS = {"wav", "mp3", "m4a"}
     VOICE_NAME = "MyClonedVoice"
+    ELEVENLABS_SLOT_LIMIT = int(os.getenv("ELEVENLABS_SLOT_LIMIT", "30") or 0)
+    VOICE_WARM_HOLD_SECONDS = int(os.getenv("VOICE_WARM_HOLD_SECONDS", "900") or 0)
+    VOICE_QUEUE_POLL_INTERVAL = int(os.getenv("VOICE_QUEUE_POLL_INTERVAL", "60") or 0)
 
     # Credits configuration (tolerant to invalid env input)
     CREDITS_UNIT_LABEL = os.getenv("CREDITS_UNIT_LABEL", "Story Points (Punkty Magii)")

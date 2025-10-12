@@ -120,6 +120,14 @@ SECRET_KEY=your_secret_key_here
 FLASK_ENV=development
 FLASK_DEBUG=True
 
+# Redis / Voice Slot Queue
+REDIS_URL=redis://localhost:6379/0
+
+# Voice Slot Management
+ELEVENLABS_SLOT_LIMIT=30
+VOICE_WARM_HOLD_SECONDS=900
+VOICE_QUEUE_POLL_INTERVAL=60
+
 # Credits Configuration
 CREDITS_UNIT_LABEL="Story Points (Punkty Magii)"
 CREDITS_UNIT_SIZE=1000
@@ -141,6 +149,20 @@ REDIS_URL=redis://localhost:6379/0
 # Voice Service Configuration
 PREFERRED_VOICE_SERVICE=cartesia  # or "elevenlabs"
 ```
+
+# Voice Slot Allocation Workflow
+- Voice recordings are stored encrypted in S3 immediately after upload; remote ElevenLabs voices are allocated just-in-time during the first synthesis request.
+- `POST /voices/{voice_id}/stories/{story_id}/audio` may return `queued_for_slot`, `allocating_voice`, `processing`, or `ready`. Queue metadata is exposed in the payload (`voice.queue_position`, `voice.queue_length`) and mirrored in `X-Voice-Queue-*` response headers for inline UI hints.
+- Celery workers poll allocation progress; once a slot is ready, they synthesise audio, update `Voice.last_used_at`, and release the lock after the warm-hold window.
+- Admins can inspect `/admin/voice-slots/status` or trigger `/admin/voice-slots/process-queue` to nudge background processing.
+- Full lifecycle details, fairness policy, and troubleshooting guidance live in [`docs/ElasticVoiceSlots.md`](docs/ElasticVoiceSlots.md).
+
+# UX Messaging Guidance
+- **Queued for slot**: “Twoja prośba jest w kolejce. Przydzielimy slot głosowy w ciągu kilku chwil.”
+- **Allocating voice**: “Twój głos jest aktywowany w ElevenLabs… odtwarzanie rozpocznie się automatycznie.”
+- **Processing**: “Generujemy opowieść w Twoim głosie. To zwykle trwa ok. 30–90 sekund.”
+- **Ready**: “Nagranie jest gotowe – możesz teraz odtworzyć historię.”
+- For retries or timeouts, show a CTA that re-issues the POST request; credits są już zarezerwowane, więc użytkownik nie zapłaci podwójnie.
 
 ### 3. Database Setup
 

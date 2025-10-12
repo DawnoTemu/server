@@ -64,11 +64,13 @@ def grant_monthly_credits():
 
 
 # Register Celery beat schedule (runs daily at 03:00 UTC)
-celery_app.conf.beat_schedule = getattr(celery_app.conf, 'beat_schedule', {}) | {
+_existing_schedule = getattr(celery_app.conf, 'beat_schedule', None) or {}
+celery_app.conf.beat_schedule = {
+    **_existing_schedule,
     'monthly-credits-daily-check': {
         'task': 'billing.grant_monthly_credits',
         'schedule': crontab(minute=0, hour=3),
-    }
+    },
 }
 
 
@@ -141,9 +143,11 @@ def expire_credit_lots():
 
 
 # Schedule the expiration sweeper daily at 03:15 UTC
-celery_app.conf.beat_schedule = getattr(celery_app.conf, 'beat_schedule', {}) | {
+_existing_schedule = getattr(celery_app.conf, 'beat_schedule', None) or {}
+celery_app.conf.beat_schedule = {
+    **_existing_schedule,
     'expire-credit-lots-daily': {
         'task': 'billing.expire_credit_lots',
         'schedule': crontab(minute=15, hour=3),
-    }
+    },
 }

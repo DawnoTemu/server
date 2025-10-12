@@ -1,13 +1,20 @@
 from datetime import datetime
 from typing import Tuple, Dict, Any
-from models.story_model import Story
-from database import db
-from utils.s3_client import S3Client
 import json
+import logging
 import os
 import tempfile
-import requests
 from pathlib import Path
+
+import requests
+
+from database import db
+from models.story_model import Story
+from models.voice_model import VoiceModel, VoiceAllocationStatus
+from utils.s3_client import S3Client
+from utils.voice_slot_queue import VoiceSlotQueue
+
+logger = logging.getLogger("admin_controller")
 
 class AdminController:
     """Controller for administrative operations"""
@@ -179,6 +186,61 @@ class AdminController:
             return False, {
                 "error": f"Failed to upload story with image: {str(e)}"
             }, 500
+    
+    @staticmethod
+    def get_voice_slot_status(
+        limit_active: int = 100,
+        limit_queue: int = 50,
+        limit_events: int = 50,
+    ) -> Tuple[bool, Dict[str, Any], int]:
+        """Return snapshot of voice slot utilisation and recent activity."""
+        try:
+            from config import Config
+
+            active_voices = VoiceModel.list_active_allocations(limit_active)
+            queue_entries = VoiceSlotQueue.snapshot(limit_queue)
+            recent_events = VoiceModel.recent_slot_events(limit_events)
+
+            ready_count = sum(
+                1 for voice in active_voices if voice.get("allocation_status") == VoiceAllocationStatus.READY
+            )
+            allocating_count = sum(
+                1 for voice in active_voices if voice.get("allocation_status") == VoiceAllocationStatus.ALLOCATING
+            )
+
+            metrics = {
+                "slot_limit": getattr(Config, "ELEVENLABS_SLOT_LIMIT", None),
+                "available_capacity": VoiceModel.available_slot_capacity(),
+                "ready_count": ready_count,
+                "allocating_count": allocating_count,
+                "queue_depth": VoiceSlotQueue.length(),
+            }
+
+            payload = {
+                "metrics": metrics,
+                "active_voices": active_voices,
+                "queued_requests": queue_entries,
+                "recent_events": recent_events,
+            }
+            return True, payload, 200
+        except Exception as exc:
+            logger.error("Failed to build voice slot status snapshot: %s", exc)
+            return False, {"error": f"Failed to load voice slot status: {exc}"}, 500
+
+    @staticmethod
+    def trigger_voice_queue_processing() -> Tuple[bool, Dict[str, Any], int]:
+        """Kick off background processing of queued voice allocation requests."""
+        try:
+            from tasks.voice_tasks import process_voice_queue
+
+            task = process_voice_queue.delay()
+            return True, {
+                "message": "Voice allocation queue processing triggered",
+                "task_id": getattr(task, "id", None),
+            }, 202
+        except Exception as exc:
+            logger.error("Failed to trigger voice queue processing: %s", exc)
+            return False, {"error": f"Failed to trigger queue processing: {exc}"}, 500
     
     @staticmethod
     def _upload_image_to_s3(image_url: str, story_id: int) -> Tuple[bool, str]:
