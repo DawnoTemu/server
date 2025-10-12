@@ -479,17 +479,6 @@ components:
           format: uri
           example: "https://s3.amazonaws.com/storyvoice/samples/..."
 
-    AudioSynthesisResponse:
-      type: object
-      properties:
-        status:
-          type: string
-          example: "success"
-        url:
-          type: string
-          format: uri
-          example: "https://s3.amazonaws.com/storyvoice/audio/..."
-
     MessageResponse:
       type: object
       properties:
