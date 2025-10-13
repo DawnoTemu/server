@@ -1,218 +1,386 @@
-{% extends 'admin/master.html' %}
+{% extends 'admin/custom_base.html' %}
+
+{% block title %}Voice Slot Dashboard - DawnoTemu Admin{% endblock %}
+
 {% block body %}
-<div class="container-fluid mt-4">
-  <h2>Voice Slot Dashboard</h2>
-  <p class="text-muted">Snapshot taken at {{ stats.generated_at }}</p>
-  <div class="row mt-3">
-    <div class="col-md-3">
-      <div class="card border-primary mb-3">
-        <div class="card-header">Active Slots</div>
-        <div class="card-body">
-          <h4 class="card-title">{{ stats.active_count }} / {{ stats.slot_limit }}</h4>
-          <p class="card-text">Available capacity: {{ stats.available_capacity }}</p>
-        </div>
-      </div>
+<!-- Page Header -->
+<div class="mb-8 flex items-center justify-between">
+    <div>
+        <h1 class="text-3xl font-bold text-gray-900 mb-2">Voice Slot Dashboard</h1>
+        <p class="text-gray-600">Monitor and manage ElevenLabs voice slot allocation</p>
+        <p class="text-sm text-gray-500 mt-1">Last updated: {{ stats.generated_at }}</p>
     </div>
-    <div class="col-md-3">
-      <div class="card border-info mb-3">
-        <div class="card-header">Allocating</div>
-        <div class="card-body">
-          <h4 class="card-title">{{ allocating|length }}</h4>
-          <p class="card-text">Voices currently acquiring slots.</p>
-        </div>
-      </div>
-    </div>
-    <div class="col-md-3">
-      <div class="card border-success mb-3">
-        <div class="card-header">Ready</div>
-        <div class="card-body">
-          <h4 class="card-title">{{ ready|length }}</h4>
-          <p class="card-text">Voices with active remote slots.</p>
-        </div>
-      </div>
-    </div>
-    <div class="col-md-3">
-      <div class="card border-warning mb-3">
-        <div class="card-header">Queued</div>
-        <div class="card-body">
-          <h4 class="card-title">{{ stats.queue_length }}</h4>
-          <p class="card-text">Pending allocation requests.</p>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <h4 class="mt-4">Ready Voices</h4>
-  <div class="table-responsive">
-    <table class="table table-sm table-striped align-middle">
-      <thead>
-        <tr>
-          <th>ID</th>
-          <th>User</th>
-          <th>Name</th>
-          <th>Remote ID</th>
-          <th>Allocated</th>
-          <th>Last Used</th>
-          <th>Hold Expires</th>
-          <th>Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for row in ready %}
-        <tr>
-          <td>{{ row.voice.id }}</td>
-          <td>{{ row.user_email }}</td>
-          <td>{{ row.voice.name }}</td>
-          <td>{{ row.remote_id or '—' }}</td>
-          <td>{{ row.voice.elevenlabs_allocated_at or '—' }}</td>
-          <td>{{ row.voice.last_used_at or '—' }}</td>
-          <td>{{ row.hold_expires or '—' }}</td>
-          <td>
-            <form method="post" action="{{ url_for('voice_slots.evict_voice', voice_id=row.voice.id) }}" class="d-inline">
-              <button type="submit" class="btn btn-sm btn-outline-danger" onclick="return confirm('Release slot for voice {{ row.voice.id }}?');">Evict</button>
-            </form>
-          </td>
-        </tr>
-        {% else %}
-        <tr><td colspan="8" class="text-center text-muted">No ready voices</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-
-  <h4 class="mt-4">Allocating Voices</h4>
-  <div class="table-responsive">
-    <table class="table table-sm table-striped align-middle">
-      <thead>
-        <tr>
-          <th>ID</th>
-          <th>User</th>
-          <th>Name</th>
-          <th>Status</th>
-          <th>Queue Position</th>
-          <th>Queue Length</th>
-          <th>Lock Expires</th>
-          <th>Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for row in allocating %}
-        <tr>
-          <td>{{ row.voice.id }}</td>
-          <td>{{ row.user_email }}</td>
-          <td>{{ row.voice.name }}</td>
-          <td>{{ row.voice.allocation_status }}</td>
-          <td>{{ row.queue_position if row.queue_position is not none else '—' }}</td>
-          <td>{{ row.queue_length }}</td>
-          <td>{{ row.voice.slot_lock_expires_at or '—' }}</td>
-          <td>
-            <form method="post" action="{{ url_for('voice_slots.remove_queue', voice_id=row.voice.id) }}" class="d-inline">
-              <button type="submit" class="btn btn-sm btn-outline-secondary">Remove Queue</button>
-            </form>
-            <form method="post" action="{{ url_for('voice_slots.evict_voice', voice_id=row.voice.id) }}" class="d-inline">
-              <button type="submit" class="btn btn-sm btn-outline-danger" onclick="return confirm('Cancel allocation and release voice {{ row.voice.id }}?');">Evict</button>
-            </form>
-          </td>
-        </tr>
-        {% else %}
-        <tr><td colspan="8" class="text-center text-muted">No voices allocating</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-
-  <h4 class="mt-4">Cooling Voices</h4>
-  <div class="table-responsive">
-    <table class="table table-sm table-striped align-middle">
-      <thead>
-        <tr>
-          <th>ID</th>
-          <th>User</th>
-          <th>Name</th>
-          <th>Last Used</th>
-          <th>Hold Expires</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for row in cooling %}
-        <tr>
-          <td>{{ row.voice.id }}</td>
-          <td>{{ row.user_email }}</td>
-          <td>{{ row.voice.name }}</td>
-          <td>{{ row.voice.last_used_at or '—' }}</td>
-          <td>{{ row.hold_expires or '—' }}</td>
-        </tr>
-        {% else %}
-        <tr><td colspan="5" class="text-center text-muted">No voices in cooling window</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-
-  <h4 class="mt-4">Queued Requests</h4>
-  <div class="table-responsive">
-    <table class="table table-sm table-striped align-middle">
-      <thead>
-        <tr>
-          <th>Voice ID</th>
-          <th>User</th>
-          <th>Name</th>
-          <th>Attempts</th>
-          <th>ETA</th>
-          <th>Available In</th>
-          <th>Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for entry in queue_entries %}
-        <tr>
-          <td>{{ entry.voice_id }}</td>
-          <td>{{ entry.user_email }}</td>
-          <td>{{ entry.voice_name }}</td>
-          <td>{{ entry.attempts }}</td>
-          <td>{{ entry.available_at or '—' }}</td>
-          <td>{{ entry.wait_display }}</td>
-          <td>
-            <form method="post" action="{{ url_for('voice_slots.remove_queue', voice_id=entry.voice_id) }}" class="d-inline">
-              <button type="submit" class="btn btn-sm btn-outline-secondary">Remove</button>
-            </form>
-          </td>
-        </tr>
-        {% else %}
-        <tr><td colspan="7" class="text-center text-muted">Queue is empty</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-
-  <h4 class="mt-4">Recent Slot Events</h4>
-  <div class="table-responsive">
-    <table class="table table-sm table-striped align-middle">
-      <thead>
-        <tr>
-          <th>Time</th>
-          <th>Voice</th>
-          <th>User</th>
-          <th>Event</th>
-          <th>Reason</th>
-          <th>Metadata</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for event in events %}
-        <tr>
-          <td>{{ event.created_at }}</td>
-          <td>{{ event.voice_id or '—' }}</td>
-          <td>{{ event.user_id or '—' }}</td>
-          <td>{{ event.event_type }}</td>
-          <td>{{ event.reason or '—' }}</td>
-          <td><small>{{ event.metadata }}</small></td>
-        </tr>
-        {% else %}
-        <tr><td colspan="6" class="text-center text-muted">No recent events</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
+    <button onclick="location.reload()" class="btn btn-outline flex items-center gap-2">
+        <i data-feather="refresh-cw" class="w-4 h-4"></i>
+        <span>Refresh</span>
+    </button>
 </div>
+
+<!-- Stats Cards -->
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+    <!-- Active Slots Card -->
+    <div class="card stat-card">
+        <div class="stat-icon">
+            <i data-feather="cpu"></i>
+        </div>
+        <div class="stat-value">{{ stats.active_count }} / {{ stats.slot_limit }}</div>
+        <div class="stat-label">Active Slots</div>
+        <div class="mt-2 text-sm opacity-90">
+            Available: {{ stats.available_capacity }}
+        </div>
+    </div>
+
+    <!-- Allocating Card -->
+    <div class="card stat-card" style="background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);">
+        <div class="stat-icon">
+            <i data-feather="clock"></i>
+        </div>
+        <div class="stat-value">{{ allocating|length }}</div>
+        <div class="stat-label">Allocating</div>
+        <div class="mt-2 text-sm opacity-90">
+            Acquiring slots
+        </div>
+    </div>
+
+    <!-- Ready Card -->
+    <div class="card stat-card" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">
+        <div class="stat-icon">
+            <i data-feather="check-circle"></i>
+        </div>
+        <div class="stat-value">{{ ready|length }}</div>
+        <div class="stat-label">Ready</div>
+        <div class="mt-2 text-sm opacity-90">
+            Active slots
+        </div>
+    </div>
+
+    <!-- Queued Card -->
+    <div class="card stat-card" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);">
+        <div class="stat-icon">
+            <i data-feather="list"></i>
+        </div>
+        <div class="stat-value">{{ stats.queue_length }}</div>
+        <div class="stat-label">Queued</div>
+        <div class="mt-2 text-sm opacity-90">
+            Waiting for slot
+        </div>
+    </div>
+</div>
+
+<!-- Ready Voices Section -->
+<div class="card mb-8">
+    <div class="card-header flex items-center justify-between">
+        <div class="flex items-center gap-2">
+            <i data-feather="check-circle" class="w-5 h-5 text-green-600"></i>
+            <span>Ready Voices</span>
+            <span class="badge badge-success">{{ ready|length }}</span>
+        </div>
+    </div>
+
+    {% if ready %}
+    <div class="overflow-x-auto">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>User</th>
+                    <th>Voice Name</th>
+                    <th>Remote ID</th>
+                    <th>Allocated At</th>
+                    <th>Last Used</th>
+                    <th>Hold Expires</th>
+                    <th class="text-right">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in ready %}
+                <tr>
+                    <td class="font-mono text-sm">{{ row.voice.id }}</td>
+                    <td>
+                        <div class="flex items-center gap-2">
+                            <div class="w-8 h-8 rounded-full bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center text-white text-xs font-semibold">
+                                {{ row.user_email[0].upper() if row.user_email else '?' }}
+                            </div>
+                            <span class="text-sm">{{ row.user_email }}</span>
+                        </div>
+                    </td>
+                    <td class="font-medium">{{ row.voice.name }}</td>
+                    <td class="font-mono text-xs text-gray-600">{{ row.remote_id or '—' }}</td>
+                    <td class="text-sm">{{ row.voice.elevenlabs_allocated_at.strftime('%Y-%m-%d %H:%M') if row.voice.elevenlabs_allocated_at else '—' }}</td>
+                    <td class="text-sm">{{ row.voice.last_used_at.strftime('%Y-%m-%d %H:%M') if row.voice.last_used_at else '—' }}</td>
+                    <td class="text-sm">{{ row.hold_expires.strftime('%Y-%m-%d %H:%M') if row.hold_expires else '—' }}</td>
+                    <td class="text-right">
+                        <form method="post" action="{{ url_for('voice_slots.evict_voice', voice_id=row.voice.id) }}" class="inline">
+                            <button
+                                type="submit"
+                                onclick="return confirm('Release slot for voice {{ row.voice.id }}?');"
+                                class="btn btn-sm btn-danger"
+                            >
+                                <i data-feather="x" class="w-4 h-4"></i>
+                                <span>Evict</span>
+                            </button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <i data-feather="check-circle" class="empty-state-icon"></i>
+        <div class="empty-state-title">No ready voices</div>
+        <p class="empty-state-text">Voice slots will appear here once allocated</p>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Allocating Voices Section -->
+<div class="card mb-8">
+    <div class="card-header flex items-center justify-between">
+        <div class="flex items-center gap-2">
+            <i data-feather="clock" class="w-5 h-5 text-blue-600"></i>
+            <span>Allocating Voices</span>
+            <span class="badge badge-info">{{ allocating|length }}</span>
+        </div>
+    </div>
+
+    {% if allocating %}
+    <div class="overflow-x-auto">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>User</th>
+                    <th>Voice Name</th>
+                    <th>Status</th>
+                    <th>Queue Position</th>
+                    <th>Lock Expires</th>
+                    <th class="text-right">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in allocating %}
+                <tr>
+                    <td class="font-mono text-sm">{{ row.voice.id }}</td>
+                    <td>
+                        <div class="flex items-center gap-2">
+                            <div class="w-8 h-8 rounded-full bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center text-white text-xs font-semibold">
+                                {{ row.user_email[0].upper() if row.user_email else '?' }}
+                            </div>
+                            <span class="text-sm">{{ row.user_email }}</span>
+                        </div>
+                    </td>
+                    <td class="font-medium">{{ row.voice.name }}</td>
+                    <td><span class="badge badge-info">{{ row.voice.allocation_status }}</span></td>
+                    <td class="text-sm">
+                        {% if row.queue_position is not none %}
+                            {{ row.queue_position }} / {{ row.queue_length }}
+                        {% else %}
+                            —
+                        {% endif %}
+                    </td>
+                    <td class="text-sm">{{ row.voice.slot_lock_expires_at.strftime('%Y-%m-%d %H:%M') if row.voice.slot_lock_expires_at else '—' }}</td>
+                    <td class="text-right">
+                        <div class="flex items-center justify-end gap-2">
+                            <form method="post" action="{{ url_for('voice_slots.remove_queue', voice_id=row.voice.id) }}" class="inline">
+                                <button type="submit" class="btn btn-sm btn-outline">
+                                    <i data-feather="minus-circle" class="w-4 h-4"></i>
+                                    <span>Remove Queue</span>
+                                </button>
+                            </form>
+                            <form method="post" action="{{ url_for('voice_slots.evict_voice', voice_id=row.voice.id) }}" class="inline">
+                                <button
+                                    type="submit"
+                                    onclick="return confirm('Cancel allocation and release voice {{ row.voice.id }}?');"
+                                    class="btn btn-sm btn-danger"
+                                >
+                                    <i data-feather="x" class="w-4 h-4"></i>
+                                    <span>Evict</span>
+                                </button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <i data-feather="clock" class="empty-state-icon"></i>
+        <div class="empty-state-title">No voices allocating</div>
+        <p class="empty-state-text">Voices acquiring slots will appear here</p>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Cooling Voices Section -->
+{% if cooling %}
+<div class="card mb-8">
+    <div class="card-header flex items-center justify-between">
+        <div class="flex items-center gap-2">
+            <i data-feather="wind" class="w-5 h-5 text-purple-600"></i>
+            <span>Cooling Voices</span>
+            <span class="badge badge-secondary">{{ cooling|length }}</span>
+        </div>
+    </div>
+
+    <div class="overflow-x-auto">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>User</th>
+                    <th>Voice Name</th>
+                    <th>Last Used</th>
+                    <th>Hold Expires</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in cooling %}
+                <tr>
+                    <td class="font-mono text-sm">{{ row.voice.id }}</td>
+                    <td>
+                        <div class="flex items-center gap-2">
+                            <div class="w-8 h-8 rounded-full bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center text-white text-xs font-semibold">
+                                {{ row.user_email[0].upper() if row.user_email else '?' }}
+                            </div>
+                            <span class="text-sm">{{ row.user_email }}</span>
+                        </div>
+                    </td>
+                    <td class="font-medium">{{ row.voice.name }}</td>
+                    <td class="text-sm">{{ row.voice.last_used_at.strftime('%Y-%m-%d %H:%M') if row.voice.last_used_at else '—' }}</td>
+                    <td class="text-sm">{{ row.hold_expires.strftime('%Y-%m-%d %H:%M') if row.hold_expires else '—' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<!-- Queued Requests Section -->
+<div class="card mb-8">
+    <div class="card-header flex items-center justify-between">
+        <div class="flex items-center gap-2">
+            <i data-feather="list" class="w-5 h-5 text-yellow-600"></i>
+            <span>Queued Requests</span>
+            <span class="badge badge-warning">{{ queue_entries|length }}</span>
+        </div>
+    </div>
+
+    {% if queue_entries %}
+    <div class="overflow-x-auto">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Voice ID</th>
+                    <th>User</th>
+                    <th>Voice Name</th>
+                    <th>Attempts</th>
+                    <th>ETA</th>
+                    <th>Available In</th>
+                    <th class="text-right">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for entry in queue_entries %}
+                <tr>
+                    <td class="font-mono text-sm">{{ entry.voice_id }}</td>
+                    <td class="text-sm">{{ entry.user_email }}</td>
+                    <td class="font-medium">{{ entry.voice_name }}</td>
+                    <td><span class="badge badge-secondary">{{ entry.attempts }}</span></td>
+                    <td class="text-sm">{{ entry.available_at.strftime('%Y-%m-%d %H:%M') if entry.available_at else '—' }}</td>
+                    <td><span class="badge badge-warning">{{ entry.wait_display }}</span></td>
+                    <td class="text-right">
+                        <form method="post" action="{{ url_for('voice_slots.remove_queue', voice_id=entry.voice_id) }}" class="inline">
+                            <button type="submit" class="btn btn-sm btn-outline">
+                                <i data-feather="x" class="w-4 h-4"></i>
+                                <span>Remove</span>
+                            </button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <i data-feather="check-circle" class="empty-state-icon"></i>
+        <div class="empty-state-title">Queue is empty</div>
+        <p class="empty-state-text">All voice slot requests are being processed</p>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Recent Slot Events -->
+<div class="card">
+    <div class="card-header flex items-center justify-between">
+        <div class="flex items-center gap-2">
+            <i data-feather="activity" class="w-5 h-5"></i>
+            <span>Recent Slot Events</span>
+        </div>
+        <span class="text-xs text-gray-500">Last 30 events</span>
+    </div>
+
+    {% if events %}
+    <div class="overflow-x-auto">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Time</th>
+                    <th>Voice ID</th>
+                    <th>User ID</th>
+                    <th>Event Type</th>
+                    <th>Reason</th>
+                    <th>Metadata</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for event in events %}
+                <tr>
+                    <td class="text-sm">
+                        {% if event.created_at %}
+                            {% if event.created_at is string %}
+                                {{ event.created_at }}
+                            {% else %}
+                                {{ event.created_at.strftime('%Y-%m-%d %H:%M:%S') }}
+                            {% endif %}
+                        {% else %}
+                            —
+                        {% endif %}
+                    </td>
+                    <td class="font-mono text-sm">{{ event.voice_id or '—' }}</td>
+                    <td class="font-mono text-sm">{{ event.user_id or '—' }}</td>
+                    <td>
+                        <span class="badge
+                            {% if 'completed' in event.event_type %}badge-success
+                            {% elif 'failed' in event.event_type or 'evicted' in event.event_type %}badge-error
+                            {% elif 'started' in event.event_type or 'queued' in event.event_type %}badge-info
+                            {% else %}badge-secondary{% endif %}">
+                            {{ event.event_type }}
+                        </span>
+                    </td>
+                    <td class="text-xs text-gray-600">{{ event.reason or '—' }}</td>
+                    <td class="text-xs text-gray-500 font-mono">{{ event.metadata }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <i data-feather="activity" class="empty-state-icon"></i>
+        <div class="empty-state-title">No recent events</div>
+        <p class="empty-state-text">Slot events will appear here</p>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Initialize Icons -->
+<script>
+    feather.replace();
+</script>
 {% endblock %}

@@ -1,0 +1,145 @@
+{% extends 'admin/custom_base.html' %}
+
+{% block title %}Users - DawnoTemu Admin{% endblock %}
+
+{% block body %}
+<!-- Page Header -->
+<div class="mb-8 flex items-center justify-between">
+    <div>
+        <h1 class="text-3xl font-bold text-gray-900 mb-2">Users</h1>
+        <p class="text-gray-600">Manage user accounts and permissions</p>
+    </div>
+    <div class="flex items-center gap-3">
+        {% if admin_view.can_create %}
+        <a href="{{ get_url('.create_view', url=return_url) }}" class="btn btn-primary">
+            <i data-feather="user-plus" class="w-4 h-4"></i>
+            <span>Create User</span>
+        </a>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Stats Cards -->
+<div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+    <div class="card stat-card">
+        <div class="stat-icon">
+            <i data-feather="users"></i>
+        </div>
+        <div class="stat-value">{{ count }}</div>
+        <div class="stat-label">Total Users</div>
+    </div>
+</div>
+
+<!-- Users List -->
+<div class="card">
+    <div class="card-header flex items-center justify-between">
+        <div class="flex items-center gap-2">
+            <i data-feather="list" class="w-5 h-5"></i>
+            <span>All Users ({{ count }})</span>
+        </div>
+    </div>
+
+    {% if data %}
+    <div class="overflow-x-auto">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Email</th>
+                    <th>Story Points</th>
+                    <th>Credits</th>
+                    <th>Email Status</th>
+                    <th>Account Status</th>
+                    <th>Last Login</th>
+                    <th>Created</th>
+                    {% if admin_view.can_edit or admin_view.can_delete %}
+                    <th class="text-right">Actions</th>
+                    {% endif %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in data %}
+                <tr>
+                    <td class="font-mono text-sm">{{ row.id }}</td>
+                    <td>
+                        <div class="flex items-center gap-2">
+                            <div class="w-8 h-8 rounded-full bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center text-white text-xs font-semibold">
+                                {{ row.email[0].upper() if row.email else '?' }}
+                            </div>
+                            <span>{{ row.email }}</span>
+                        </div>
+                    </td>
+                    <td><span class="badge badge-secondary">{{ row.credits_balance }} points</span></td>
+                    <td>
+                        <a href="{{ url_for('user.user_credits_view') }}?id={{ row.id }}" class="btn btn-sm btn-outline">
+                            <i data-feather="credit-card" class="w-4 h-4"></i>
+                            <span>View</span>
+                        </a>
+                    </td>
+                    <td>
+                        <span class="badge badge-{% if row.email_confirmed %}success{% else %}warning{% endif %}">
+                            {% if row.email_confirmed %}Confirmed{% else %}Pending{% endif %}
+                        </span>
+                    </td>
+                    <td>
+                        <span class="badge badge-{% if row.is_active %}success{% else %}secondary{% endif %}">
+                            {% if row.is_active %}Active{% else %}Inactive{% endif %}
+                        </span>
+                    </td>
+                    <td class="text-sm">{{ row.last_login.strftime('%Y-%m-%d %H:%M') if row.last_login else 'Never' }}</td>
+                    <td class="text-sm">{{ row.created_at.strftime('%Y-%m-%d') if row.created_at else '—' }}</td>
+                    {% if admin_view.can_edit or admin_view.can_delete %}
+                    <td class="text-right">
+                        <div class="flex items-center justify-end gap-2">
+                            {% if admin_view.can_edit %}
+                            <a href="{{ get_url('.edit_view', id=get_pk_value(row), url=return_url) }}" class="btn btn-sm btn-outline">
+                                <i data-feather="edit-2" class="w-4 h-4"></i>
+                                <span>Edit</span>
+                            </a>
+                            {% endif %}
+                            {% if admin_view.can_delete %}
+                            <form method="POST" action="{{ get_url('.delete_view') }}" style="display: inline;">
+                                <input type="hidden" name="id" value="{{ get_pk_value(row) }}">
+                                <input type="hidden" name="url" value="{{ return_url }}">
+                                <button type="submit" class="btn btn-sm btn-danger" onclick="return confirm('Are you sure you want to delete this user?');">
+                                    <i data-feather="trash-2" class="w-4 h-4"></i>
+                                    <span>Delete</span>
+                                </button>
+                            </form>
+                            {% endif %}
+                        </div>
+                    </td>
+                    {% endif %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Pagination -->
+    {% if num_pages > 1 %}
+    <div class="p-4 border-t border-gray-200">
+        {{ model_layout.render_pagination(admin_view, page, num_pages) }}
+    </div>
+    {% endif %}
+
+    {% else %}
+    <div class="empty-state">
+        <i data-feather="users" class="empty-state-icon"></i>
+        <div class="empty-state-title">No users yet</div>
+        <p class="empty-state-text">Create your first user to get started</p>
+        {% if admin_view.can_create %}
+        <a href="{{ get_url('.create_view', url=return_url) }}" class="btn btn-primary mt-4">
+            <i data-feather="user-plus" class="w-4 h-4"></i>
+            <span>Create User</span>
+        </a>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+
+<!-- Initialize Icons -->
+<script>
+    feather.replace();
+</script>
+{% endblock %}

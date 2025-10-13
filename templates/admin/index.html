@@ -1,0 +1,269 @@
+{% extends 'admin/custom_base.html' %}
+
+{% block title %}Dashboard - DawnoTemu Admin{% endblock %}
+
+{% block body %}
+<!-- Page Header -->
+<div class="mb-8">
+    <h1 class="text-3xl font-bold text-gray-900 mb-2">Dashboard</h1>
+    <p class="text-gray-600">Welcome back! Here's what's happening with DawnoTemu today.</p>
+</div>
+
+<!-- Stats Cards -->
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+    <!-- Total Users Card -->
+    <div class="card stat-card">
+        <div class="stat-icon">
+            <i data-feather="users"></i>
+        </div>
+        <div class="stat-value">{{ total_users or 0 }}</div>
+        <div class="stat-label">Total Users</div>
+        <div class="mt-2 text-sm opacity-90">
+            {% if new_users_today %}+{{ new_users_today }} today{% else %}No new users today{% endif %}
+        </div>
+    </div>
+
+    <!-- Active Voices Card -->
+    <div class="card stat-card" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%);">
+        <div class="stat-icon">
+            <i data-feather="mic"></i>
+        </div>
+        <div class="stat-value">{{ total_voices or 0 }}</div>
+        <div class="stat-label">Voice Profiles</div>
+        <div class="mt-2 text-sm opacity-90">
+            {{ active_slots or 0 }} / {{ slot_limit or '∞' }} slots active
+        </div>
+    </div>
+
+    <!-- Audio Stories Card -->
+    <div class="card stat-card" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);">
+        <div class="stat-icon">
+            <i data-feather="headphones"></i>
+        </div>
+        <div class="stat-value">{{ total_audio_stories or 0 }}</div>
+        <div class="stat-label">Audio Stories</div>
+        <div class="mt-2 text-sm opacity-90">
+            {% if processing_audio %}{{ processing_audio }} processing{% else %}All ready{% endif %}
+        </div>
+    </div>
+
+    <!-- Credits Issued Card -->
+    <div class="card stat-card" style="background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);">
+        <div class="stat-icon">
+            <i data-feather="gift"></i>
+        </div>
+        <div class="stat-value">{{ total_credits or 0 }}</div>
+        <div class="stat-label">Story Points Issued</div>
+        <div class="mt-2 text-sm opacity-90">
+            {{ credits_used or 0 }} consumed
+        </div>
+    </div>
+</div>
+
+<!-- Main Content Grid -->
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+    <!-- Quick Actions -->
+    <div class="card">
+        <div class="card-header flex items-center gap-2">
+            <i data-feather="zap" class="w-5 h-5"></i>
+            <span>Quick Actions</span>
+        </div>
+        <div class="space-y-3">
+            <a href="{{ url_for('user.index_view') }}" class="flex items-center justify-between p-3 rounded-lg hover:bg-gray-50 transition-colors group">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center">
+                        <i data-feather="users" class="w-5 h-5"></i>
+                    </div>
+                    <div>
+                        <div class="font-semibold text-gray-900">Manage Users</div>
+                        <div class="text-xs text-gray-500">View and edit users</div>
+                    </div>
+                </div>
+                <i data-feather="chevron-right" class="w-5 h-5 text-gray-400 group-hover:text-primary transition-colors"></i>
+            </a>
+
+            <a href="{{ url_for('user.grant_credits_view') }}?id={{ first_user_id }}" class="flex items-center justify-between p-3 rounded-lg hover:bg-gray-50 transition-colors group">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-lg bg-purple-100 text-purple-600 flex items-center justify-center">
+                        <i data-feather="gift" class="w-5 h-5"></i>
+                    </div>
+                    <div>
+                        <div class="font-semibold text-gray-900">Grant Credits</div>
+                        <div class="text-xs text-gray-500">Add story points to users</div>
+                    </div>
+                </div>
+                <i data-feather="chevron-right" class="w-5 h-5 text-gray-400 group-hover:text-primary transition-colors"></i>
+            </a>
+
+            <a href="{{ url_for('voice_slots.index') }}" class="flex items-center justify-between p-3 rounded-lg hover:bg-gray-50 transition-colors group">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-lg bg-green-100 text-green-600 flex items-center justify-center">
+                        <i data-feather="activity" class="w-5 h-5"></i>
+                    </div>
+                    <div>
+                        <div class="font-semibold text-gray-900">Voice Slots</div>
+                        <div class="text-xs text-gray-500">Monitor slot allocation</div>
+                    </div>
+                </div>
+                <i data-feather="chevron-right" class="w-5 h-5 text-gray-400 group-hover:text-primary transition-colors"></i>
+            </a>
+
+            <a href="{{ url_for('story.index_view') }}" class="flex items-center justify-between p-3 rounded-lg hover:bg-gray-50 transition-colors group">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-lg bg-yellow-100 text-yellow-600 flex items-center justify-center">
+                        <i data-feather="book-open" class="w-5 h-5"></i>
+                    </div>
+                    <div>
+                        <div class="font-semibold text-gray-900">Manage Stories</div>
+                        <div class="text-xs text-gray-500">Add and edit content</div>
+                    </div>
+                </div>
+                <i data-feather="chevron-right" class="w-5 h-5 text-gray-400 group-hover:text-primary transition-colors"></i>
+            </a>
+        </div>
+    </div>
+
+    <!-- System Status -->
+    <div class="card lg:col-span-2">
+        <div class="card-header flex items-center gap-2">
+            <i data-feather="activity" class="w-5 h-5"></i>
+            <span>System Status</span>
+        </div>
+        <div class="space-y-4">
+            <!-- Voice Slot Status -->
+            <div>
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-sm font-semibold text-gray-700">Voice Slot Utilization</span>
+                    <span class="text-sm font-medium text-gray-900">{{ active_slots or 0 }} / {{ slot_limit or '∞' }}</span>
+                </div>
+                <div class="w-full bg-gray-200 rounded-full h-2.5">
+                    {% set utilization = ((active_slots or 0) / (slot_limit or 1) * 100) if slot_limit else 0 %}
+                    <div class="h-2.5 rounded-full transition-all {% if utilization > 80 %}bg-red-500{% elif utilization > 50 %}bg-yellow-500{% else %}bg-green-500{% endif %}"
+                         style="width: {{ utilization }}%"></div>
+                </div>
+            </div>
+
+            <!-- Queue Length -->
+            <div>
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-sm font-semibold text-gray-700">Voice Queue Length</span>
+                    <span class="text-sm font-medium text-gray-900">{{ queue_length or 0 }} waiting</span>
+                </div>
+                <div class="w-full bg-gray-200 rounded-full h-2.5">
+                    {% set queue_percent = [100, (queue_length or 0) * 10]|min %}
+                    <div class="bg-blue-500 h-2.5 rounded-full transition-all" style="width: {{ queue_percent }}%"></div>
+                </div>
+            </div>
+
+            <!-- Audio Processing -->
+            <div>
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-sm font-semibold text-gray-700">Audio Processing</span>
+                    <span class="text-sm font-medium text-gray-900">{{ processing_audio or 0 }} in progress</span>
+                </div>
+                <div class="w-full bg-gray-200 rounded-full h-2.5">
+                    {% set audio_percent = [100, (processing_audio or 0) * 20]|min %}
+                    <div class="bg-purple-500 h-2.5 rounded-full transition-all" style="width: {{ audio_percent }}%"></div>
+                </div>
+            </div>
+
+            <!-- System Health Indicators -->
+            <div class="grid grid-cols-3 gap-4 pt-4 border-t border-gray-200">
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-green-600">98%</div>
+                    <div class="text-xs text-gray-600 mt-1">Uptime</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-blue-600">24ms</div>
+                    <div class="text-xs text-gray-600 mt-1">Avg Response</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-purple-600">2.1s</div>
+                    <div class="text-xs text-gray-600 mt-1">Avg Synthesis</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Recent Activity -->
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <!-- Recent Users -->
+    <div class="card">
+        <div class="card-header flex items-center justify-between">
+            <div class="flex items-center gap-2">
+                <i data-feather="user-plus" class="w-5 h-5"></i>
+                <span>Recent Users</span>
+            </div>
+            <a href="{{ url_for('user.index_view') }}" class="text-sm text-primary hover:text-primary-dark font-medium">
+                View all →
+            </a>
+        </div>
+        <div class="space-y-3">
+            {% if recent_users %}
+                {% for user in recent_users %}
+                <div class="flex items-center justify-between p-3 rounded-lg hover:bg-gray-50 transition-colors">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 rounded-full bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center text-white font-semibold">
+                            {{ user.email[0].upper() }}
+                        </div>
+                        <div>
+                            <div class="font-medium text-gray-900">{{ user.email }}</div>
+                            <div class="text-xs text-gray-500">{{ user.created_at.strftime('%Y-%m-%d %H:%M') if user.created_at else 'N/A' }}</div>
+                        </div>
+                    </div>
+                    <span class="badge badge-{% if user.is_active %}success{% else %}secondary{% endif %}">
+                        {% if user.is_active %}Active{% else %}Inactive{% endif %}
+                    </span>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="empty-state py-8">
+                    <i data-feather="users" class="empty-state-icon"></i>
+                    <div class="empty-state-title">No users yet</div>
+                    <p class="empty-state-text">New users will appear here</p>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Recent Audio Stories -->
+    <div class="card">
+        <div class="card-header flex items-center justify-between">
+            <div class="flex items-center gap-2">
+                <i data-feather="headphones" class="w-5 h-5"></i>
+                <span>Recent Audio Stories</span>
+            </div>
+            <a href="{{ url_for('audiostory.index_view') }}" class="text-sm text-primary hover:text-primary-dark font-medium">
+                View all →
+            </a>
+        </div>
+        <div class="space-y-3">
+            {% if recent_audio %}
+                {% for audio in recent_audio %}
+                <div class="flex items-center justify-between p-3 rounded-lg hover:bg-gray-50 transition-colors">
+                    <div class="flex-1">
+                        <div class="font-medium text-gray-900">{{ audio.story.title if audio.story else 'Unknown Story' }}</div>
+                        <div class="text-xs text-gray-500">{{ audio.user.email if audio.user else 'Unknown User' }}</div>
+                    </div>
+                    <span class="badge badge-{% if audio.status == 'ready' %}success{% elif audio.status == 'error' %}error{% elif audio.status == 'processing' %}warning{% else %}secondary{% endif %}">
+                        {{ audio.status }}
+                    </span>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="empty-state py-8">
+                    <i data-feather="headphones" class="empty-state-icon"></i>
+                    <div class="empty-state-title">No audio stories yet</div>
+                    <p class="empty-state-text">Generated audio will appear here</p>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Initialize Icons -->
+<script>
+    feather.replace();
+</script>
+{% endblock %}

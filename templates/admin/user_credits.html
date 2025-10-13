@@ -1,55 +1,200 @@
-{% extends 'admin/master.html' %}
+{% extends 'admin/custom_base.html' %}
+
+{% block title %}User Credits - {{ user.email }} - DawnoTemu Admin{% endblock %}
+
 {% block body %}
-<div class="container">
-  <div class="row">
-    <div class="col-md-10 offset-md-1">
-      <div class="card mt-4">
-        <div class="card-header">
-          <h3>User Credits</h3>
-          <p>User: {{ user.email }} (ID: {{ user.id }}) — Balance: {{ user.credits_balance }}</p>
-        </div>
-        <div class="card-body">
-          <h5>Active Lots</h5>
-          <table class="table table-sm table-striped">
-            <thead><tr><th>Source</th><th>Remaining</th><th>Expires At</th><th>Created</th></tr></thead>
-            <tbody>
-              {% for lot in lots %}
-              <tr>
-                <td>{{ lot.source }}</td>
-                <td>{{ lot.amount_remaining }}</td>
-                <td>{% if lot.expires_at %}{{ lot.expires_at }}{% else %}—{% endif %}</td>
-                <td>{{ lot.created_at }}</td>
-              </tr>
-              {% else %}
-              <tr><td colspan="4" class="text-center">No active lots</td></tr>
-              {% endfor %}
-            </tbody>
-          </table>
-
-          <h5 class="mt-4">Recent Transactions</h5>
-          <table class="table table-sm table-striped">
-            <thead><tr><th>At</th><th>Type</th><th>Amount</th><th>Status</th><th>Reason</th><th>Audio ID</th><th>Story ID</th></tr></thead>
-            <tbody>
-              {% for tx in transactions %}
-              <tr>
-                <td>{{ tx.created_at }}</td>
-                <td>{{ tx.type }}</td>
-                <td>{{ tx.amount }}</td>
-                <td>{{ tx.status }}</td>
-                <td>{{ tx.reason }}</td>
-                <td>{{ tx.audio_story_id or '—' }}</td>
-                <td>{{ tx.story_id or '—' }}</td>
-              </tr>
-              {% else %}
-              <tr><td colspan="7" class="text-center">No transactions</td></tr>
-              {% endfor %}
-            </tbody>
-          </table>
-
-          <a href="{{ url_for('user.index_view') }}" class="btn btn-secondary">Back</a>
-        </div>
-      </div>
+<!-- Page Header -->
+<div class="mb-8">
+    <div class="flex items-center gap-3 mb-3">
+        <a href="{{ url_for('user.index_view') }}" class="btn btn-outline">
+            <i data-feather="arrow-left" class="w-4 h-4"></i>
+            <span>Back to Users</span>
+        </a>
     </div>
-  </div>
+    <h1 class="text-3xl font-bold text-gray-900 mb-2">User Credits</h1>
+    <div class="flex items-center gap-3">
+        <div class="w-12 h-12 rounded-full bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center text-white font-bold text-lg">
+            {{ user.email[0].upper() }}
+        </div>
+        <div>
+            <p class="text-lg font-semibold text-gray-900">{{ user.email }}</p>
+            <p class="text-sm text-gray-500">User ID: {{ user.id }}</p>
+        </div>
+    </div>
 </div>
+
+<!-- Balance Overview Card -->
+<div class="card mb-8" style="background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); color: white;">
+    <div class="flex items-center justify-between">
+        <div>
+            <div class="text-sm opacity-90 uppercase tracking-wide font-semibold mb-2">Current Balance</div>
+            <div class="text-5xl font-bold">{{ user.credits_balance }}</div>
+            <div class="text-sm opacity-90 mt-2">Story Points</div>
+        </div>
+        <div class="text-6xl opacity-20">
+            <i data-feather="gift"></i>
+        </div>
+    </div>
+    <div class="mt-6 pt-6 border-t border-white border-opacity-20">
+        <a href="{{ url_for('user.grant_credits_view') }}?id={{ user.id }}" class="btn btn-lg bg-white text-purple-600 hover:bg-gray-100">
+            <i data-feather="plus-circle" class="w-5 h-5"></i>
+            <span>Grant Story Points</span>
+        </a>
+    </div>
+</div>
+
+<!-- Active Credit Lots -->
+<div class="card mb-8">
+    <div class="card-header flex items-center justify-between">
+        <div class="flex items-center gap-2">
+            <i data-feather="package" class="w-5 h-5"></i>
+            <span>Active Credit Lots</span>
+            <span class="badge badge-info">{{ lots|length }}</span>
+        </div>
+        <div class="text-sm text-gray-600">
+            Total: <span class="font-semibold">{{ lots|sum(attribute='amount_remaining') or 0 }}</span> points
+        </div>
+    </div>
+
+    {% if lots %}
+    <div class="overflow-x-auto">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Source</th>
+                    <th>Granted</th>
+                    <th>Remaining</th>
+                    <th>Expires At</th>
+                    <th>Created</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for lot in lots %}
+                <tr>
+                    <td>
+                        <span class="badge
+                            {% if lot.source == 'event' %}badge-success
+                            {% elif lot.source == 'monthly' %}badge-info
+                            {% elif lot.source == 'referral' %}badge-warning
+                            {% elif lot.source == 'add_on' %}badge-secondary
+                            {% else %}badge-secondary{% endif %}">
+                            {{ lot.source }}
+                        </span>
+                    </td>
+                    <td class="font-semibold">{{ lot.amount_granted }}</td>
+                    <td>
+                        <div class="flex items-center gap-3">
+                            <div class="flex-1">
+                                <div class="w-full bg-gray-200 rounded-full h-2">
+                                    {% set percentage = (lot.amount_remaining / lot.amount_granted * 100) if lot.amount_granted > 0 else 0 %}
+                                    <div class="h-2 rounded-full transition-all
+                                        {% if percentage > 70 %}bg-green-500
+                                        {% elif percentage > 30 %}bg-yellow-500
+                                        {% else %}bg-red-500{% endif %}"
+                                        style="width: {{ percentage }}%"></div>
+                                </div>
+                            </div>
+                            <span class="font-semibold text-sm">{{ lot.amount_remaining }}</span>
+                        </div>
+                    </td>
+                    <td class="text-sm">
+                        {% if lot.expires_at %}
+                            <span class="{% if lot.expires_at < now() %}text-red-600 font-semibold{% endif %}">
+                                {{ lot.expires_at.strftime('%Y-%m-%d %H:%M') }}
+                            </span>
+                        {% else %}
+                            <span class="text-gray-500">Never</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-sm text-gray-600">{{ lot.created_at.strftime('%Y-%m-%d') if lot.created_at else 'N/A' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <i data-feather="package" class="empty-state-icon"></i>
+        <div class="empty-state-title">No active credit lots</div>
+        <p class="empty-state-text">Grant credits to create a new lot</p>
+        <a href="{{ url_for('user.grant_credits_view') }}?id={{ user.id }}" class="btn btn-primary mt-4">
+            <i data-feather="plus-circle" class="w-4 h-4"></i>
+            <span>Grant Credits</span>
+        </a>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Recent Transactions -->
+<div class="card">
+    <div class="card-header flex items-center justify-between">
+        <div class="flex items-center gap-2">
+            <i data-feather="activity" class="w-5 h-5"></i>
+            <span>Recent Transactions</span>
+            <span class="badge badge-secondary">{{ transactions|length }}</span>
+        </div>
+        <span class="text-sm text-gray-500">Last 20 transactions</span>
+    </div>
+
+    {% if transactions %}
+    <div class="overflow-x-auto">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Date & Time</th>
+                    <th>Type</th>
+                    <th>Amount</th>
+                    <th>Status</th>
+                    <th>Reason</th>
+                    <th>Audio ID</th>
+                    <th>Story ID</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for tx in transactions %}
+                <tr>
+                    <td class="text-sm">{{ tx.created_at.strftime('%Y-%m-%d %H:%M:%S') if tx.created_at else 'N/A' }}</td>
+                    <td>
+                        <span class="badge
+                            {% if tx.type == 'grant' %}badge-success
+                            {% elif tx.type == 'debit' %}badge-error
+                            {% elif tx.type == 'refund' %}badge-warning
+                            {% elif tx.type == 'expire' %}badge-secondary
+                            {% else %}badge-info{% endif %}">
+                            {{ tx.type }}
+                        </span>
+                    </td>
+                    <td class="font-semibold {% if tx.amount > 0 %}text-green-600{% else %}text-red-600{% endif %}">
+                        {% if tx.amount > 0 %}+{% endif %}{{ tx.amount }}
+                    </td>
+                    <td>
+                        <span class="badge
+                            {% if tx.status == 'applied' %}badge-success
+                            {% elif tx.status == 'pending' %}badge-warning
+                            {% elif tx.status == 'failed' %}badge-error
+                            {% else %}badge-secondary{% endif %}">
+                            {{ tx.status }}
+                        </span>
+                    </td>
+                    <td class="text-xs text-gray-600">{{ tx.reason or '—' }}</td>
+                    <td class="font-mono text-xs">{{ tx.audio_story_id or '—' }}</td>
+                    <td class="font-mono text-xs">{{ tx.story_id or '—' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <i data-feather="activity" class="empty-state-icon"></i>
+        <div class="empty-state-title">No transactions</div>
+        <p class="empty-state-text">Transaction history will appear here</p>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Initialize Icons -->
+<script>
+    feather.replace();
+</script>
 {% endblock %}

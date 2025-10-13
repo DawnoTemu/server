@@ -1,0 +1,96 @@
+{% extends 'admin/custom_base.html' %}
+
+{% block title %}Credit Transactions - DawnoTemu Admin{% endblock %}
+
+{% block body %}
+<!-- Page Header -->
+<div class="mb-8 flex items-center justify-between">
+    <div>
+        <h1 class="text-3xl font-bold text-gray-900 mb-2">Credit Transactions</h1>
+        <p class="text-gray-600">View all story point transaction history</p>
+    </div>
+</div>
+
+<!-- Stats Cards -->
+<div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+    <div class="card stat-card" style="background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);">
+        <div class="stat-icon">
+            <i data-feather="activity"></i>
+        </div>
+        <div class="stat-value">{{ count }}</div>
+        <div class="stat-label">Total Transactions</div>
+    </div>
+</div>
+
+<!-- Credit Transactions List -->
+<div class="card">
+    <div class="card-header flex items-center justify-between">
+        <div class="flex items-center gap-2">
+            <i data-feather="list" class="w-5 h-5"></i>
+            <span>All Transactions ({{ count }})</span>
+        </div>
+        <div class="text-xs text-gray-500">
+            Read-only view
+        </div>
+    </div>
+
+    {% if data %}
+    <div class="overflow-x-auto">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>User ID</th>
+                    <th>Type</th>
+                    <th>Amount</th>
+                    <th>Status</th>
+                    <th>Reason</th>
+                    <th>Audio ID</th>
+                    <th>Story ID</th>
+                    <th>Created At</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in data %}
+                <tr>
+                    <td>{{ row.id }}</td>
+                    <td>{{ row.user_id }}</td>
+                    <td>
+                        <span class="badge badge-{% if row.type == 'grant' %}success{% elif row.type == 'debit' %}warning{% elif row.type == 'refund' %}info{% elif row.type == 'expire' %}error{% else %}secondary{% endif %}">
+                            {{ row.type }}
+                        </span>
+                    </td>
+                    <td>
+                        <span class="font-semibold {% if row.amount > 0 %}text-green-600{% else %}text-red-600{% endif %}">
+                            {% if row.amount > 0 %}+{% endif %}{{ row.amount }}
+                        </span>
+                    </td>
+                    <td>
+                        <span class="badge badge-{% if row.status == 'applied' %}success{% elif row.status == 'pending' %}warning{% elif row.status == 'rolled_back' %}error{% else %}secondary{% endif %}">
+                            {{ row.status }}
+                        </span>
+                    </td>
+                    <td><span class="text-xs text-gray-600">{{ row.reason or '—' }}</span></td>
+                    <td>{{ row.audio_story_id if row.audio_story_id else '—' }}</td>
+                    <td>{{ row.story_id if row.story_id else '—' }}</td>
+                    <td><span class="text-sm">{{ row.created_at.strftime('%Y-%m-%d %H:%M:%S') if row.created_at else '—' }}</span></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    {% else %}
+    <div class="empty-state">
+        <i data-feather="activity" class="empty-state-icon"></i>
+        <div class="empty-state-title">No transactions yet</div>
+        <p class="empty-state-text">Credit transactions will appear here</p>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Initialize Icons -->
+<script>
+    feather.replace();
+</script>
+{% endblock %}

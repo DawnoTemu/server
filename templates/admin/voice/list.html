@@ -1,0 +1,113 @@
+{% extends 'admin/custom_base.html' %}
+
+{% block title %}Voices - DawnoTemu Admin{% endblock %}
+
+{% block body %}
+<!-- Page Header -->
+<div class="mb-8 flex items-center justify-between">
+    <div>
+        <h1 class="text-3xl font-bold text-gray-900 mb-2">Voices</h1>
+        <p class="text-gray-600">Manage user voice profiles</p>
+    </div>
+    <div class="flex items-center gap-3">
+        {% if admin_view.can_create %}
+        <a href="{{ get_url('.create_view', url=return_url) }}" class="btn btn-primary">
+            <i data-feather="mic" class="w-4 h-4"></i>
+            <span>Create Voice</span>
+        </a>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Stats Cards -->
+<div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+    <div class="card stat-card">
+        <div class="stat-icon">
+            <i data-feather="mic"></i>
+        </div>
+        <div class="stat-value">{{ count }}</div>
+        <div class="stat-label">Total Voices</div>
+    </div>
+</div>
+
+<!-- Voices List -->
+<div class="card">
+    <div class="card-header flex items-center justify-between">
+        <div class="flex items-center gap-2">
+            <i data-feather="list" class="w-5 h-5"></i>
+            <span>All Voices ({{ count }})</span>
+        </div>
+    </div>
+
+    {% if data %}
+    <div class="overflow-x-auto">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Name</th>
+                    <th>User Email</th>
+                    <th>ElevenLabs ID</th>
+                    <th>Created At</th>
+                    {% if admin_view.can_edit or admin_view.can_delete %}
+                    <th class="text-right">Actions</th>
+                    {% endif %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in data %}
+                <tr>
+                    <td>{{ row.id }}</td>
+                    <td><span class="font-medium">{{ row.name }}</span></td>
+                    <td>
+                        <div class="flex items-center gap-2">
+                            <div class="w-8 h-8 rounded-full bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center text-white text-xs font-semibold">
+                                {{ row.user.email[0].upper() if row.user and row.user.email else '?' }}
+                            </div>
+                            <span>{{ row.user.email if row.user else 'N/A' }}</span>
+                        </div>
+                    </td>
+                    <td><span class="font-mono text-xs">{{ row.elevenlabs_voice_id if row.elevenlabs_voice_id else '—' }}</span></td>
+                    <td><span class="text-sm">{{ row.created_at.strftime('%Y-%m-%d %H:%M') if row.created_at else '—' }}</span></td>
+                    {% if admin_view.can_edit or admin_view.can_delete %}
+                    <td class="text-right">
+                        <div class="flex items-center justify-end gap-2">
+                            {% if admin_view.can_edit %}
+                            <a href="{{ get_url('.edit_view', id=get_pk_value(row), url=return_url) }}" class="btn btn-sm btn-outline">
+                                <i data-feather="edit-2" class="w-4 h-4"></i>
+                                <span>Edit</span>
+                            </a>
+                            {% endif %}
+                            {% if admin_view.can_delete %}
+                            <form method="POST" action="{{ get_url('.delete_view') }}" style="display: inline;">
+                                <input type="hidden" name="id" value="{{ get_pk_value(row) }}">
+                                <input type="hidden" name="url" value="{{ return_url }}">
+                                <button type="submit" class="btn btn-sm btn-danger" onclick="return confirm('Are you sure you want to delete this voice?');">
+                                    <i data-feather="trash-2" class="w-4 h-4"></i>
+                                    <span>Delete</span>
+                                </button>
+                            </form>
+                            {% endif %}
+                        </div>
+                    </td>
+                    {% endif %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    {% else %}
+    <div class="empty-state">
+        <i data-feather="mic" class="empty-state-icon"></i>
+        <div class="empty-state-title">No voices yet</div>
+        <p class="empty-state-text">Voice profiles will appear here once users create them</p>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Initialize Icons -->
+<script>
+    feather.replace();
+</script>
+{% endblock %}

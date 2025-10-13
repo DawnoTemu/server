@@ -1,32 +1,216 @@
-{% extends 'admin/master.html' %}
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Login - DawnoTemu</title>
 
-{% block body %}
-  <div class="container">
-    <div class="row">
-      <div class="col-md-4 offset-md-4">
-        <div class="card mt-5">
-          <div class="card-header">
-            <h3 class="text-center">StoryVoice Admin Login</h3>
-          </div>
-          <div class="card-body">
-            {% with messages = get_flashed_messages(with_categories=true) %}
-              {% if messages %}
-                {% for category, message in messages %}
-                  <div class="alert alert-{{ category }}">{{ message }}</div>
-                {% endfor %}
-              {% endif %}
-            {% endwith %}
-            
-            <form method="POST">
-              <div class="form-group">
-                <label for="password">Password</label>
-                <input type="password" class="form-control" id="password" name="password" required>
-              </div>
-              <button type="submit" class="btn btn-primary btn-block mt-3">Login</button>
-            </form>
-          </div>
-        </div>
-      </div>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Feather Icons -->
+    <script src="https://unpkg.com/feather-icons"></script>
+
+    <!-- Custom Admin Styles -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='admin/css/admin-custom.css') }}">
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: {
+                            DEFAULT: '#e87a5d',
+                            dark: '#d9684a',
+                            light: '#f19b85',
+                        },
+                        secondary: {
+                            DEFAULT: '#5a4a42',
+                            light: '#7a6a62',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            font-family: 'Inter', sans-serif;
+        }
+
+        .glass-card {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .animate-float {
+            animation: float 6s ease-in-out infinite;
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0px); }
+            50% { transform: translateY(-20px); }
+        }
+
+        .input-group:focus-within label {
+            color: #e87a5d;
+        }
+
+        .input-group:focus-within input {
+            border-color: #e87a5d;
+            box-shadow: 0 0 0 3px rgba(232, 122, 93, 0.1);
+        }
+    </style>
+</head>
+<body class="flex items-center justify-center p-6">
+
+    <!-- Decorative Background Elements -->
+    <div class="fixed inset-0 overflow-hidden pointer-events-none">
+        <div class="absolute top-10 left-10 w-72 h-72 bg-purple-300 rounded-full mix-blend-multiply filter blur-xl opacity-70 animate-float"></div>
+        <div class="absolute top-40 right-20 w-96 h-96 bg-yellow-300 rounded-full mix-blend-multiply filter blur-xl opacity-70 animate-float" style="animation-delay: 2s;"></div>
+        <div class="absolute -bottom-20 left-40 w-96 h-96 bg-pink-300 rounded-full mix-blend-multiply filter blur-xl opacity-70 animate-float" style="animation-delay: 4s;"></div>
     </div>
-  </div>
-{% endblock %}
+
+    <!-- Login Card -->
+    <div class="w-full max-w-md relative z-10">
+        <!-- Logo and Brand -->
+        <div class="text-center mb-8 animate-fade-in">
+            <div class="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-gradient-to-br from-primary to-primary-dark shadow-2xl mb-4">
+                <span class="text-3xl font-bold text-white">D</span>
+            </div>
+            <h1 class="text-3xl font-bold text-white mb-2">DawnoTemu</h1>
+            <p class="text-white text-opacity-90 font-medium">Admin Panel</p>
+        </div>
+
+        <!-- Login Form Card -->
+        <div class="glass-card rounded-2xl shadow-2xl p-8 animate-fade-in" style="animation-delay: 0.1s;">
+            <div class="mb-6">
+                <h2 class="text-2xl font-bold text-gray-900 mb-2">Welcome back</h2>
+                <p class="text-gray-600">Please sign in to continue</p>
+            </div>
+
+            <!-- Flash Messages -->
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    <div class="space-y-3 mb-6">
+                        {% for category, message in messages %}
+                            <div class="flex items-start gap-3 p-4 rounded-lg {% if category == 'error' or category == 'danger' %}bg-red-50 text-red-800 border border-red-200{% elif category == 'success' %}bg-green-50 text-green-800 border border-green-200{% elif category == 'warning' %}bg-yellow-50 text-yellow-800 border border-yellow-200{% else %}bg-blue-50 text-blue-800 border border-blue-200{% endif %}">
+                                <i data-feather="{% if category == 'error' or category == 'danger' %}alert-circle{% elif category == 'success' %}check-circle{% elif category == 'warning' %}alert-triangle{% else %}info{% endif %}" class="w-5 h-5 flex-shrink-0 mt-0.5"></i>
+                                <p class="text-sm font-medium flex-1">{{ message }}</p>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% endif %}
+            {% endwith %}
+
+            <!-- Login Form -->
+            <form method="POST" action="{{ url_for('admin.login_view') }}" class="space-y-6">
+                <!-- Password Field -->
+                <div class="input-group">
+                    <label for="password" class="block text-sm font-semibold text-gray-700 mb-2 transition-colors">
+                        Password
+                    </label>
+                    <div class="relative">
+                        <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                            <i data-feather="lock" class="w-5 h-5 text-gray-400"></i>
+                        </div>
+                        <input
+                            type="password"
+                            id="password"
+                            name="password"
+                            required
+                            autofocus
+                            class="w-full pl-12 pr-12 py-3 border-2 border-gray-300 rounded-lg focus:outline-none transition-all"
+                            placeholder="Enter your password"
+                        >
+                        <button
+                            type="button"
+                            onclick="togglePassword()"
+                            class="absolute inset-y-0 right-0 pr-4 flex items-center text-gray-400 hover:text-gray-600 focus:outline-none"
+                        >
+                            <i data-feather="eye" id="eye-icon" class="w-5 h-5"></i>
+                            <i data-feather="eye-off" id="eye-off-icon" class="w-5 h-5 hidden"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Remember Me Checkbox -->
+                <div class="flex items-center justify-between">
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input
+                            type="checkbox"
+                            name="remember"
+                            class="w-4 h-4 text-primary border-gray-300 rounded focus:ring-primary focus:ring-2"
+                        >
+                        <span class="text-sm font-medium text-gray-700">Remember me</span>
+                    </label>
+                    <a href="#" class="text-sm font-medium text-primary hover:text-primary-dark transition-colors">
+                        Forgot password?
+                    </a>
+                </div>
+
+                <!-- Submit Button -->
+                <button
+                    type="submit"
+                    class="w-full bg-gradient-to-r from-primary to-primary-dark text-white font-semibold py-3 px-6 rounded-lg hover:shadow-lg transform hover:scale-[1.02] active:scale-[0.98] transition-all duration-200 flex items-center justify-center gap-2"
+                >
+                    <span>Sign In</span>
+                    <i data-feather="arrow-right" class="w-5 h-5"></i>
+                </button>
+            </form>
+
+            <!-- Security Notice -->
+            <div class="mt-6 pt-6 border-t border-gray-200">
+                <div class="flex items-start gap-3 text-xs text-gray-600">
+                    <i data-feather="shield" class="w-4 h-4 text-green-600 flex-shrink-0 mt-0.5"></i>
+                    <p>Your connection is secure. All data is encrypted using industry-standard security protocols.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="text-center mt-6 text-white text-sm text-opacity-90">
+            <p>&copy; 2025 DawnoTemu Sp. z o.o. All rights reserved.</p>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script>
+        // Initialize Feather Icons
+        document.addEventListener('DOMContentLoaded', function() {
+            feather.replace();
+        });
+
+        // Toggle Password Visibility
+        function togglePassword() {
+            const passwordInput = document.getElementById('password');
+            const eyeIcon = document.getElementById('eye-icon');
+            const eyeOffIcon = document.getElementById('eye-off-icon');
+
+            if (passwordInput.type === 'password') {
+                passwordInput.type = 'text';
+                eyeIcon.classList.add('hidden');
+                eyeOffIcon.classList.remove('hidden');
+            } else {
+                passwordInput.type = 'password';
+                eyeIcon.classList.remove('hidden');
+                eyeOffIcon.classList.add('hidden');
+            }
+        }
+
+        // Add enter key support
+        document.getElementById('password').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                this.form.submit();
+            }
+        });
+
+        // Auto-focus on password field
+        document.getElementById('password').focus();
+    </script>
+</body>
+</html>

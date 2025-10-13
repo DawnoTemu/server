@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}DawnoTemu Admin{% endblock %}</title>
+
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Feather Icons -->
+    <script src="https://unpkg.com/feather-icons"></script>
+
+    <!-- Alpine.js for interactivity -->
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+
+    <!-- Chart.js for visualizations -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+    <!-- Custom Admin Styles -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='admin/css/admin-custom.css') }}">
+
+    <!-- Tailwind Config -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: {
+                            DEFAULT: '#e87a5d',
+                            dark: '#d9684a',
+                            light: '#f19b85',
+                        },
+                        secondary: {
+                            DEFAULT: '#5a4a42',
+                            light: '#7a6a62',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    {% block head_css %}{% endblock %}
+</head>
+<body class="bg-gray-50 antialiased" x-data="{ sidebarOpen: true, darkMode: false }" :class="{ 'dark': darkMode }">
+
+    <!-- Sidebar -->
+    <aside
+        class="fixed inset-y-0 left-0 z-50 w-64 bg-white shadow-xl transform transition-transform duration-300 ease-in-out"
+        :class="{ '-translate-x-full': !sidebarOpen }"
+        x-show="sidebarOpen"
+        x-transition
+    >
+        <!-- Logo -->
+        <div class="flex items-center justify-between h-16 px-6 border-b border-gray-200">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-lg bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center text-white font-bold text-xl">
+                    D
+                </div>
+                <div>
+                    <div class="font-bold text-lg text-secondary">DawnoTemu</div>
+                    <div class="text-xs text-gray-500">Admin Panel</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Navigation -->
+        <nav class="px-4 py-6 space-y-2 overflow-y-auto h-[calc(100vh-4rem)]">
+            <a href="{{ url_for('admin.index') }}" class="flex items-center gap-3 px-4 py-3 text-gray-700 rounded-lg hover:bg-primary hover:text-white transition-colors group">
+                <i data-feather="home" class="w-5 h-5"></i>
+                <span class="font-medium">Dashboard</span>
+            </a>
+
+            <div class="pt-4 pb-2">
+                <div class="px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Content</div>
+            </div>
+
+            <a href="{{ url_for('story.index_view') }}" class="flex items-center gap-3 px-4 py-3 text-gray-700 rounded-lg hover:bg-primary hover:text-white transition-colors">
+                <i data-feather="book-open" class="w-5 h-5"></i>
+                <span class="font-medium">Stories</span>
+            </a>
+
+            <a href="{{ url_for('audiostory.index_view') }}" class="flex items-center gap-3 px-4 py-3 text-gray-700 rounded-lg hover:bg-primary hover:text-white transition-colors">
+                <i data-feather="headphones" class="w-5 h-5"></i>
+                <span class="font-medium">Audio Stories</span>
+            </a>
+
+            <div class="pt-4 pb-2">
+                <div class="px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Users & Voices</div>
+            </div>
+
+            <a href="{{ url_for('user.index_view') }}" class="flex items-center gap-3 px-4 py-3 text-gray-700 rounded-lg hover:bg-primary hover:text-white transition-colors">
+                <i data-feather="users" class="w-5 h-5"></i>
+                <span class="font-medium">Users</span>
+            </a>
+
+            <a href="{{ url_for('voice.index_view') }}" class="flex items-center gap-3 px-4 py-3 text-gray-700 rounded-lg hover:bg-primary hover:text-white transition-colors">
+                <i data-feather="mic" class="w-5 h-5"></i>
+                <span class="font-medium">Voices</span>
+            </a>
+
+            <a href="{{ url_for('voice_slots.index') }}" class="flex items-center gap-3 px-4 py-3 text-gray-700 rounded-lg hover:bg-primary hover:text-white transition-colors">
+                <i data-feather="activity" class="w-5 h-5"></i>
+                <span class="font-medium">Voice Slots</span>
+            </a>
+
+            <div class="pt-4 pb-2">
+                <div class="px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Credits & Billing</div>
+            </div>
+
+            <a href="{{ url_for('creditlot.index_view') }}" class="flex items-center gap-3 px-4 py-3 text-gray-700 rounded-lg hover:bg-primary hover:text-white transition-colors">
+                <i data-feather="gift" class="w-5 h-5"></i>
+                <span class="font-medium">Credit Lots</span>
+            </a>
+
+            <a href="{{ url_for('credittransaction.index_view') }}" class="flex items-center gap-3 px-4 py-3 text-gray-700 rounded-lg hover:bg-primary hover:text-white transition-colors">
+                <i data-feather="credit-card" class="w-5 h-5"></i>
+                <span class="font-medium">Transactions</span>
+            </a>
+
+            <div class="pt-6 border-t border-gray-200 mt-6">
+                <a href="{{ url_for('admin.logout_view') }}" class="flex items-center gap-3 px-4 py-3 text-red-600 rounded-lg hover:bg-red-50 transition-colors">
+                    <i data-feather="log-out" class="w-5 h-5"></i>
+                    <span class="font-medium">Logout</span>
+                </a>
+            </div>
+        </nav>
+    </aside>
+
+    <!-- Main Content Area -->
+    <div
+        class="transition-all duration-300"
+        :class="{ 'ml-64': sidebarOpen, 'ml-0': !sidebarOpen }"
+    >
+        <!-- Top Navigation Bar -->
+        <header class="bg-white shadow-sm sticky top-0 z-40">
+            <div class="flex items-center justify-between h-16 px-6">
+                <!-- Left: Menu Toggle -->
+                <button
+                    @click="sidebarOpen = !sidebarOpen"
+                    class="p-2 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors"
+                >
+                    <i data-feather="menu" class="w-6 h-6"></i>
+                </button>
+
+                <!-- Center: Search Bar -->
+                <div class="flex-1 max-w-2xl mx-6">
+                    <div class="relative">
+                        <input
+                            type="search"
+                            placeholder="Search users, stories, voices..."
+                            class="w-full px-4 py-2 pl-10 pr-4 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                        >
+                        <i data-feather="search" class="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"></i>
+                    </div>
+                </div>
+
+                <!-- Right: Actions -->
+                <div class="flex items-center gap-4">
+                    <!-- Notifications -->
+                    <button class="relative p-2 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors">
+                        <i data-feather="bell" class="w-5 h-5"></i>
+                        <span class="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full"></span>
+                    </button>
+
+                    <!-- Dark Mode Toggle -->
+                    <button
+                        @click="darkMode = !darkMode"
+                        class="p-2 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors"
+                    >
+                        <i data-feather="moon" class="w-5 h-5" x-show="!darkMode"></i>
+                        <i data-feather="sun" class="w-5 h-5" x-show="darkMode" style="display: none;"></i>
+                    </button>
+
+                    <!-- User Menu -->
+                    <div class="flex items-center gap-3 pl-4 border-l border-gray-200">
+                        <div class="text-right">
+                            <div class="text-sm font-semibold text-gray-900">Admin</div>
+                            <div class="text-xs text-gray-500">Administrator</div>
+                        </div>
+                        <div class="w-10 h-10 rounded-full bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center text-white font-semibold">
+                            A
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- Page Content -->
+        <main class="p-6">
+            <!-- Flash Messages -->
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    <div class="space-y-3 mb-6 animate-fade-in">
+                        {% for category, message in messages %}
+                            <div class="alert alert-{{ category }} flex items-start gap-3 p-4 rounded-lg" role="alert">
+                                {% if category == 'success' %}
+                                    <i data-feather="check-circle" class="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5"></i>
+                                {% elif category == 'error' or category == 'danger' %}
+                                    <i data-feather="alert-circle" class="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5"></i>
+                                {% elif category == 'warning' %}
+                                    <i data-feather="alert-triangle" class="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5"></i>
+                                {% else %}
+                                    <i data-feather="info" class="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5"></i>
+                                {% endif %}
+                                <div class="flex-1">
+                                    <p class="font-medium">{{ message }}</p>
+                                </div>
+                                <button onclick="this.parentElement.remove()" class="text-gray-400 hover:text-gray-600">
+                                    <i data-feather="x" class="w-5 h-5"></i>
+                                </button>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% endif %}
+            {% endwith %}
+
+            <!-- Page Content Block -->
+            {% block body %}
+            <div class="text-center py-12">
+                <i data-feather="alert-circle" class="w-16 h-16 mx-auto text-gray-400 mb-4"></i>
+                <h3 class="text-xl font-semibold text-gray-700">Content Block Missing</h3>
+                <p class="text-gray-500 mt-2">This template should be extended by other admin pages.</p>
+            </div>
+            {% endblock %}
+        </main>
+
+        <!-- Footer -->
+        <footer class="bg-white border-t border-gray-200 py-4 px-6">
+            <div class="flex items-center justify-between text-sm text-gray-600">
+                <div>
+                    &copy; 2025 DawnoTemu Sp. z o.o. All rights reserved.
+                </div>
+                <div class="flex items-center gap-4">
+                    <a href="#" class="hover:text-primary transition-colors">Documentation</a>
+                    <a href="#" class="hover:text-primary transition-colors">Support</a>
+                    <a href="#" class="hover:text-primary transition-colors">Privacy Policy</a>
+                </div>
+            </div>
+        </footer>
+    </div>
+
+    <!-- Scripts -->
+    <script>
+        // Initialize Feather Icons
+        document.addEventListener('DOMContentLoaded', function() {
+            feather.replace();
+        });
+
+        // Re-initialize icons after any dynamic content loads
+        document.addEventListener('htmx:afterSwap', function() {
+            feather.replace();
+        });
+    </script>
+
+    <!-- Custom Admin JS -->
+    <script src="{{ url_for('static', filename='admin/js/admin-main.js') }}"></script>
+
+    {% block tail_js %}{% endblock %}
+</body>
+</html>

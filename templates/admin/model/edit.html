@@ -1,0 +1,102 @@
+{% extends 'admin/custom_base.html' %}
+{% import 'admin/model/layout.html' as model_layout with context %}
+
+{% block title %}Edit {{ admin_view.name }} - DawnoTemu Admin{% endblock %}
+
+{% block body %}
+<!-- Page Header -->
+<div class="mb-8">
+    <div class="flex items-center gap-3 mb-3">
+        <a href="{{ return_url }}" class="btn btn-outline">
+            <i data-feather="arrow-left" class="w-4 h-4"></i>
+            <span>Back</span>
+        </a>
+    </div>
+    <h1 class="text-3xl font-bold text-gray-900 mb-2">Edit {{ admin_view.name }}</h1>
+    <p class="text-gray-600">Modify {{ admin_view.name|lower }} record</p>
+</div>
+
+<!-- Form Card -->
+<div class="card max-w-4xl">
+    <div class="card-header">
+        <div class="flex items-center gap-2">
+            <i data-feather="edit" class="w-5 h-5"></i>
+            <span>{{ admin_view.name }} Details</span>
+        </div>
+    </div>
+
+    <form method="POST" enctype="multipart/form-data" class="space-y-6">
+        {{ form.hidden_tag() if form.hidden_tag }}
+
+        {% if form.csrf_token %}
+        {{ form.csrf_token }}
+        {% endif %}
+
+        {% for f in form if f.widget.input_type != 'hidden' and f.name != 'csrf_token' %}
+        <div class="form-group">
+            {{ f.label(class_='form-label' + (' required' if f.flags.required else '')) }}
+
+            {% if f.description %}
+            <p class="text-xs text-gray-500 mt-1">{{ f.description }}</p>
+            {% endif %}
+
+            {% if f.type == 'TextAreaField' %}
+            {{ f(class_='form-control', rows=f.render_kw.rows if f.render_kw and f.render_kw.rows else 5) }}
+            {% elif f.type == 'SelectField' or f.type == 'QuerySelectField' %}
+            <div class="relative">
+                {{ f(class_='form-control appearance-none') }}
+                <div class="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none">
+                    <i data-feather="chevron-down" class="w-5 h-5 text-gray-400"></i>
+                </div>
+            </div>
+            {% elif f.type == 'BooleanField' %}
+            <div class="flex items-center gap-2">
+                {{ f(class_='w-4 h-4 text-primary border-gray-300 rounded focus:ring-primary focus:ring-2') }}
+                <span class="text-sm text-gray-600">{{ f.description or 'Enable this option' }}</span>
+            </div>
+            {% elif f.type == 'FileField' or f.type == 'FileUploadField' %}
+            <div class="relative">
+                {{ f(class_='form-control file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-primary file:text-white hover:file:bg-primary-dark') }}
+            </div>
+            {% else %}
+            {{ f(class_='form-control') }}
+            {% endif %}
+
+            {% if f.errors %}
+            <div class="text-sm text-red-600 mt-1">
+                {% for error in f.errors %}
+                <div>{{ error }}</div>
+                {% endfor %}
+            </div>
+            {% endif %}
+        </div>
+        {% endfor %}
+
+        <!-- Form Actions -->
+        <div class="flex items-center gap-3 pt-6 border-t border-gray-200">
+            <button type="submit" name="save" class="btn btn-primary btn-lg">
+                <i data-feather="check" class="w-5 h-5"></i>
+                <span>Save Changes</span>
+            </button>
+            <button type="submit" name="save_and_continue" class="btn btn-outline btn-lg">
+                <i data-feather="save" class="w-5 h-5"></i>
+                <span>Save & Continue Editing</span>
+            </button>
+            <a href="{{ return_url }}" class="btn btn-outline btn-lg">
+                <span>Cancel</span>
+            </a>
+            {% if admin_view.can_delete %}
+            <button type="submit" name="delete" class="btn btn-danger btn-lg ml-auto" onclick="return confirm('Are you sure you want to delete this record?');">
+                <i data-feather="trash-2" class="w-5 h-5"></i>
+                <span>Delete</span>
+            </button>
+            {% endif %}
+        </div>
+    </form>
+</div>
+
+<!-- Initialize Icons -->
+<script>
+    feather.replace();
+</script>
+{% endblock %}

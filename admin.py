@@ -169,10 +169,14 @@ class SecureBaseView(BaseView):
 
 class StoryModelView(SecureModelView):
     """Admin view for managing stories."""
+    list_template = 'admin/story/list.html'
+    create_template = 'admin/model/create.html'
+    edit_template = 'admin/model/edit.html'
+
     column_list = ('id', 'title', 'author', 'credits_cost', 'created_at', 'updated_at')
     column_searchable_list = ('title', 'author', 'content')
     column_filters = ('author', 'created_at')
-    form_excluded_columns = ('created_at', 'updated_at', 's3_cover_key', 'id') 
+    form_excluded_columns = ('created_at', 'updated_at', 's3_cover_key', 'id')
     column_labels = {
         'credits_cost': 'Credits',
     }
@@ -408,7 +412,65 @@ class CustomAdminIndexView(AdminIndexView):
     def index(self):
         if not is_authenticated():
             return redirect(url_for('.login_view'))
-        return super().index()
+
+        # Gather dashboard statistics
+        from datetime import datetime, timedelta
+        from sqlalchemy import func
+
+        today = datetime.utcnow().date()
+
+        # User stats
+        total_users = User.query.count()
+        new_users_today = User.query.filter(
+            func.date(User.created_at) == today
+        ).count() if total_users > 0 else 0
+
+        # Voice stats
+        total_voices = Voice.query.count()
+        active_slots = Voice.query.filter(
+            Voice.allocation_status == VoiceAllocationStatus.READY
+        ).count()
+        slot_limit = Config.ELEVENLABS_SLOT_LIMIT
+
+        # Audio stats
+        total_audio_stories = AudioStory.query.count()
+        processing_audio = AudioStory.query.filter(
+            AudioStory.status.in_(['pending', 'processing'])
+        ).count()
+
+        # Credits stats
+        total_credits = db.session.query(func.sum(CreditLot.amount_granted)).scalar() or 0
+        credits_used = db.session.query(
+            func.sum(CreditLot.amount_granted - CreditLot.amount_remaining)
+        ).scalar() or 0
+
+        # Queue stats
+        queue_length = VoiceSlotQueue.length()
+
+        # Recent activity
+        recent_users = User.query.order_by(User.created_at.desc()).limit(5).all()
+        recent_audio = AudioStory.query.order_by(AudioStory.created_at.desc()).limit(5).all()
+
+        # First user ID for grant credits quick action
+        first_user = User.query.first()
+        first_user_id = first_user.id if first_user else None
+
+        return self.render(
+            'admin/index.html',
+            total_users=total_users,
+            new_users_today=new_users_today,
+            total_voices=total_voices,
+            active_slots=active_slots,
+            slot_limit=slot_limit,
+            total_audio_stories=total_audio_stories,
+            processing_audio=processing_audio,
+            total_credits=total_credits,
+            credits_used=credits_used,
+            queue_length=queue_length,
+            recent_users=recent_users,
+            recent_audio=recent_audio,
+            first_user_id=first_user_id
+        )
 
     @expose('/login', methods=['GET', 'POST'])
     def login_view(self):
@@ -849,7 +911,10 @@ def create_grant_template(app):
 
 class UserModelView(SecureModelView):
     """Admin view for managing users"""
-    
+    list_template = 'admin/user/list.html'
+    create_template = 'admin/model/create.html'
+    edit_template = 'admin/model/edit.html'
+
     column_list = ('id', 'email', 'credits_balance', 'manage_credits', 'email_confirmed', 'is_active', 'last_login', 'created_at')
     column_labels = {
         'credits_balance': 'Story Points',
@@ -1023,7 +1088,10 @@ class UserModelView(SecureModelView):
 
 class VoiceModelView(SecureModelView):
     """Admin view for managing voices"""
-    
+    list_template = 'admin/voice/list.html'
+    create_template = 'admin/model/create.html'
+    edit_template = 'admin/model/edit.html'
+
     column_list = ('id', 'name', 'user', 'elevenlabs_voice_id', 'created_at')
     
     column_searchable_list = ('name', 'elevenlabs_voice_id')
@@ -1100,7 +1168,10 @@ class VoiceModelView(SecureModelView):
 
 class AudioStoryModelView(SecureModelView):
     """Admin view for managing audio stories"""
-    
+    list_template = 'admin/audiostory/list.html'
+    create_template = 'admin/model/create.html'
+    edit_template = 'admin/model/edit.html'
+
     column_list = ('id', 'story', 'voice', 'user', 'status', 'created_at', 'updated_at')
     
     column_searchable_list = ('status', 'error_message')
@@ -1343,6 +1414,8 @@ class AudioStoryModelView(SecureModelView):
 
 class CreditLotModelView(SecureModelView):
     """Read-only admin view for credit lots."""
+    list_template = 'admin/creditlot/list.html'
+
     can_create = False
     can_edit = False
     can_delete = False
@@ -1425,6 +1498,8 @@ class CreditLotModelView(SecureModelView):
 
 class CreditTransactionModelView(SecureModelView):
     """Read-only admin view for credit transactions."""
+    list_template = 'admin/credittransaction/list.html'
+
     can_create = False
     can_edit = False
     can_delete = False
