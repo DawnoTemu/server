@@ -10,8 +10,7 @@ class TestAudioRoutes:
     @patch("utils.auth_middleware.jwt.decode", return_value={"type": "access", "sub": 1})
     def test_get_audio_success_external_id(self, mock_jwt, mock_user, client):
         voice = SimpleNamespace(id=5, user_id=1)
-        with patch("models.voice_model.VoiceModel.get_voice_by_elevenlabs_id", return_value=voice) as mock_get_external, \
-             patch("models.voice_model.VoiceModel.get_voice_by_id", return_value=None) as mock_get_internal, \
+        with patch("models.voice_model.VoiceModel.get_voice_by_identifier", return_value=voice) as mock_get_voice, \
              patch("controllers.audio_controller.AudioController.get_audio") as mock_get_audio:
             mock_get_audio.return_value = (True, b"audio-bytes", 200, {"content_length": 11})
 
@@ -23,16 +22,14 @@ class TestAudioRoutes:
         assert response.status_code == 200
         assert response.data == b"audio-bytes"
         assert response.headers.get("Content-Length") == "11"
-        mock_get_external.assert_called_once_with("ext-voice-123")
-        mock_get_internal.assert_not_called()
+        mock_get_voice.assert_called_once_with("ext-voice-123")
         mock_get_audio.assert_called_once_with(voice.id, 13, None)
 
     @patch("utils.auth_middleware.UserModel.get_by_id", return_value=SimpleNamespace(id=1, is_active=True, email_confirmed=True))
     @patch("utils.auth_middleware.jwt.decode", return_value={"type": "access", "sub": 1})
     def test_get_audio_success_internal_id_fallback(self, mock_jwt, mock_user, client):
         voice = SimpleNamespace(id=7, user_id=1)
-        with patch("models.voice_model.VoiceModel.get_voice_by_elevenlabs_id", return_value=None) as mock_get_external, \
-             patch("models.voice_model.VoiceModel.get_voice_by_id", return_value=voice) as mock_get_internal, \
+        with patch("models.voice_model.VoiceModel.get_voice_by_identifier", return_value=voice) as mock_get_voice, \
              patch("controllers.audio_controller.AudioController.get_audio") as mock_get_audio:
             mock_get_audio.return_value = (True, b"audio", 200, {})
 
@@ -42,16 +39,14 @@ class TestAudioRoutes:
             )
 
         assert response.status_code == 200
-        mock_get_external.assert_called_once_with("7")
-        mock_get_internal.assert_called_once_with(7)
+        mock_get_voice.assert_called_once_with("7")
         mock_get_audio.assert_called_once_with(voice.id, 42, None)
 
     @patch("utils.auth_middleware.UserModel.get_by_id", return_value=SimpleNamespace(id=1, is_active=True, email_confirmed=True))
     @patch("utils.auth_middleware.jwt.decode", return_value={"type": "access", "sub": 1})
     def test_get_audio_redirect(self, mock_jwt, mock_user, client):
         voice = SimpleNamespace(id=6, user_id=1)
-        with patch("models.voice_model.VoiceModel.get_voice_by_elevenlabs_id", return_value=voice), \
-             patch("models.voice_model.VoiceModel.get_voice_by_id", return_value=None), \
+        with patch("models.voice_model.VoiceModel.get_voice_by_identifier", return_value=voice), \
              patch("controllers.audio_controller.AudioController.get_audio_presigned_url", return_value=(True, "https://cdn/audio.mp3", 200)) as mock_presign:
             response = client.get(
                 "/voices/ext-voice/stories/21/audio?redirect=1",
@@ -66,8 +61,7 @@ class TestAudioRoutes:
     @patch("utils.auth_middleware.jwt.decode", return_value={"type": "access", "sub": 1})
     def test_get_audio_unauthorized(self, mock_jwt, mock_user, client):
         voice = SimpleNamespace(id=9, user_id=2)
-        with patch("models.voice_model.VoiceModel.get_voice_by_elevenlabs_id", return_value=voice), \
-             patch("models.voice_model.VoiceModel.get_voice_by_id", return_value=None):
+        with patch("models.voice_model.VoiceModel.get_voice_by_identifier", return_value=voice):
             response = client.get(
                 "/voices/ext-voice-unauth/stories/14/audio",
                 headers={"Authorization": "Bearer test-token"},
@@ -99,8 +93,7 @@ class TestAudioRoutes:
     @patch("utils.auth_middleware.jwt.decode", return_value={"type": "access", "sub": 1})
     def test_synthesize_audio_route(self, mock_jwt, mock_user, client):
         voice = SimpleNamespace(id=11, user_id=1)
-        with patch("models.voice_model.VoiceModel.get_voice_by_elevenlabs_id", return_value=None), \
-             patch("models.voice_model.VoiceModel.get_voice_by_id", return_value=voice), \
+        with patch("models.voice_model.VoiceModel.get_voice_by_identifier", return_value=voice), \
              patch("controllers.audio_controller.AudioController.synthesize_audio") as mock_synthesize:
             mock_synthesize.return_value = (
                 True,

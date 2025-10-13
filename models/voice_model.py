@@ -506,6 +506,66 @@ class VoiceModel:
             Voice: Voice object or None
         """
         return Voice.query.filter_by(elevenlabs_voice_id=elevenlabs_voice_id).first()
+
+    @staticmethod
+    def get_voice_by_identifier(voice_identifier):
+        """
+        Resolve a voice using any supported identifier.
+
+        Supports current external IDs (e.g., ElevenLabs), internal numeric IDs,
+        and historical external IDs recorded before a slot eviction.
+        """
+        if not voice_identifier:
+            return None
+
+        # First try a live external identifier match.
+        voice = VoiceModel.get_voice_by_elevenlabs_id(voice_identifier)
+        if voice:
+            return voice
+
+        # Next attempt to interpret the identifier as an internal numeric ID.
+        try:
+            numeric_id = int(voice_identifier)
+        except (TypeError, ValueError):
+            numeric_id = None
+
+        if numeric_id is not None:
+            voice = VoiceModel.get_voice_by_id(numeric_id)
+            if voice:
+                return voice
+
+        # Finally, fall back to historical allocation events so that mobile
+        # clients holding an evicted external ID can still resolve the voice.
+        voice_id = VoiceModel._get_voice_id_from_allocation_history(voice_identifier)
+        if voice_id is not None:
+            return VoiceModel.get_voice_by_id(voice_id)
+
+        return None
+
+    @staticmethod
+    def _get_voice_id_from_allocation_history(external_voice_id: str):
+        """Look up a voice ID using historical allocation events."""
+        if not external_voice_id:
+            return None
+
+        try:
+            event = (
+                VoiceSlotEvent.query.filter(
+                    VoiceSlotEvent.event_type == VoiceSlotEventType.ALLOCATION_COMPLETED,
+                    VoiceSlotEvent.event_metadata["external_voice_id"].as_string() == external_voice_id,
+                )
+                .order_by(VoiceSlotEvent.created_at.desc())
+                .first()
+            )
+        except Exception as exc:
+            logger.debug(
+                "Failed to inspect allocation history for external voice %s: %s",
+                external_voice_id,
+                exc,
+            )
+            return None
+
+        return event.voice_id if event and event.voice_id else None
     
     @staticmethod
     def get_sample_url(voice_id, expires_in=3600):

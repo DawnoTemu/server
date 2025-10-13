@@ -10,15 +10,8 @@ logger = logging.getLogger('audio_routes')
 
 
 def _resolve_voice_for_user(voice_identifier: str, current_user):
-    """Resolve a voice by external ElevenLabs ID first, then internal numeric ID."""
-    voice = VoiceModel.get_voice_by_elevenlabs_id(voice_identifier)
-    if not voice:
-        try:
-            numeric_id = int(voice_identifier)
-        except (TypeError, ValueError):
-            numeric_id = None
-        if numeric_id is not None:
-            voice = VoiceModel.get_voice_by_id(numeric_id)
+    """Resolve a voice by any supported identifier for the authenticated user."""
+    voice = VoiceModel.get_voice_by_identifier(voice_identifier)
     if not voice:
         return None, (jsonify({"error": "Voice not found"}), 404)
     if voice.user_id != current_user.id:

@@ -178,6 +178,69 @@ class TestVoiceModel:
         event = fake_session.events[0]
         assert event.event_metadata.get('server_side_encryption') == 'disabled'
 
+    def test_get_voice_by_identifier_uses_event_fallback(self, monkeypatch):
+        """Historical external IDs resolve via allocation events after eviction."""
+        voice = SimpleNamespace(id=10, user_id=99)
+
+        monkeypatch.setattr(
+            VoiceModel,
+            "get_voice_by_elevenlabs_id",
+            staticmethod(lambda identifier: None),
+            raising=False,
+        )
+
+        def fake_get_voice_by_id(voice_id):
+            assert voice_id == 10
+            return voice
+
+        monkeypatch.setattr(
+            VoiceModel,
+            "get_voice_by_id",
+            staticmethod(fake_get_voice_by_id),
+            raising=False,
+        )
+
+        history_calls = {}
+
+        def fake_history_lookup(identifier):
+            history_calls["identifier"] = identifier
+            return 10
+
+        monkeypatch.setattr(
+            VoiceModel,
+            "_get_voice_id_from_allocation_history",
+            staticmethod(fake_history_lookup),
+            raising=False,
+        )
+
+        resolved = VoiceModel.get_voice_by_identifier("archived-external-123")
+        assert history_calls["identifier"] == "archived-external-123"
+        assert resolved is voice
+
+    def test_get_voice_by_identifier_handles_missing_history(self, monkeypatch):
+        """Returns None when identifier cannot be resolved via any strategy."""
+        monkeypatch.setattr(
+            VoiceModel,
+            "get_voice_by_elevenlabs_id",
+            staticmethod(lambda identifier: None),
+            raising=False,
+        )
+        monkeypatch.setattr(
+            VoiceModel,
+            "get_voice_by_id",
+            staticmethod(lambda voice_id: None),
+            raising=False,
+        )
+
+        monkeypatch.setattr(
+            VoiceModel,
+            "_get_voice_id_from_allocation_history",
+            staticmethod(lambda identifier: None),
+            raising=False,
+        )
+
+        assert VoiceModel.get_voice_by_identifier("missing-external") is None
+
     def test_process_voice_recording_enqueues_allocation(self, monkeypatch):
         """Recorded voices queue allocation after processing completes."""
         from tasks.voice_tasks import process_voice_recording
