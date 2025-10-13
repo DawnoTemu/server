@@ -15,9 +15,16 @@ class TestVoiceRoutes:
         """Test successfully cloning a voice"""
         # Arrange
         mock_clone.return_value = (
-            True, 
-            {"id": 321, "name": "Test Voice", "status": "recorded", "task_id": "task-xyz"}, 
-            201
+            True,
+            {
+                "id": 321,
+                "name": "Test Voice",
+                "status": "recorded",
+                "task_id": "task-xyz",
+                "success": True,
+                "message": "Voice uploaded successfully. Allocation will continue in the background.",
+            },
+            201,
         )
         
         # Create a test file
@@ -35,6 +42,8 @@ class TestVoiceRoutes:
         assert response.status_code == 201
         data = json.loads(response.data)
         assert data["status"] == "recorded"
+        assert data["success"] is True
+        assert "message" in data
         assert data["name"] == "Test Voice"
         
         # The file object passed to the controller will be different,

@@ -46,6 +46,7 @@ class TestVoiceModel:
 
     def test_clone_voice_records_encrypted_sample(self, monkeypatch):
         """VoiceModel.clone_voice stores encrypted recordings and returns recorded status."""
+        monkeypatch.setattr('models.voice_model.Config.S3_REQUIRE_SSE', True, raising=False)
 
         class FakeSession:
             def __init__(self):
@@ -123,6 +124,59 @@ class TestVoiceModel:
         event_types = [event.event_type for event in fake_session.events]
         assert VoiceSlotEventType.RECORDING_UPLOADED in event_types
         assert VoiceSlotEventType.RECORDING_PROCESSING_QUEUED in event_types
+
+    def test_clone_voice_records_without_sse_when_disabled(self, monkeypatch):
+        """VoiceModel.clone_voice omits SSE when disabled via config."""
+
+        class FakeSession:
+            def __init__(self):
+                self.voices = {}
+                self.events = []
+
+            def add(self, obj):
+                if isinstance(obj, Voice):
+                    obj.id = 1
+                    self.voices[obj.id] = obj
+                elif isinstance(obj, VoiceSlotEvent):
+                    self.events.append(obj)
+
+            def flush(self):
+                pass
+
+            def commit(self):
+                pass
+
+            def rollback(self):
+                pass
+
+            def get(self, model, obj_id):
+                return self.voices.get(obj_id)
+
+        fake_session = FakeSession()
+        monkeypatch.setattr('models.voice_model.db', SimpleNamespace(session=fake_session))
+        monkeypatch.setattr('models.voice_model.Config.S3_REQUIRE_SSE', False, raising=False)
+
+        upload_calls = []
+
+        def fake_upload(cls, file_obj, key, extra_args=None):
+            upload_calls.append(extra_args)
+            return True
+
+        monkeypatch.setattr('utils.s3_client.S3Client.upload_fileobj', classmethod(fake_upload))
+        monkeypatch.setattr(
+            'tasks.voice_tasks.process_voice_recording',
+            SimpleNamespace(delay=lambda **kwargs: SimpleNamespace(id='task-id')),
+        )
+
+        file_data = BytesIO(b"hello")
+        success, payload = VoiceModel.clone_voice(file_data, "sample.wav", user_id=1, voice_name="Test Voice")
+
+        assert success is True
+        assert upload_calls, "Upload should be invoked"
+        extra_args = upload_calls[0]
+        assert 'ServerSideEncryption' not in extra_args
+        event = fake_session.events[0]
+        assert event.event_metadata.get('server_side_encryption') == 'disabled'
 
     def test_process_voice_recording_enqueues_allocation(self, monkeypatch):
         """Recorded voices queue allocation after processing completes."""

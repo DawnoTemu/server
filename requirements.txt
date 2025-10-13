@@ -32,6 +32,7 @@ Flask-Cors==4.0.0
 Flask-Mail==0.9.1
 Flask-Migrate==4.0.5
 Flask-SQLAlchemy==3.1.1
+flower==2.0.1
 frozenlist==1.6.0
 gunicorn==21.2.0
 h11==0.16.0

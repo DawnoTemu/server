@@ -1,11 +1,12 @@
 import os
 import uuid
 import mimetypes
+import time
 from functools import wraps
 from datetime import datetime, timedelta
 
 from flask import redirect, url_for, request, flash, session
-from flask_admin import Admin, AdminIndexView, expose
+from flask_admin import Admin, AdminIndexView, BaseView, expose
 from flask_admin.contrib.sqla import ModelView
 from flask import flash, redirect, url_for
 from werkzeug.security import generate_password_hash
@@ -18,11 +19,20 @@ from werkzeug.security import check_password_hash
 from database import db
 from models.story_model import Story
 from models.user_model import User
-from models.voice_model import Voice, VoiceModel
+from models.voice_model import (
+    Voice,
+    VoiceModel,
+    VoiceAllocationStatus,
+    VoiceStatus,
+    VoiceSlotEvent,
+    VoiceSlotEventType,
+)
 from models.audio_model import AudioStory, AudioStatus
 from models.credit_model import CreditLot, CreditTransaction
 from config import Config
 from utils.credits import calculate_required_credits
+from utils.voice_slot_queue import VoiceSlotQueue
+from utils.voice_service import VoiceService
 
 # Constants
 DEFAULT_SESSION_TIMEOUT = 3600  # 1 hour in seconds
@@ -147,6 +157,16 @@ class SecureModelView(ModelView):
         return redirect(url_for('admin.login_view'))
 
 
+class SecureBaseView(BaseView):
+    """Base non-model view with admin authentication."""
+
+    def is_accessible(self):
+        return is_authenticated()
+
+    def inaccessible_callback(self, name, **kwargs):
+        return redirect(url_for('admin.login_view'))
+
+
 class StoryModelView(SecureModelView):
     """Admin view for managing stories."""
     column_list = ('id', 'title', 'author', 'credits_cost', 'created_at', 'updated_at')
@@ -231,6 +251,156 @@ class StoryModelView(SecureModelView):
                 print(f"Error details: {e}")  # Add more detailed logging
                 db.session.rollback()
                 raise
+
+
+class VoiceSlotDashboardView(SecureBaseView):
+    """Custom admin dashboard for viewing and managing voice slot usage."""
+
+    def _voice_row(self, voice):
+        warm_seconds = getattr(Config, "VOICE_WARM_HOLD_SECONDS", 0) or 0
+        hold_expires = None
+        if voice.last_used_at and warm_seconds:
+            hold_expires = voice.last_used_at + timedelta(seconds=warm_seconds)
+        queue_position = VoiceSlotQueue.position(voice.id)
+        queue_length = VoiceSlotQueue.length()
+        return {
+            "voice": voice,
+            "user_email": voice.user.email if getattr(voice, "user", None) else "—",
+            "remote_id": voice.elevenlabs_voice_id,
+            "hold_expires": hold_expires,
+            "queue_position": queue_position,
+            "queue_length": queue_length,
+        }
+
+    @expose('/')
+    def index(self):
+        ready_voices = (
+            Voice.query.filter(Voice.allocation_status == VoiceAllocationStatus.READY)
+            .order_by(Voice.updated_at.desc())
+            .all()
+        )
+        allocating_voices = (
+            Voice.query.filter(Voice.allocation_status == VoiceAllocationStatus.ALLOCATING)
+            .order_by(Voice.updated_at.desc())
+            .all()
+        )
+        cooling_voices = (
+            Voice.query.filter(Voice.allocation_status == VoiceAllocationStatus.COOLING)
+            .order_by(Voice.updated_at.desc())
+            .all()
+        )
+
+        ready_rows = [self._voice_row(v) for v in ready_voices]
+        allocating_rows = [self._voice_row(v) for v in allocating_voices]
+        cooling_rows = [self._voice_row(v) for v in cooling_voices]
+
+        snapshot = VoiceSlotQueue.snapshot(limit=None)
+        now_ts = time.time()
+        queue_entries = []
+        for item in snapshot:
+            voice_id = int(item.get("voice_id")) if item.get("voice_id") is not None else None
+            voice = Voice.query.get(voice_id) if voice_id else None
+            score = item.get("score")
+            available_at = datetime.fromtimestamp(score) if score else None
+            wait_seconds = max(0, int(score - now_ts)) if score else 0
+            entry = {
+                "voice_id": voice_id,
+                "voice_name": (voice.name if voice else item.get("voice_name")) or "—",
+                "user_email": voice.user.email if voice and getattr(voice, "user", None) else "—",
+                "attempts": item.get("attempts", 0),
+                "available_at": available_at,
+                "wait_display": f"{wait_seconds}s" if wait_seconds else "ready",
+            }
+            queue_entries.append(entry)
+
+        slot_limit = getattr(Config, "ELEVENLABS_SLOT_LIMIT", 0) or "∞"
+        try:
+            available_capacity = VoiceModel.available_slot_capacity()
+            if available_capacity == float("inf"):
+                available_capacity = "∞"
+        except Exception:
+            available_capacity = "—"
+
+        stats = {
+            "active_count": len(ready_rows) + len(allocating_rows) + len(cooling_rows),
+            "slot_limit": slot_limit,
+            "queue_length": VoiceSlotQueue.length(),
+            "available_capacity": available_capacity,
+            "generated_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+
+        events = VoiceModel.recent_slot_events(30)
+
+        return self.render(
+            'admin/voice_slots.html',
+            stats=stats,
+            ready=ready_rows,
+            allocating=allocating_rows,
+            cooling=cooling_rows,
+            queue_entries=queue_entries,
+            events=events,
+        )
+
+    @expose('/evict/<int:voice_id>', methods=['POST'])
+    def evict_voice(self, voice_id: int):
+        voice = Voice.query.get(voice_id)
+        if not voice:
+            flash(f"Voice {voice_id} not found", 'error')
+            return redirect(url_for('voice_slots.index'))
+
+        try:
+            if voice.elevenlabs_voice_id:
+                success, message = VoiceService.delete_voice(
+                    voice_id=voice.id,
+                    external_voice_id=voice.elevenlabs_voice_id,
+                    service=voice.service_provider,
+                )
+                if not success:
+                    flash(f"Remote delete failed: {message}", 'warning')
+
+            VoiceSlotQueue.remove(voice.id)
+
+            voice.elevenlabs_voice_id = None
+            voice.elevenlabs_allocated_at = None
+            voice.slot_lock_expires_at = None
+            voice.allocation_status = VoiceAllocationStatus.RECORDED
+            voice.status = VoiceStatus.RECORDED
+            voice.last_used_at = datetime.utcnow()
+            VoiceSlotEvent.log_event(
+                voice_id=voice.id,
+                user_id=voice.user_id,
+                event_type=VoiceSlotEventType.SLOT_EVICTED,
+                reason="admin_manual_evict",
+                metadata={"admin": True},
+            )
+            db.session.commit()
+            flash(f"Released slot for voice {voice_id}", 'success')
+        except Exception as exc:
+            db.session.rollback()
+            flash(f"Failed to evict voice {voice_id}: {exc}", 'error')
+
+        return redirect(url_for('voice_slots.index'))
+
+    @expose('/remove-queue/<int:voice_id>', methods=['POST'])
+    def remove_queue(self, voice_id: int):
+        try:
+            VoiceSlotQueue.remove(voice_id)
+            voice = Voice.query.get(voice_id)
+            if voice:
+                VoiceSlotEvent.log_event(
+                    voice_id=voice.id,
+                    user_id=voice.user_id,
+                    event_type=VoiceSlotEventType.ALLOCATION_FAILED,
+                    reason="admin_queue_removed",
+                    metadata={"admin": True},
+                )
+                db.session.commit()
+            flash(f"Removed voice {voice_id} from queue", 'success')
+        except Exception as exc:
+            db.session.rollback()
+            flash(f"Failed to remove queue entry: {exc}", 'error')
+
+        return redirect(url_for('voice_slots.index'))
 
 class CustomAdminIndexView(AdminIndexView):
     """Custom admin index view with authentication."""
@@ -381,6 +551,235 @@ def create_user_credits_template(app):
         </div>
       </div>
     </div>
+  </div>
+</div>
+{% endblock %}
+"""
+            )
+
+def create_voice_slots_template(app):
+    """Create the voice slots dashboard template if missing."""
+    admin_templates_dir = os.path.join(app.root_path, 'templates', 'admin')
+    os.makedirs(admin_templates_dir, exist_ok=True)
+    tpl_path = os.path.join(admin_templates_dir, 'voice_slots.html')
+    if not os.path.exists(tpl_path):
+        with open(tpl_path, 'w') as f:
+            f.write(
+                """{% extends 'admin/master.html' %}
+{% block body %}
+<div class="container-fluid mt-4">
+  <h2>Voice Slot Dashboard</h2>
+  <p class="text-muted">Snapshot taken at {{ stats.generated_at }}</p>
+  <div class="row mt-3">
+    <div class="col-md-3">
+      <div class="card border-primary mb-3">
+        <div class="card-header">Active Slots</div>
+        <div class="card-body">
+          <h4 class="card-title">{{ stats.active_count }} / {{ stats.slot_limit }}</h4>
+          <p class="card-text">Available capacity: {{ stats.available_capacity }}</p>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="card border-info mb-3">
+        <div class="card-header">Allocating</div>
+        <div class="card-body">
+          <h4 class="card-title">{{ allocating|length }}</h4>
+          <p class="card-text">Voices currently acquiring slots.</p>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="card border-success mb-3">
+        <div class="card-header">Ready</div>
+        <div class="card-body">
+          <h4 class="card-title">{{ ready|length }}</h4>
+          <p class="card-text">Voices with active remote slots.</p>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="card border-warning mb-3">
+        <div class="card-header">Queued</div>
+        <div class="card-body">
+          <h4 class="card-title">{{ stats.queue_length }}</h4>
+          <p class="card-text">Pending allocation requests.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h4 class="mt-4">Ready Voices</h4>
+  <div class="table-responsive">
+    <table class="table table-sm table-striped align-middle">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>User</th>
+          <th>Name</th>
+          <th>Remote ID</th>
+          <th>Allocated</th>
+          <th>Last Used</th>
+          <th>Hold Expires</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in ready %}
+        <tr>
+          <td>{{ row.voice.id }}</td>
+          <td>{{ row.user_email }}</td>
+          <td>{{ row.voice.name }}</td>
+          <td>{{ row.remote_id or '—' }}</td>
+          <td>{{ row.voice.elevenlabs_allocated_at or '—' }}</td>
+          <td>{{ row.voice.last_used_at or '—' }}</td>
+          <td>{{ row.hold_expires or '—' }}</td>
+          <td>
+            <form method="post" action="{{ url_for('voice_slots.evict_voice', voice_id=row.voice.id) }}" class="d-inline">
+              <button type="submit" class="btn btn-sm btn-outline-danger" onclick="return confirm('Release slot for voice {{ row.voice.id }}?');">Evict</button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="8" class="text-center text-muted">No ready voices</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <h4 class="mt-4">Allocating Voices</h4>
+  <div class="table-responsive">
+    <table class="table table-sm table-striped align-middle">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>User</th>
+          <th>Name</th>
+          <th>Status</th>
+          <th>Queue Position</th>
+          <th>Queue Length</th>
+          <th>Lock Expires</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in allocating %}
+        <tr>
+          <td>{{ row.voice.id }}</td>
+          <td>{{ row.user_email }}</td>
+          <td>{{ row.voice.name }}</td>
+          <td>{{ row.voice.allocation_status }}</td>
+          <td>{{ row.queue_position if row.queue_position is not none else '—' }}</td>
+          <td>{{ row.queue_length }}</td>
+          <td>{{ row.voice.slot_lock_expires_at or '—' }}</td>
+          <td>
+            <form method="post" action="{{ url_for('voice_slots.remove_queue', voice_id=row.voice.id) }}" class="d-inline">
+              <button type="submit" class="btn btn-sm btn-outline-secondary">Remove Queue</button>
+            </form>
+            <form method="post" action="{{ url_for('voice_slots.evict_voice', voice_id=row.voice.id) }}" class="d-inline">
+              <button type="submit" class="btn btn-sm btn-outline-danger" onclick="return confirm('Cancel allocation and release voice {{ row.voice.id }}?');">Evict</button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="8" class="text-center text-muted">No voices allocating</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <h4 class="mt-4">Cooling Voices</h4>
+  <div class="table-responsive">
+    <table class="table table-sm table-striped align-middle">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>User</th>
+          <th>Name</th>
+          <th>Last Used</th>
+          <th>Hold Expires</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in cooling %}
+        <tr>
+          <td>{{ row.voice.id }}</td>
+          <td>{{ row.user_email }}</td>
+          <td>{{ row.voice.name }}</td>
+          <td>{{ row.voice.last_used_at or '—' }}</td>
+          <td>{{ row.hold_expires or '—' }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="text-center text-muted">No voices in cooling window</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <h4 class="mt-4">Queued Requests</h4>
+  <div class="table-responsive">
+    <table class="table table-sm table-striped align-middle">
+      <thead>
+        <tr>
+          <th>Voice ID</th>
+          <th>User</th>
+          <th>Name</th>
+          <th>Attempts</th>
+          <th>ETA</th>
+          <th>Available In</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for entry in queue_entries %}
+        <tr>
+          <td>{{ entry.voice_id }}</td>
+          <td>{{ entry.user_email }}</td>
+          <td>{{ entry.voice_name }}</td>
+          <td>{{ entry.attempts }}</td>
+          <td>{{ entry.available_at or '—' }}</td>
+          <td>{{ entry.wait_display }}</td>
+          <td>
+            <form method="post" action="{{ url_for('voice_slots.remove_queue', voice_id=entry.voice_id) }}" class="d-inline">
+              <button type="submit" class="btn btn-sm btn-outline-secondary">Remove</button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7" class="text-center text-muted">Queue is empty</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <h4 class="mt-4">Recent Slot Events</h4>
+  <div class="table-responsive">
+    <table class="table table-sm table-striped align-middle">
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Voice</th>
+          <th>User</th>
+          <th>Event</th>
+          <th>Reason</th>
+          <th>Metadata</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for event in events %}
+        <tr>
+          <td>{{ event.created_at }}</td>
+          <td>{{ event.voice_id or '—' }}</td>
+          <td>{{ event.user_id or '—' }}</td>
+          <td>{{ event.event_type }}</td>
+          <td>{{ event.reason or '—' }}</td>
+          <td><small>{{ event.metadata }}</small></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="text-center text-muted">No recent events</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
   </div>
 </div>
 {% endblock %}
@@ -1048,6 +1447,7 @@ def init_admin(app):
     # Create login template
     create_login_template(app)
     create_grant_template(app)
+    create_voice_slots_template(app)
     create_user_credits_template(app)
     
     # Setup admin interface
@@ -1059,6 +1459,7 @@ def init_admin(app):
     )
     
     # Add views correctly - using the appropriate view class for each model
+    admin.add_view(VoiceSlotDashboardView(name='Voice Slots', endpoint='voice_slots'))
     admin.add_view(StoryModelView(Story, db.session, name='Stories'))
     admin.add_view(UserModelView(User, db.session, name='Users'))
     admin.add_view(VoiceModelView(Voice, db.session, name='Voices'))

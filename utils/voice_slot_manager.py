@@ -52,11 +52,19 @@ class VoiceSlotManager:
             raise VoiceSlotManagerError("Voice is required")
 
         if not voice.recording_s3_key and not voice.s3_sample_key:
-            logger.error(
-                "Voice %s is missing a recording sample and cannot be allocated",
-                voice.id,
-            )
-            raise VoiceSlotManagerError("Voice sample is missing; please re-upload the recording.")
+            if voice.elevenlabs_voice_id and voice.allocation_status == VoiceAllocationStatus.READY:
+                logger.warning(
+                    "Voice %s missing local sample but has remote ID; allowing ready state",
+                    voice.id,
+                )
+            else:
+                logger.error(
+                    "Voice %s is missing a recording sample and cannot be allocated",
+                    voice.id,
+                )
+                raise VoiceSlotManagerError(
+                    "Voice sample is missing; please re-upload the recording."
+                )
 
         metadata = {
             "voice_id": voice.id,

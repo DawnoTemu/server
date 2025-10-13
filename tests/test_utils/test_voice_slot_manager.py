@@ -168,3 +168,15 @@ def test_missing_recording_raises(monkeypatch, dummy_session):
     voice = make_voice(recording_s3_key=None, s3_sample_key=None)
     with pytest.raises(VoiceSlotManagerError):
         VoiceSlotManager.ensure_active_voice(voice)
+
+
+def test_missing_sample_ready_voice_allowed(monkeypatch, dummy_session):
+    voice = make_voice(
+        recording_s3_key=None,
+        s3_sample_key=None,
+        status=VoiceStatus.READY,
+        allocation_status=VoiceAllocationStatus.READY,
+        elevenlabs_voice_id="remote",
+    )
+    state = VoiceSlotManager.ensure_active_voice(voice)
+    assert state.status == VoiceSlotManager.STATUS_READY

@@ -247,6 +247,9 @@ def test_synthesize_audio_voice_manager_error(monkeypatch, dummy_session):
         "controllers.audio_controller.AudioModel.find_or_create_audio_record",
         lambda story_id, voice_id, user_id: audio_record,
     )
+    monkeypatch.setattr(
+        "controllers.audio_controller.calculate_required_credits", lambda text: 5
+    )
 
     def raise_manager(*args, **kwargs):
         raise VoiceSlotManagerError("allocation failure")
@@ -255,6 +258,20 @@ def test_synthesize_audio_voice_manager_error(monkeypatch, dummy_session):
         "controllers.audio_controller.VoiceSlotManager.ensure_active_voice",
         raise_manager,
     )
+    debit_calls = {}
+
+    def fake_credit_debit(**kwargs):
+        debit_calls["kwargs"] = kwargs
+        return True, MagicMock(), 5
+
+    monkeypatch.setattr("controllers.audio_controller.credit_debit", fake_credit_debit)
+    refunds = {}
+
+    def fake_refund(audio_story_id, reason):
+        refunds["args"] = (audio_story_id, reason)
+        return True, MagicMock()
+
+    monkeypatch.setattr("controllers.audio_controller.refund_by_audio", fake_refund)
 
     success, data, status_code = AudioController.synthesize_audio(voice.id, 3)
 
@@ -262,3 +279,6 @@ def test_synthesize_audio_voice_manager_error(monkeypatch, dummy_session):
     assert status_code == 409
     assert data["error"] == "allocation failure"
     assert audio_record.error_message == "allocation failure"
+    assert audio_record.status == AudioStatus.ERROR.value
+    assert debit_calls["kwargs"]["user_id"] == voice.user_id
+    assert refunds["args"] == (audio_record.id, "voice_slot_manager_error")

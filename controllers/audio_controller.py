@@ -104,25 +104,6 @@ class AudioController:
                     "message": "Audio synthesis is already in progress",
                 }, 202
 
-            request_meta = {"story_id": story_id, "audio_story_id": audio_record.id}
-            try:
-                slot_state = VoiceSlotManager.ensure_active_voice(voice, request_metadata=request_meta)
-            except VoiceSlotManagerError as exc:
-                audio_record.error_message = str(exc)
-                db.session.commit()
-                return False, {"error": str(exc)}, 409
-
-            remote_voice_id = (
-                slot_state.metadata.get("elevenlabs_voice_id") or voice.elevenlabs_voice_id
-            )
-            if slot_state.status != VoiceSlotManager.STATUS_READY:
-                remote_voice_id = remote_voice_id or voice.elevenlabs_voice_id
-            if slot_state.status == VoiceSlotManager.STATUS_READY and not remote_voice_id:
-                logger.error("Voice %s ready without remote identifier", voice.id)
-                return False, {"error": "Voice is ready but missing remote identifier"}, 500
-            if remote_voice_id:
-                slot_state.metadata.setdefault("elevenlabs_voice_id", remote_voice_id)
-
             required = calculate_required_credits(text)
 
             audio_record.status = AudioStatus.PENDING.value
@@ -143,6 +124,31 @@ class AudioController:
                 db.session.rollback()
                 logger.error("Error debiting credits: %s", exc)
                 return False, {"error": "Failed to charge credits"}, 500
+
+            request_meta = {"story_id": story_id, "audio_story_id": audio_record.id}
+            try:
+                slot_state = VoiceSlotManager.ensure_active_voice(voice, request_metadata=request_meta)
+            except VoiceSlotManagerError as exc:
+                logger.warning("Voice slot manager error after debit: %s", exc)
+                try:
+                    refund_by_audio(audio_record.id, reason="voice_slot_manager_error")
+                except Exception as refund_exc:
+                    logger.error("Refund after slot-manager error failed: %s", refund_exc)
+                audio_record.status = AudioStatus.ERROR.value
+                audio_record.error_message = str(exc)
+                db.session.commit()
+                return False, {"error": str(exc)}, 409
+
+            remote_voice_id = (
+                slot_state.metadata.get("elevenlabs_voice_id") or voice.elevenlabs_voice_id
+            )
+            if slot_state.status != VoiceSlotManager.STATUS_READY:
+                remote_voice_id = remote_voice_id or voice.elevenlabs_voice_id
+            if slot_state.status == VoiceSlotManager.STATUS_READY and not remote_voice_id:
+                logger.error("Voice %s ready without remote identifier", voice.id)
+                return False, {"error": "Voice is ready but missing remote identifier"}, 500
+            if remote_voice_id:
+                slot_state.metadata.setdefault("elevenlabs_voice_id", remote_voice_id)
 
             if slot_state.status == VoiceSlotManager.STATUS_READY:
                 audio_record.status = AudioStatus.PROCESSING.value

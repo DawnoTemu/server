@@ -1,0 +1,218 @@
+{% extends 'admin/master.html' %}
+{% block body %}
+<div class="container-fluid mt-4">
+  <h2>Voice Slot Dashboard</h2>
+  <p class="text-muted">Snapshot taken at {{ stats.generated_at }}</p>
+  <div class="row mt-3">
+    <div class="col-md-3">
+      <div class="card border-primary mb-3">
+        <div class="card-header">Active Slots</div>
+        <div class="card-body">
+          <h4 class="card-title">{{ stats.active_count }} / {{ stats.slot_limit }}</h4>
+          <p class="card-text">Available capacity: {{ stats.available_capacity }}</p>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="card border-info mb-3">
+        <div class="card-header">Allocating</div>
+        <div class="card-body">
+          <h4 class="card-title">{{ allocating|length }}</h4>
+          <p class="card-text">Voices currently acquiring slots.</p>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="card border-success mb-3">
+        <div class="card-header">Ready</div>
+        <div class="card-body">
+          <h4 class="card-title">{{ ready|length }}</h4>
+          <p class="card-text">Voices with active remote slots.</p>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="card border-warning mb-3">
+        <div class="card-header">Queued</div>
+        <div class="card-body">
+          <h4 class="card-title">{{ stats.queue_length }}</h4>
+          <p class="card-text">Pending allocation requests.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h4 class="mt-4">Ready Voices</h4>
+  <div class="table-responsive">
+    <table class="table table-sm table-striped align-middle">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>User</th>
+          <th>Name</th>
+          <th>Remote ID</th>
+          <th>Allocated</th>
+          <th>Last Used</th>
+          <th>Hold Expires</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in ready %}
+        <tr>
+          <td>{{ row.voice.id }}</td>
+          <td>{{ row.user_email }}</td>
+          <td>{{ row.voice.name }}</td>
+          <td>{{ row.remote_id or '—' }}</td>
+          <td>{{ row.voice.elevenlabs_allocated_at or '—' }}</td>
+          <td>{{ row.voice.last_used_at or '—' }}</td>
+          <td>{{ row.hold_expires or '—' }}</td>
+          <td>
+            <form method="post" action="{{ url_for('voice_slots.evict_voice', voice_id=row.voice.id) }}" class="d-inline">
+              <button type="submit" class="btn btn-sm btn-outline-danger" onclick="return confirm('Release slot for voice {{ row.voice.id }}?');">Evict</button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="8" class="text-center text-muted">No ready voices</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <h4 class="mt-4">Allocating Voices</h4>
+  <div class="table-responsive">
+    <table class="table table-sm table-striped align-middle">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>User</th>
+          <th>Name</th>
+          <th>Status</th>
+          <th>Queue Position</th>
+          <th>Queue Length</th>
+          <th>Lock Expires</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in allocating %}
+        <tr>
+          <td>{{ row.voice.id }}</td>
+          <td>{{ row.user_email }}</td>
+          <td>{{ row.voice.name }}</td>
+          <td>{{ row.voice.allocation_status }}</td>
+          <td>{{ row.queue_position if row.queue_position is not none else '—' }}</td>
+          <td>{{ row.queue_length }}</td>
+          <td>{{ row.voice.slot_lock_expires_at or '—' }}</td>
+          <td>
+            <form method="post" action="{{ url_for('voice_slots.remove_queue', voice_id=row.voice.id) }}" class="d-inline">
+              <button type="submit" class="btn btn-sm btn-outline-secondary">Remove Queue</button>
+            </form>
+            <form method="post" action="{{ url_for('voice_slots.evict_voice', voice_id=row.voice.id) }}" class="d-inline">
+              <button type="submit" class="btn btn-sm btn-outline-danger" onclick="return confirm('Cancel allocation and release voice {{ row.voice.id }}?');">Evict</button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="8" class="text-center text-muted">No voices allocating</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <h4 class="mt-4">Cooling Voices</h4>
+  <div class="table-responsive">
+    <table class="table table-sm table-striped align-middle">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>User</th>
+          <th>Name</th>
+          <th>Last Used</th>
+          <th>Hold Expires</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in cooling %}
+        <tr>
+          <td>{{ row.voice.id }}</td>
+          <td>{{ row.user_email }}</td>
+          <td>{{ row.voice.name }}</td>
+          <td>{{ row.voice.last_used_at or '—' }}</td>
+          <td>{{ row.hold_expires or '—' }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="text-center text-muted">No voices in cooling window</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <h4 class="mt-4">Queued Requests</h4>
+  <div class="table-responsive">
+    <table class="table table-sm table-striped align-middle">
+      <thead>
+        <tr>
+          <th>Voice ID</th>
+          <th>User</th>
+          <th>Name</th>
+          <th>Attempts</th>
+          <th>ETA</th>
+          <th>Available In</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for entry in queue_entries %}
+        <tr>
+          <td>{{ entry.voice_id }}</td>
+          <td>{{ entry.user_email }}</td>
+          <td>{{ entry.voice_name }}</td>
+          <td>{{ entry.attempts }}</td>
+          <td>{{ entry.available_at or '—' }}</td>
+          <td>{{ entry.wait_display }}</td>
+          <td>
+            <form method="post" action="{{ url_for('voice_slots.remove_queue', voice_id=entry.voice_id) }}" class="d-inline">
+              <button type="submit" class="btn btn-sm btn-outline-secondary">Remove</button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7" class="text-center text-muted">Queue is empty</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <h4 class="mt-4">Recent Slot Events</h4>
+  <div class="table-responsive">
+    <table class="table table-sm table-striped align-middle">
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Voice</th>
+          <th>User</th>
+          <th>Event</th>
+          <th>Reason</th>
+          <th>Metadata</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for event in events %}
+        <tr>
+          <td>{{ event.created_at }}</td>
+          <td>{{ event.voice_id or '—' }}</td>
+          <td>{{ event.user_id or '—' }}</td>
+          <td>{{ event.event_type }}</td>
+          <td>{{ event.reason or '—' }}</td>
+          <td><small>{{ event.metadata }}</small></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="text-center text-muted">No recent events</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

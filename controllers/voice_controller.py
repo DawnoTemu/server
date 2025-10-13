@@ -38,10 +38,18 @@ class VoiceController:
         )
         
         if success:
+            response_payload = result
+            if isinstance(response_payload, dict):
+                response_payload.setdefault("success", True)
+                if response_payload.get("status") == VoiceStatus.RECORDED:
+                    response_payload.setdefault(
+                        "message",
+                        "Voice uploaded successfully. Allocation will continue in the background.",
+                    )
             # Recording flow now returns immediately with recorded state
-            if isinstance(result, dict) and result.get('status') == VoiceStatus.RECORDED:
-                return True, result, 201
-            return True, result, 200
+            if isinstance(response_payload, dict) and response_payload.get('status') == VoiceStatus.RECORDED:
+                return True, response_payload, 201
+            return True, response_payload, 200
         else:
             return False, {"error": result}, 500
     

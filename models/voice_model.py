@@ -249,8 +249,9 @@ class VoiceModel:
                     'voice_id': str(voice_id),
                     'original_filename': filename,
                 },
-                'ServerSideEncryption': 'AES256',
             }
+            if Config.S3_REQUIRE_SSE:
+                extra_args['ServerSideEncryption'] = 'AES256'
 
             upload_success = S3Client.upload_fileobj(file_data, permanent_s3_key, extra_args)
             if not upload_success:
@@ -273,7 +274,7 @@ class VoiceModel:
                 metadata={
                     's3_key': permanent_s3_key,
                     'filesize': recording_filesize,
-                    'server_side_encryption': 'AES256',
+                    'server_side_encryption': 'AES256' if Config.S3_REQUIRE_SSE else 'disabled',
                 },
             )
 

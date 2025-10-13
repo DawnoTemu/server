@@ -24,6 +24,9 @@ class S3Client:
     _bucket_name = None
     _max_pool_connections = None
     _max_retries = None
+    _endpoint_url = None
+    _use_ssl = True
+    _addressing_style = None
     
     def __new__(cls):
         if cls._instance is None:
@@ -43,16 +46,24 @@ class S3Client:
         cls._bucket_name = os.getenv("S3_BUCKET_NAME")
         cls._max_pool_connections = int(os.getenv("AWS_MAX_POOL_CONNECTIONS", "10"))
         cls._max_retries = int(os.getenv("AWS_MAX_RETRIES", "5"))
+        cls._endpoint_url = os.getenv("AWS_S3_ENDPOINT_URL")
+        cls._addressing_style = os.getenv("AWS_S3_ADDRESSING_STYLE")
+        cls._use_ssl = os.getenv("AWS_S3_USE_SSL", "true").lower() not in ("0", "false", "no")
         
         # Configure boto3 with connection pooling and retry strategy
-        boto_config = BotoConfig(
-            region_name=cls._aws_region,
-            retries={
+        boto_config_kwargs = {
+            'region_name': cls._aws_region,
+            'retries': {
                 'max_attempts': cls._max_retries,
                 'mode': 'adaptive'  # Adaptive retry mode with exponential backoff
             },
-            max_pool_connections=cls._max_pool_connections
-        )
+            'max_pool_connections': cls._max_pool_connections
+        }
+
+        if cls._addressing_style:
+            boto_config_kwargs['s3'] = {'addressing_style': cls._addressing_style}
+
+        boto_config = BotoConfig(**boto_config_kwargs)
         
         try:
             # Create the client with our optimized configuration
@@ -60,6 +71,8 @@ class S3Client:
                 's3',
                 aws_access_key_id=cls._aws_access_key,
                 aws_secret_access_key=cls._aws_secret_key,
+                endpoint_url=cls._endpoint_url,
+                use_ssl=cls._use_ssl,
                 config=boto_config
             )
             
@@ -106,11 +119,26 @@ class S3Client:
         if response_headers:
             params.update(response_headers)
         
-        return cls.get_client().generate_presigned_url(
+        url = cls.get_client().generate_presigned_url(
             'get_object',
             Params=params,
             ExpiresIn=expires_in
         )
+
+        public_endpoint = os.getenv("MINIO_PUBLIC_ENDPOINT")
+        if public_endpoint and cls._endpoint_url:
+            try:
+                from urllib.parse import urlparse
+
+                internal = urlparse(cls._endpoint_url)
+                external = urlparse(public_endpoint)
+                if internal.netloc:
+                    url = url.replace(f"{internal.scheme}://{internal.netloc}", f"{external.scheme}://{external.netloc}")
+            except Exception:
+                # Fall back to naive replacement if parsing fails
+                url = url.replace(cls._endpoint_url, public_endpoint)
+
+        return url
     
     @classmethod
     def upload_fileobj(cls, file_obj, key, extra_args=None):

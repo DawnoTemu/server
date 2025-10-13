@@ -230,14 +230,32 @@ class AudioModel:
             bool: True if audio exists and is ready, False otherwise
         """
         try:
-            # Only check the database - ignore any files created by the old system
             record = AudioStory.query.filter_by(
-                voice_id=voice_id, 
-                story_id=story_id, 
-                status=AudioStatus.READY.value
+                voice_id=voice_id,
+                story_id=story_id,
+                status=AudioStatus.READY.value,
             ).first()
-            
-            return record is not None and record.s3_key is not None
+
+            if not record or not record.s3_key:
+                return False
+
+            try:
+                S3Client.get_client().head_object(
+                    Bucket=S3Client.get_bucket_name(),
+                    Key=record.s3_key,
+                )
+            except ClientError as exc:
+                code = exc.response.get("Error", {}).get("Code")
+                if code in {"404", "NoSuchKey", "NotFound"}:
+                    logger.info(
+                        "Audio %s/%s marked ready but object missing; waiting for availability",
+                        voice_id,
+                        story_id,
+                    )
+                    return False
+                raise
+
+            return True
         except Exception as e:
             logger.error(f"Error checking if audio exists: {str(e)}")
             return False

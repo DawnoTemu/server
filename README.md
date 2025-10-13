@@ -92,6 +92,40 @@ Install dependencies:
 pip install -r requirements.txt
 ```
 
+### 🐳 Docker Development Environment
+
+Prefer containers? Ship the full stack with Docker:
+
+1. Copy the template environment file and adjust secrets as required:
+   ```bash
+   cp .env.docker.example .env.docker
+   ```
+2. Build and start the API, Celery worker, Postgres, and Redis:
+   ```bash
+   docker compose up --build
+   ```
+   The web API listens on [http://localhost:8000](http://localhost:8000) and auto-applies migrations at startup. Source files are bind-mounted, so code changes reflect immediately after a container restart.
+3. Run tests or one-off commands inside the web container:
+   ```bash
+   docker compose run --rm web pytest -v
+   ```
+4. Need scheduled tasks? Add the optional beat service:
+   ```bash
+   docker compose --profile beat up
+   ```
+5. Want worker insights? Launch Flower (Celery dashboard):
+   ```bash
+   docker compose --profile monitoring up flower
+   ```
+   Flower listens on [http://localhost:5555](http://localhost:5555) with live task metrics.
+6. Prefer Flask’s auto-reloader? Use the dev profile:
+   ```bash
+   docker compose --profile dev up web-dev worker redis db
+   ```
+   The `web-dev` service runs `flask run --reload`, so code changes pick up immediately without rebuilding the image.
+
+Named volumes persist the Postgres database (`postgres_data`), uploads (`uploads_data`), and MinIO object storage (`minio_data`). MinIO ships with credentials `minio:minio123` and exposes its console at [http://localhost:9001](http://localhost:9001); the default bucket (`local-dawnotemu`) is provisioned automatically. To reset everything, remove the volumes via `docker compose down -v`.
+
 ### 2. Environment Configuration
 
 Create a `.env` file in the server directory:

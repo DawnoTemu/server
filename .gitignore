@@ -42,6 +42,7 @@ celerybeat.pid
 .env.test
 .env.production
 .env.*.local
+.env.docker
 
 # IDE & editor configs
 .vscode/
@@ -104,3 +105,11 @@ instance/
 stories_backup/
 *_stories_backup/
 *.stories_export/
+
+# Docker
+docker-compose.override.yml
+docker-compose.local.yml
+.docker-compose-env.yml
+docker-compose.override.yaml
+docker-compose.local.yaml
+.docker-compose-env.yml

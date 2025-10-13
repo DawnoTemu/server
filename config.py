@@ -51,6 +51,7 @@ class Config:
     AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
     AWS_REGION = os.getenv("AWS_REGION")
     S3_BUCKET = os.getenv("S3_BUCKET_NAME")
+    S3_REQUIRE_SSE = os.getenv("AWS_S3_USE_SSE", "true").lower() not in ("0", "false", "no")
     
     # ElevenLabs API configuration
     ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")

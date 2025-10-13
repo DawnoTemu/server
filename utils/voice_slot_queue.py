@@ -30,16 +30,42 @@ class VoiceSlotQueue:
     @classmethod
     def dequeue(cls) -> Optional[Dict[str, Any]]:
         client = RedisClient.get_client()
-        result = client.zpopmin(cls.QUEUE_KEY)
-        if not result:
-            return None
-        voice_key, _score = result[0]
-        data = client.hget(cls.DETAILS_KEY, voice_key)
-        client.hdel(cls.DETAILS_KEY, voice_key)
-        if data is None:
-            return None
-        payload = json.loads(data)
-        return payload
+        now = time.time()
+
+        while True:
+            candidates = client.zrangebyscore(
+                cls.QUEUE_KEY,
+                '-inf',
+                now,
+                start=0,
+                num=1,
+                withscores=True,
+            )
+            if not candidates:
+                return None
+
+            voice_key, score = candidates[0]
+            with client.pipeline() as pipe:
+                pipe.zrem(cls.QUEUE_KEY, voice_key)
+                pipe.hget(cls.DETAILS_KEY, voice_key)
+                pipe.hdel(cls.DETAILS_KEY, voice_key)
+                removed, data, _ = pipe.execute()
+
+            if removed == 0:
+                # Another worker claimed this entry; try the next candidate (if any)
+                continue
+
+            if data is None:
+                logger.warning("Queue entry %s (score=%s) missing payload; skipping", voice_key, score)
+                continue
+
+            try:
+                payload = json.loads(data)
+            except json.JSONDecodeError:
+                logger.exception("Failed to decode payload for voice %s; skipping", voice_key)
+                continue
+
+            return payload
 
     @classmethod
     def remove(cls, voice_id: int) -> None:
@@ -81,6 +107,8 @@ class VoiceSlotQueue:
     def snapshot(cls, limit: int = 50) -> list[Dict[str, Any]]:
         """Return queued requests ordered by score, capped at limit entries."""
         client = RedisClient.get_client()
+        if limit == 0:
+            return []
         if limit is None or limit < 0:
             limit = -1
             end_index = -1
