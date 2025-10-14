@@ -193,6 +193,12 @@ def test_ensure_active_voice_refreshes_stale_state(app, mocker):
     mocker.patch("utils.voice_slot_manager.VoiceSlotQueue.length", return_value=0)
 
     with app.app_context():
+        existing = User.query.filter_by(email="stale@example.com").first()
+        if existing:
+            Voice.query.filter_by(user_id=existing.id).delete()
+            db.session.delete(existing)
+            db.session.commit()
+
         user = User(
             email="stale@example.com",
             is_active=True,

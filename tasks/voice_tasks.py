@@ -321,7 +321,7 @@ celery_app.conf.beat_schedule = {
     retry_backoff=True,
     name='voice.allocate_voice_slot',
 )
-def allocate_voice_slot(self, voice_id, s3_key, filename, user_id, voice_name=None, *, attempts=0, from_queue=False):
+def allocate_voice_slot(self, voice_id, s3_key, filename, user_id, voice_name=None, *, attempts=0, from_queue=False, service_provider=None):
     """Allocate an external voice slot (e.g., ElevenLabs) for an uploaded recording."""
     logger.info("Allocating voice slot for voice_id=%s", voice_id)
 
@@ -341,7 +341,9 @@ def allocate_voice_slot(self, voice_id, s3_key, filename, user_id, voice_name=No
             logger.error("Voice record %s not found during allocation", voice_id)
             return False
 
-        slot_capacity = VoiceModel.available_slot_capacity(voice.service_provider)
+        provider = service_provider or voice.service_provider
+
+        slot_capacity = VoiceModel.available_slot_capacity(provider)
         payload = {
             'voice_id': voice_id,
             's3_key': s3_key,
@@ -349,7 +351,7 @@ def allocate_voice_slot(self, voice_id, s3_key, filename, user_id, voice_name=No
             'user_id': user_id,
             'voice_name': voice_name,
             'attempts': attempts,
-            'service_provider': voice.service_provider,
+            'service_provider': provider,
         }
 
         if slot_capacity != float('inf') and slot_capacity <= 0 and voice.allocation_status != VoiceAllocationStatus.READY:

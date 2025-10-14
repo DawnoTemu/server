@@ -83,6 +83,57 @@ def test_allocate_voice_slot_queues_when_limit_reached(monkeypatch, fake_db):
     assert voice.allocation_status == VoiceAllocationStatus.RECORDED
 
 
+def test_allocate_voice_slot_honors_explicit_service_provider(monkeypatch, fake_db):
+    class FakeVoiceQuery:
+        def __init__(self, voice):
+            self.voice = voice
+
+        def get(self, _):
+            return self.voice
+
+    voice = SimpleNamespace(
+        id=2,
+        user_id=99,
+        status=VoiceStatus.RECORDED,
+        allocation_status=VoiceAllocationStatus.RECORDED,
+        elevenlabs_voice_id=None,
+        service_provider=VoiceServiceProvider.ELEVENLABS,
+        error_message=None,
+    )
+
+    monkeypatch.setattr(voice_model_module, 'Voice', SimpleNamespace(query=FakeVoiceQuery(voice)))
+
+    capacity_calls = []
+
+    def fake_capacity(provider=None):
+        capacity_calls.append(provider)
+        return 0
+
+    monkeypatch.setattr('models.voice_model.VoiceModel.available_slot_capacity', staticmethod(fake_capacity))
+
+    enqueue_calls = []
+    monkeypatch.setattr(
+        'tasks.voice_tasks.VoiceSlotQueue.enqueue',
+        lambda voice_id, payload, delay_seconds=0: enqueue_calls.append(payload.get('service_provider')),
+    )
+    monkeypatch.setattr('tasks.voice_tasks.process_voice_queue.apply_async', lambda *args, **kwargs: None)
+    monkeypatch.setattr('tasks.voice_tasks.process_voice_queue.delay', lambda: None)
+    monkeypatch.setattr('models.voice_model.VoiceSlotEvent.log_event', lambda **kwargs: None, raising=False)
+
+    result = allocate_voice_slot.run(
+        voice_id=2,
+        s3_key="voice_samples/99/voice_2.wav",
+        filename="sample.wav",
+        user_id=99,
+        voice_name="Voice",
+        service_provider=VoiceServiceProvider.CARTESIA,
+    )
+
+    assert result == {"queued": True}
+    assert capacity_calls and capacity_calls[0] == VoiceServiceProvider.CARTESIA
+    assert enqueue_calls and enqueue_calls[0] == VoiceServiceProvider.CARTESIA
+
+
 def test_process_voice_queue_dispatches(monkeypatch):
     dispatched = []
 
