@@ -14,6 +14,7 @@ from models.voice_model import (
     VoiceModel,
 )
 from utils.voice_slot_queue import VoiceSlotQueue
+from sqlalchemy.exc import InvalidRequestError
 
 
 logger = logging.getLogger("voice_slot_manager")
@@ -50,6 +51,8 @@ class VoiceSlotManager:
         """
         if voice is None:
             raise VoiceSlotManagerError("Voice is required")
+
+        voice = cls._reload_voice_state(voice)
 
         if not voice.recording_s3_key and not voice.s3_sample_key:
             if voice.elevenlabs_voice_id and voice.allocation_status == VoiceAllocationStatus.READY:
@@ -148,6 +151,7 @@ class VoiceSlotManager:
             "user_id": voice.user_id,
             "voice_name": voice.name,
             "attempts": 0,
+            "service_provider": voice.service_provider,
         }
 
         try:
@@ -169,6 +173,21 @@ class VoiceSlotManager:
         metadata.update(cls._queue_metadata(voice.id))
         return VoiceSlotState(cls.STATUS_ALLOCATING, metadata)
 
+    @staticmethod
+    def _reload_voice_state(voice: Voice) -> Voice:
+        """Refresh the provided voice instance to avoid stale allocation decisions."""
+        if voice is None or voice.id is None:
+            raise VoiceSlotManagerError("Voice is required")
+
+        try:
+            db.session.refresh(voice)
+            return voice
+        except InvalidRequestError:
+            refreshed = Voice.query.filter_by(id=voice.id).first()
+            if refreshed is None:
+                raise VoiceSlotManagerError(f"Voice {voice.id} no longer exists")
+            return refreshed
+
     @classmethod
     def _enqueue_voice(cls, voice: Voice, request_metadata: Optional[Dict[str, Any]]) -> None:
         payload = {
@@ -178,6 +197,7 @@ class VoiceSlotManager:
             "user_id": voice.user_id,
             "voice_name": voice.name,
             "attempts": 0,
+            "service_provider": voice.service_provider,
         }
 
         VoiceSlotQueue.enqueue(voice.id, payload)

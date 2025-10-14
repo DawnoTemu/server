@@ -126,3 +126,44 @@ def test_delete_user_removes_related_data(app, mocker):
         event_after = VoiceSlotEvent.query.get(event.id)
         assert event_after is not None
         assert event_after.user_id is None
+
+
+def test_delete_user_surfaces_voice_service_failure(app, mocker):
+    mocker.patch("utils.s3_client.S3Client.delete_objects", return_value=(True, 1, []))
+    mocker.patch(
+        "models.voice_model.VoiceService.delete_voice",
+        return_value=(False, "Rate limited"),
+    )
+
+    with app.app_context():
+        user = User(
+            email="delete-me-fail@example.com",
+            is_active=True,
+            email_confirmed=True,
+            credits_balance=0,
+        )
+        user.set_password("CurrentPass1!")
+        db.session.add(user)
+        db.session.commit()
+
+        voice = Voice(
+            name="Account Voice",
+            user_id=user.id,
+            status=VoiceStatus.READY,
+            allocation_status=VoiceAllocationStatus.READY,
+            service_provider=VoiceServiceProvider.ELEVENLABS,
+            elevenlabs_voice_id="voice-123",
+        )
+        db.session.add(voice)
+        db.session.commit()
+
+        success, details = UserModel.delete_user(user.id)
+        assert success is True
+        warnings = details.get("warnings", [])
+        assert warnings
+        assert any(
+            warning.get("type") == "voice_service"
+            and warning.get("details", {}).get("voice_id") == voice.id
+            and "Rate limited" in str(warning.get("details", {}).get("message"))
+            for warning in warnings
+        )

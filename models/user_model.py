@@ -6,6 +6,9 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from flask import current_app
 from database import db
 
+
+logger = logging.getLogger(__name__)
+
 class User(db.Model):
     """User account model for authentication and profile management"""
     __tablename__ = 'users'
@@ -367,11 +370,26 @@ class UserModel:
 
             if voice.elevenlabs_voice_id:
                 try:
-                    VoiceService.delete_voice(
+                    success, message = VoiceService.delete_voice(
                         voice_id=voice.id,
                         external_voice_id=voice.elevenlabs_voice_id,
                         service=voice.service_provider,
                     )
+                    if not success:
+                        logger.warning(
+                            "Voice service deletion failed for voice %s (service=%s): %s",
+                            voice.id,
+                            voice.service_provider,
+                            message,
+                        )
+                        add_warning(
+                            "voice_service",
+                            {
+                                "voice_id": voice.id,
+                                "service": voice.service_provider,
+                                "message": message,
+                            },
+                        )
                 except Exception as exc:
                     add_warning(
                         "voice_service",

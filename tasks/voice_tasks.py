@@ -7,6 +7,7 @@ import logging
 import sentry_sdk
 from datetime import datetime, timedelta
 from typing import Optional
+from collections import defaultdict
 from io import BytesIO
 from celery import Task
 from tasks import celery_app
@@ -169,19 +170,48 @@ def process_voice_recording(self, voice_id, s3_key, filename, user_id, voice_nam
 )
 def process_voice_queue(self):
     """Attempt to process queued allocation requests based on capacity."""
-    from models.voice_model import VoiceModel
+    from models.voice_model import Voice, VoiceModel, VoiceServiceProvider
 
-    capacity = VoiceModel.available_slot_capacity()
-    unlimited = capacity == float('inf')
     processed = 0
+    dispatched_per_provider = defaultdict(int)
+    requeued_in_cycle: set[int] = set()
 
     while True:
-        if not unlimited and processed >= capacity:
-            break
         request = VoiceSlotQueue.dequeue()
         if not request:
             break
+
+        voice_id = request.get('voice_id')
+        provider = request.get('service_provider')
+        if provider is None and voice_id is not None:
+            voice = Voice.query.get(voice_id)
+            if voice:
+                provider = voice.service_provider
+                request['service_provider'] = provider
+
+        if provider is None:
+            provider = VoiceServiceProvider.ELEVENLABS
+
+        capacity = VoiceModel.available_slot_capacity(provider)
+        already_dispatched = dispatched_per_provider[provider]
+        remaining_capacity = float('inf') if capacity == float('inf') else max(0, capacity - already_dispatched)
+
+        if remaining_capacity <= 0:
+            delay_seconds = max(int(getattr(Config, "VOICE_QUEUE_POLL_INTERVAL", 30) or 30) // 2, 5)
+            VoiceSlotQueue.enqueue(voice_id, request, delay_seconds=delay_seconds)
+            logger.debug(
+                "Deferring voice %s due to slot capacity for provider %s",
+                voice_id,
+                provider,
+            )
+            if voice_id is not None:
+                requeued_in_cycle.add(voice_id)
+                if len(requeued_in_cycle) > 10:
+                    break
+            continue
+
         allocate_voice_slot.delay(from_queue=True, **request)
+        dispatched_per_provider[provider] += 1
         processed += 1
 
     if processed:
@@ -319,6 +349,7 @@ def allocate_voice_slot(self, voice_id, s3_key, filename, user_id, voice_name=No
             'user_id': user_id,
             'voice_name': voice_name,
             'attempts': attempts,
+            'service_provider': voice.service_provider,
         }
 
         if slot_capacity != float('inf') and slot_capacity <= 0 and voice.allocation_status != VoiceAllocationStatus.READY:

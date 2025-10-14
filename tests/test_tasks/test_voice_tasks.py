@@ -87,7 +87,15 @@ def test_process_voice_queue_dispatches(monkeypatch):
     dispatched = []
 
     monkeypatch.setattr('models.voice_model.VoiceModel.available_slot_capacity', staticmethod(lambda provider=None: 2))
-    queue = [{'voice_id': 1, 's3_key': 'k', 'filename': 'f', 'user_id': 42, 'voice_name': 'name', 'attempts': 0}]
+    queue = [{
+        'voice_id': 1,
+        's3_key': 'k',
+        'filename': 'f',
+        'user_id': 42,
+        'voice_name': 'name',
+        'attempts': 0,
+        'service_provider': VoiceServiceProvider.ELEVENLABS,
+    }]
 
     def fake_dequeue():
         return queue.pop(0) if queue else None
@@ -100,6 +108,92 @@ def test_process_voice_queue_dispatches(monkeypatch):
     assert processed == 1
     assert dispatched and dispatched[0]['from_queue'] is True
 
+
+def test_process_voice_queue_requeues_when_provider_full(monkeypatch):
+    capacity_map = {
+        VoiceServiceProvider.ELEVENLABS: 0,
+        VoiceServiceProvider.CARTESIA: 2,
+    }
+
+    def capacity(provider=None):
+        return capacity_map.get(provider, 2)
+
+    monkeypatch.setattr('models.voice_model.VoiceModel.available_slot_capacity', staticmethod(capacity))
+
+    queue = [
+        {
+            'voice_id': 1,
+            's3_key': 'k1',
+            'filename': 'f1',
+            'user_id': 11,
+            'voice_name': 'first',
+            'attempts': 0,
+            'service_provider': VoiceServiceProvider.ELEVENLABS,
+        },
+        {
+            'voice_id': 2,
+            's3_key': 'k2',
+            'filename': 'f2',
+            'user_id': 22,
+            'voice_name': 'second',
+            'attempts': 0,
+            'service_provider': VoiceServiceProvider.CARTESIA,
+        },
+    ]
+
+    def fake_dequeue():
+        return queue.pop(0) if queue else None
+
+    requeued = []
+
+    def fake_enqueue(voice_id, payload, delay_seconds=0):
+        requeued.append((voice_id, payload, delay_seconds))
+
+    dispatched = []
+
+    monkeypatch.setattr('tasks.voice_tasks.VoiceSlotQueue.dequeue', fake_dequeue)
+    monkeypatch.setattr('tasks.voice_tasks.VoiceSlotQueue.enqueue', fake_enqueue)
+    monkeypatch.setattr('tasks.voice_tasks.allocate_voice_slot.delay', lambda **kwargs: dispatched.append(kwargs))
+
+    processed = process_voice_queue.run()
+    assert processed == 1
+    assert dispatched and dispatched[0]['voice_id'] == 2
+    assert requeued and requeued[0][0] == 1
+    assert requeued[0][2] >= 5
+
+
+def test_process_voice_queue_fetches_provider_for_legacy_payload(monkeypatch):
+    class FakeVoice:
+        service_provider = VoiceServiceProvider.CARTESIA
+
+    class FakeQuery:
+        @staticmethod
+        def get(_):
+            return FakeVoice()
+
+    monkeypatch.setattr('models.voice_model.Voice', SimpleNamespace(query=FakeQuery()))
+    monkeypatch.setattr('models.voice_model.VoiceModel.available_slot_capacity', staticmethod(lambda provider=None: 1))
+
+    queue = [{
+        'voice_id': 99,
+        's3_key': 'legacy',
+        'filename': 'legacy.wav',
+        'user_id': 44,
+        'voice_name': 'legacy-voice',
+        'attempts': 0,
+    }]
+
+    def fake_dequeue():
+        return queue.pop(0) if queue else None
+
+    dispatched = []
+
+    monkeypatch.setattr('tasks.voice_tasks.VoiceSlotQueue.dequeue', fake_dequeue)
+    monkeypatch.setattr('tasks.voice_tasks.allocate_voice_slot.delay', lambda **kwargs: dispatched.append(kwargs))
+
+    processed = process_voice_queue.run()
+    assert processed == 1
+    assert dispatched and dispatched[0]['service_provider'] == VoiceServiceProvider.CARTESIA
 
 def test_reclaim_idle_voices_evicts_and_triggers_queue(monkeypatch, fake_db):
     now = datetime.utcnow()

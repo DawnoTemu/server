@@ -4,15 +4,18 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from database import db
 from utils.voice_slot_manager import (
     VoiceSlotManager,
     VoiceSlotManagerError,
 )
 from models.voice_model import (
+    Voice,
     VoiceAllocationStatus,
     VoiceStatus,
     VoiceSlotEventType,
 )
+from models.user_model import User
 
 
 class DummySession:
@@ -29,6 +32,9 @@ class DummySession:
 
     def rollback(self):
         self.rollback_calls += 1
+
+    def refresh(self, _):
+        return None
 
 
 @pytest.fixture
@@ -180,3 +186,50 @@ def test_missing_sample_ready_voice_allowed(monkeypatch, dummy_session):
     )
     state = VoiceSlotManager.ensure_active_voice(voice)
     assert state.status == VoiceSlotManager.STATUS_READY
+
+
+def test_ensure_active_voice_refreshes_stale_state(app, mocker):
+    mocker.patch("utils.voice_slot_manager.VoiceSlotQueue.position", return_value=None)
+    mocker.patch("utils.voice_slot_manager.VoiceSlotQueue.length", return_value=0)
+
+    with app.app_context():
+        user = User(
+            email="stale@example.com",
+            is_active=True,
+            email_confirmed=True,
+        )
+        user.set_password("Password123!")
+        db.session.add(user)
+        db.session.commit()
+
+        voice = Voice(
+            name="Stale Voice",
+            user_id=user.id,
+            recording_s3_key="voice_samples/stale.wav",
+            status=VoiceStatus.RECORDED,
+            allocation_status=VoiceAllocationStatus.RECORDED,
+        )
+        db.session.add(voice)
+        db.session.commit()
+
+        stale_voice = Voice.query.get(voice.id)
+        db.session.expunge(stale_voice)
+
+        Voice.query.filter_by(id=voice.id).update(
+            {
+                "allocation_status": VoiceAllocationStatus.ALLOCATING,
+                "status": VoiceStatus.PROCESSING,
+            },
+            synchronize_session=False,
+        )
+        db.session.commit()
+
+        mocker.patch.object(
+            VoiceSlotManager,
+            "_initiate_allocation",
+            side_effect=AssertionError("Allocation should not be re-triggered for stale voice state"),
+        )
+
+        state = VoiceSlotManager.ensure_active_voice(stale_voice)
+        assert state.status == VoiceSlotManager.STATUS_ALLOCATING
+        assert state.metadata["allocation_status"] == VoiceAllocationStatus.ALLOCATING
