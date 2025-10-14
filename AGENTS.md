@@ -17,3 +17,12 @@ Use concise, descriptive commit subjects similar to the current history (e.g., `
 
 ## Configuration & Secrets
 Create a `.env` file in the `server/` directory as described in `README.md`, supplying Cartesia, ElevenLabs, Resend, Redis, and AWS values. Never commit `.env`, voice samples, or generated audio; temporary artifacts belong in `uploads/` locally or S3 in production. When rotating keys, update environment variables in your deployment platform and confirm that both Flask and Celery processes restart with the new settings.
+
+## Issue Tracking & Agent Workflow
+We manage work with the `bd` dependency-aware issue tracker. Initialize it once per clone from the repository root via `bd init`; this creates the `.beads/` directory that stores the local database and JSON export used for git syncing.
+
+- Run `bd ready` before claiming tasks to see unblocked issues, then update status with `bd update <issue-id> --status in_progress` when you start.
+- Capture newly discovered work using `bd create "Short title"` plus `-d` for context, `-p` for priority (0 highest), `-t` for type, and `--assignee` when handoffs are clear.
+- Express dependencies explicitly: `bd dep add <blocked-issue> <blocking-issue>` keeps the ready queue accurate; inspect graphs with `bd dep tree <issue-id>`.
+- Close items with `bd close <issue-id> --reason "details"` as soon as the change merges; reference the issue ID in commits and pull requests.
+- Commit the auto-generated artifacts under `.beads/` so teammates receive updates after pulls; the CLI handles import/export automatically.

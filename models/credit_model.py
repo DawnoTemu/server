@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import List, Tuple, Optional
+from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy import and_, or_, func, select
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -91,6 +91,132 @@ def _lock_user(user_id: int) -> User:
         stmt = stmt.with_for_update()
     user = db.session.execute(stmt).scalar_one()
     return user
+
+
+ALLOWED_TRANSACTION_TYPES = {"credit", "debit", "refund", "expire"}
+
+
+def _serialize_lot(lot: CreditLot, now: Optional[datetime] = None) -> Dict[str, Optional[str | int | bool]]:
+    now = now or datetime.utcnow()
+    is_active = (lot.amount_remaining or 0) > 0 and (
+        lot.expires_at is None or lot.expires_at > now
+    )
+    return {
+        "id": lot.id,
+        "source": lot.source,
+        "amount_granted": int(lot.amount_granted or 0),
+        "amount_remaining": int(lot.amount_remaining or 0),
+        "expires_at": lot.expires_at.isoformat() if lot.expires_at else None,
+        "created_at": lot.created_at.isoformat() if lot.created_at else None,
+        "updated_at": lot.updated_at.isoformat() if lot.updated_at else None,
+        "is_active": is_active,
+    }
+
+
+def _serialize_transaction(tx: CreditTransaction) -> Dict[str, Optional[int | str | dict]]:
+    return {
+        "id": tx.id,
+        "type": tx.type,
+        "amount": int(tx.amount),
+        "reason": tx.reason,
+        "status": tx.status,
+        "audio_story_id": tx.audio_story_id,
+        "story_id": tx.story_id,
+        "metadata": tx.metadata_json or {},
+        "created_at": tx.created_at.isoformat() if tx.created_at else None,
+        "updated_at": tx.updated_at.isoformat() if tx.updated_at else None,
+    }
+
+
+def _normalize_transaction_types(types: Optional[List[str] | Tuple[str, ...]]) -> Optional[List[str]]:
+    if not types:
+        return None
+    normalized = []
+    seen = set()
+    for entry in types:
+        if not entry:
+            continue
+        candidate = str(entry).strip().lower()
+        if candidate in ALLOWED_TRANSACTION_TYPES and candidate not in seen:
+            normalized.append(candidate)
+            seen.add(candidate)
+    return normalized or None
+
+
+def get_user_transactions(
+    user_id: int,
+    *,
+    limit: int = 20,
+    offset: int = 0,
+    tx_types: Optional[List[str] | Tuple[str, ...]] = None,
+) -> Dict[str, object]:
+    limit = int(limit or 20)
+    if limit <= 0:
+        limit = 1
+    limit = min(limit, 100)
+
+    offset = max(int(offset or 0), 0)
+    normalized_types = _normalize_transaction_types(tx_types)
+
+    query = CreditTransaction.query.filter(CreditTransaction.user_id == user_id)
+    if normalized_types:
+        query = query.filter(CreditTransaction.type.in_(normalized_types))
+
+    total = query.count()
+    entries = (
+        query.order_by(CreditTransaction.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    serialized = [_serialize_transaction(tx) for tx in entries]
+    next_offset = offset + len(serialized) if offset + len(serialized) < total else None
+
+    return {
+        "items": serialized,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "next_offset": next_offset,
+        "applied_types": normalized_types or [],
+    }
+
+
+def get_user_credit_summary(
+    user_id: int,
+    *,
+    history_limit: int = 20,
+    history_offset: int = 0,
+    history_types: Optional[List[str] | Tuple[str, ...]] = None,
+) -> Dict[str, object]:
+    user = db.session.get(User, user_id)
+    balance = int(user.credits_balance or 0) if user else 0
+
+    now = datetime.utcnow()
+    lots_query = (
+        CreditLot.query.filter(CreditLot.user_id == user_id)
+        .order_by(
+            CreditLot.amount_remaining <= 0,
+            func.coalesce(CreditLot.expires_at, datetime.max).asc(),
+            CreditLot.created_at.asc(),
+        )
+    )
+    lots = [_serialize_lot(lot, now) for lot in lots_query.all()]
+
+    history = get_user_transactions(
+        user_id,
+        limit=history_limit,
+        offset=history_offset,
+        tx_types=history_types,
+    )
+
+    summary = {
+        "balance": balance,
+        "lots": lots,
+        "history": history,
+    }
+    summary["recent_transactions"] = history["items"]
+    return summary
 
 
 def grant(user_id: int, amount: int, reason: str, source: str, expires_at: Optional[datetime] = None):

@@ -318,3 +318,133 @@ class UserModel:
             list: List of admin User objects
         """
         return User.query.filter_by(is_admin=True).all()
+
+    @staticmethod
+    def delete_user(user_id):
+        """
+        Permanently delete a user and related data.
+
+        Args:
+            user_id: ID of the user to delete.
+
+        Returns:
+            tuple: (success, details or error_message)
+        """
+        user = UserModel.get_by_id(user_id)
+        if not user:
+            return False, "User not found"
+
+        from models.audio_model import AudioModel, AudioStory
+        from models.voice_model import Voice, VoiceSlotEvent
+        from utils.voice_service import VoiceService
+        from utils.s3_client import S3Client
+        from models.credit_model import CreditTransaction, CreditLot
+        from sqlalchemy import delete as sa_delete
+
+        warnings = []
+
+        def add_warning(kind, details):
+            warnings.append({"type": kind, "details": details})
+
+        # Remove synthesized audio for the user
+        audio_success, audio_details = AudioModel.delete_audio_for_user(user_id)
+        if not audio_success:
+            add_warning("audio", audio_details)
+        else:
+            if audio_details.get("s3_errors"):
+                add_warning("audio_s3", audio_details["s3_errors"])
+
+        # Remove voices (and associated assets) owned by the user
+        voices = Voice.query.filter_by(user_id=user_id).all()
+        voice_s3_keys: list[str] = []
+        voice_ids: list[int] = []
+        for voice in voices:
+            voice_ids.append(voice.id)
+            if voice.s3_sample_key:
+                voice_s3_keys.append(voice.s3_sample_key)
+            if voice.recording_s3_key:
+                voice_s3_keys.append(voice.recording_s3_key)
+
+            if voice.elevenlabs_voice_id:
+                try:
+                    VoiceService.delete_voice(
+                        voice_id=voice.id,
+                        external_voice_id=voice.elevenlabs_voice_id,
+                        service=voice.service_provider,
+                    )
+                except Exception as exc:
+                    add_warning(
+                        "voice_service",
+                        {"voice_id": voice.id, "message": str(exc)},
+                    )
+
+        if voice_s3_keys:
+            try:
+                success, deleted_count, errors = S3Client.delete_objects(voice_s3_keys)
+                if not success:
+                    add_warning("voice_s3", {"errors": errors})
+            except Exception as exc:
+                add_warning("voice_s3", str(exc))
+
+        if voice_ids:
+            VoiceSlotEvent.query.filter(VoiceSlotEvent.voice_id.in_(voice_ids)).update(
+                {"voice_id": None}, synchronize_session=False
+            )
+            db.session.flush()
+            from sqlalchemy import delete as sa_delete
+
+            db.session.execute(sa_delete(Voice).where(Voice.id.in_(voice_ids)))
+            db.session.commit()
+
+        # Re-fetch the user after potential commits inside helper methods
+        user = UserModel.get_by_id(user_id)
+        if not user:
+            return True, {"warnings": warnings}  # Nothing left to delete
+
+        residual_voice_ids = [voice.id for voice in getattr(user, "voices", [])]
+        if residual_voice_ids:
+            db.session.execute(sa_delete(Voice).where(Voice.id.in_(residual_voice_ids)))
+            db.session.commit()
+            add_warning(
+                "voice_cleanup",
+                {
+                    "voice_ids": residual_voice_ids,
+                    "message": "Force removed lingering voices after primary cleanup.",
+                },
+            )
+            user = UserModel.get_by_id(user_id)
+            if not user:
+                return True, {"warnings": warnings}
+
+        try:
+            # Null out user references in voice slot events to preserve audit history
+            VoiceSlotEvent.query.filter(VoiceSlotEvent.user_id == user_id).update(
+                {"user_id": None}, synchronize_session=False
+            )
+
+            # Delete remaining credit ledger data
+            transactions = CreditTransaction.query.filter_by(user_id=user_id).all()
+            for tx in transactions:
+                db.session.delete(tx)
+
+            lots = CreditLot.query.filter_by(user_id=user_id).all()
+            for lot in lots:
+                db.session.delete(lot)
+
+            user.credits_balance = 0
+
+            # Clean up any leftover audio stories (in case prior cleanup failed)
+            remaining_audio = AudioStory.query.filter_by(user_id=user_id).all()
+            for audio in remaining_audio:
+                db.session.delete(audio)
+
+            db.session.execute(sa_delete(Voice).where(Voice.user_id == user_id))
+
+            db.session.delete(user)
+            db.session.commit()
+        except Exception as exc:
+            db.session.rollback()
+            logging.getLogger(__name__).exception("Error deleting user %s", user_id)
+            return False, f"Failed to delete account: {exc}"
+
+        return True, {"warnings": warnings}

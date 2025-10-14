@@ -1,5 +1,6 @@
 from flask import request, jsonify, render_template
 from controllers.auth_controller import AuthController
+from controllers.user_controller import UserController
 from utils.auth_middleware import token_required
 from routes import auth_bp
 
@@ -70,6 +71,45 @@ def refresh_token():
 def get_current_user(current_user):
     """Get the authenticated user's profile information"""
     return jsonify(current_user.to_dict()), 200
+
+
+# PATCH /auth/me - Update current user profile
+@auth_bp.route('/me', methods=['PATCH'])
+@token_required
+def update_current_user(current_user):
+    """Update the authenticated user's profile information"""
+    data = request.get_json() or {}
+
+    new_email = data.get('email')
+    current_password = data.get('current_password')
+    new_password = data.get('new_password')
+    new_password_confirm = data.get('new_password_confirm')
+
+    success, result, status_code = UserController.update_profile(
+        current_user,
+        current_password=current_password,
+        new_email=new_email,
+        new_password=new_password,
+        new_password_confirm=new_password_confirm,
+    )
+
+    return jsonify(result), status_code
+
+
+# DELETE /auth/me - Delete current user account
+@auth_bp.route('/me', methods=['DELETE'])
+@token_required
+def delete_current_user(current_user):
+    """Delete the authenticated user's account"""
+    data = request.get_json(silent=True) or {}
+    current_password = data.get('current_password')
+
+    success, result, status_code = UserController.delete_account(
+        current_user,
+        current_password=current_password,
+    )
+
+    return jsonify(result), status_code
 
 # GET /auth/confirm-email/:token - Confirm email
 @auth_bp.route('/confirm-email/<token>', methods=['GET'])

@@ -1,65 +1,64 @@
-from flask import jsonify
-from datetime import datetime
+from flask import jsonify, request
 
 from routes import billing_bp
 from utils.auth_middleware import token_required
 from utils.credits import get_credit_config, calculate_required_credits
-from models.credit_model import CreditLot, CreditTransaction
+from models.credit_model import get_user_credit_summary, get_user_transactions
 from models.story_model import StoryModel
+
+
+def _parse_transaction_types(arg_value: str | None):
+    if not arg_value:
+        return None
+    parts = [segment.strip() for segment in arg_value.split(",")]
+    return [part for part in parts if part]
 
 
 @billing_bp.route('/me/credits', methods=['GET'])
 @token_required
 def get_my_credits(current_user):
     cfg = get_credit_config()
-    now = datetime.utcnow()
 
-    # Active lots (non-expired, positive remaining)
-    lots_q = (
-        CreditLot.query
-        .filter(
-            CreditLot.user_id == current_user.id,
-            CreditLot.amount_remaining > 0,
-            (CreditLot.expires_at.is_(None) | (CreditLot.expires_at > now)),
-        )
-        .order_by(CreditLot.expires_at.asc(), CreditLot.created_at)
+    history_limit = request.args.get('history_limit', type=int)
+    if history_limit is None:
+        history_limit = 20
+    history_limit = max(1, min(history_limit, 100))
+
+    history_offset = max(request.args.get('history_offset', type=int) or 0, 0)
+    types_param = request.args.get('type') or request.args.get('types')
+    history_types = _parse_transaction_types(types_param)
+
+    summary = get_user_credit_summary(
+        current_user.id,
+        history_limit=history_limit,
+        history_offset=history_offset,
+        history_types=history_types,
     )
-    lots = [
-        {
-            'source': l.source,
-            'amount_remaining': int(l.amount_remaining or 0),
-            'expires_at': l.expires_at.isoformat() if l.expires_at else None,
-        }
-        for l in lots_q.all()
-    ]
+    summary['unit_label'] = cfg['unit_label']
+    summary['unit_size'] = cfg['unit_size']
 
-    # Recent transactions (last 20)
-    tx_q = (
-        CreditTransaction.query
-        .filter(CreditTransaction.user_id == current_user.id)
-        .order_by(CreditTransaction.created_at.desc())
-        .limit(20)
+    return jsonify(summary), 200
+
+
+@billing_bp.route('/me/credits/history', methods=['GET'])
+@token_required
+def get_my_credit_history(current_user):
+    limit = request.args.get('limit', type=int)
+    if limit is None:
+        limit = 20
+    limit = max(1, min(limit, 100))
+
+    offset = max(request.args.get('offset', type=int) or 0, 0)
+    types_param = request.args.get('type') or request.args.get('types')
+    tx_types = _parse_transaction_types(types_param)
+
+    history = get_user_transactions(
+        current_user.id,
+        limit=limit,
+        offset=offset,
+        tx_types=tx_types,
     )
-    transactions = [
-        {
-            'type': t.type,
-            'amount': int(t.amount),
-            'status': t.status,
-            'reason': t.reason,
-            'audio_story_id': t.audio_story_id,
-            'story_id': t.story_id,
-            'created_at': t.created_at.isoformat() if t.created_at else None,
-        }
-        for t in tx_q.all()
-    ]
-
-    return jsonify({
-        'balance': int(current_user.credits_balance or 0),
-        'unit_label': cfg['unit_label'],
-        'unit_size': cfg['unit_size'],
-        'lots': lots,
-        'recent_transactions': transactions,
-    }), 200
+    return jsonify(history), 200
 
 
 @billing_bp.route('/stories/<int:story_id>/credits', methods=['GET'])

@@ -54,6 +54,173 @@ components:
           format: date-time
           example: "2025-03-23T14:30:15.651Z"
 
+    UpdateProfileRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+          format: email
+          description: New email address for the user.
+        current_password:
+          type: string
+          description: Existing password required to confirm the profile change.
+        new_password:
+          type: string
+          description: Replacement password for the account.
+        new_password_confirm:
+          type: string
+          description: Confirmation of the replacement password.
+      required:
+        - current_password
+
+    UpdateProfileResponse:
+      type: object
+      properties:
+        user:
+          $ref: '#/components/schemas/User'
+        message:
+          type: string
+          example: Profile updated successfully.
+        email_confirmation_required:
+          type: boolean
+          description: Indicates if the user must reconfirm their email address.
+          example: true
+        email_confirmation_error:
+          type: string
+          nullable: true
+          description: Optional message if sending the confirmation email failed.
+        password_updated:
+          type: boolean
+          description: Indicates if the password was changed during this update.
+          example: false
+    CreditLot:
+      type: object
+      properties:
+        id:
+          type: integer
+        source:
+          type: string
+          example: monthly
+        amount_granted:
+          type: integer
+          example: 20
+        amount_remaining:
+          type: integer
+          example: 5
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        is_active:
+          type: boolean
+          description: True when the lot still has remaining credits and has not expired.
+          example: true
+    CreditTransactionEntry:
+      type: object
+      properties:
+        id:
+          type: integer
+        type:
+          type: string
+          enum: [credit, debit, refund, expire]
+        amount:
+          type: integer
+        reason:
+          type: string
+          nullable: true
+        status:
+          type: string
+        audio_story_id:
+          type: integer
+          nullable: true
+        story_id:
+          type: integer
+          nullable: true
+        metadata:
+          type: object
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+          nullable: true
+    CreditHistory:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/CreditTransactionEntry'
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+        next_offset:
+          type: integer
+          nullable: true
+        applied_types:
+          type: array
+          items:
+            type: string
+            enum: [credit, debit, refund, expire]
+    CreditSummaryResponse:
+      type: object
+      properties:
+        balance:
+          type: integer
+        unit_label:
+          type: string
+        unit_size:
+          type: integer
+        lots:
+          type: array
+          items:
+            $ref: '#/components/schemas/CreditLot'
+        history:
+          $ref: '#/components/schemas/CreditHistory'
+        recent_transactions:
+          type: array
+          items:
+            $ref: '#/components/schemas/CreditTransactionEntry'
+    CreditHistoryResponse:
+      $ref: '#/components/schemas/CreditHistory'
+    DeleteAccountRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        current_password:
+          type: string
+          description: Existing password required to confirm account deletion.
+        reason:
+          type: string
+          description: Optional free-form reason provided by the user.
+      required:
+        - current_password
+
+    DeleteAccountResponse:
+      type: object
+      properties:
+        message:
+          type: string
+          example: Your account has been deleted.
+        warnings:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+          description: Optional warnings if ancillary cleanup (e.g., S3 deletion) encountered recoverable issues.
+
     Story:
       type: object
       properties:
@@ -486,67 +653,6 @@ components:
           type: string
           example: "Operation completed successfully"
 
-    CreditLot:
-      type: object
-      properties:
-        source:
-          type: string
-          example: monthly
-        amount_remaining:
-          type: integer
-          example: 120
-        expires_at:
-          type: string
-          format: date-time
-          nullable: true
-          example: "2025-07-01T00:00:00Z"
-
-    CreditTransactionSummary:
-      type: object
-      properties:
-        type:
-          type: string
-          example: debit
-        amount:
-          type: integer
-          example: -3
-        status:
-          type: string
-          example: applied
-        reason:
-          type: string
-          example: audio_synthesis:42
-        audio_story_id:
-          type: integer
-          example: 123
-        story_id:
-          type: integer
-          example: 42
-        created_at:
-          type: string
-          format: date-time
-          example: "2025-05-15T12:00:00Z"
-
-    CreditsResponse:
-      type: object
-      properties:
-        balance:
-          type: integer
-          example: 25
-        unit_label:
-          type: string
-          example: Story Points (Punkty Magii)
-        unit_size:
-          type: integer
-          example: 1000
-        lots:
-          type: array
-          items:
-            $ref: '#/components/schemas/CreditLot'
-        recent_transactions:
-          type: array
-          items:
-            $ref: '#/components/schemas/CreditTransactionSummary'
     AudioStatusResponse:
       type: object
       properties:
@@ -764,6 +870,96 @@ paths:
                 $ref: '#/components/schemas/User'
         '401':
           description: Unauthorized (invalid or missing token)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    patch:
+      tags:
+        - Authentication
+      summary: Update current user profile
+      description: Update the authenticated user's email and/or password after confirming the current password.
+      operationId: updateCurrentUser
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProfileRequest'
+      responses:
+        '200':
+          description: Profile updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateProfileResponse'
+        '400':
+          description: Invalid request (missing password confirmation, no changes, etc.)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized (invalid or missing token)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Current password incorrect
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Email already in use
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      tags:
+        - Authentication
+      summary: Delete current user account
+      description: Delete the authenticated user's account after confirming the current password.
+      operationId: deleteCurrentUser
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteAccountRequest'
+      responses:
+        '200':
+          description: Account deleted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteAccountResponse'
+        '400':
+          description: Missing current password
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized (invalid or missing token)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Current password incorrect
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error deleting the account
           content:
             application/json:
               schema:
@@ -1237,13 +1433,84 @@ paths:
       operationId: getMyCredits
       security:
         - bearerAuth: []
+      parameters:
+        - name: history_limit
+          in: query
+          description: Maximum number of recent transactions to include (default 20, max 100).
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+        - name: history_offset
+          in: query
+          description: Offset into the transaction history for pagination.
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+        - name: type
+          in: query
+          description: Comma-separated list of transaction types (credit, debit, refund, expire) to filter history.
+          required: false
+          schema:
+            type: string
       responses:
         '200':
-          description: Current balance and recent transactions
+          description: Current balance, lots, and paginated history
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CreditsResponse'
+                $ref: '#/components/schemas/CreditSummaryResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Account inactive or email not confirmed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /me/credits/history:
+    get:
+      tags:
+        - Billing
+      summary: List credit transactions with pagination
+      operationId: getMyCreditHistory
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum number of transactions to return (default 20, max 100).
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+        - name: offset
+          in: query
+          description: Offset into the transaction list.
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+        - name: type
+          in: query
+          description: Comma-separated list of transaction types (credit, debit, refund, expire) to include.
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Paginated list of credit transactions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreditHistoryResponse'
         '401':
           description: Unauthorized
           content:

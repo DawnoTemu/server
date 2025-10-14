@@ -150,6 +150,213 @@ Get the profile information of the currently authenticated user.
 - 200: Success
 - 401: Unauthorized (invalid or missing token)
 
+#### Update Current User
+
+```
+PATCH /auth/me
+```
+
+Update the authenticated user's profile details (email and/or password). The current password must be supplied to verify the change.
+
+**Headers:**
+- Authorization: Bearer {access_token}
+
+**Request Body:**
+```json
+{
+  "email": "new-email@example.com",
+  "current_password": "CurrentPass1!",
+  "new_password": "StrongerPass2!",
+  "new_password_confirm": "StrongerPass2!"
+}
+```
+
+At least one of `email` or `new_password` is required. If `new_password` is present, `new_password_confirm` must match.
+
+**Response:**
+```json
+{
+  "user": {
+    "id": 1,
+    "email": "new-email@example.com",
+    "email_confirmed": false,
+    "created_at": "2025-03-19T14:22:35.982Z",
+    "last_login": "2025-03-23T14:30:15.651Z"
+  },
+  "message": "Profile updated successfully.",
+  "email_confirmation_required": true,
+  "password_updated": true
+}
+```
+
+**Status Codes:**
+- 200: Profile updated successfully
+- 400: Invalid request (missing current password, mismatched confirmation, or no changes)
+- 401: Unauthorized (invalid or missing token)
+- 403: Current password incorrect
+- 409: Email already in use
+
+#### Delete Current User
+
+```
+DELETE /auth/me
+```
+
+Delete the authenticated user's account after confirming the current password.
+
+**Headers:**
+- Authorization: Bearer {access_token}
+
+**Request Body:**
+```json
+{
+  "current_password": "CurrentPass1!",
+  "reason": "No longer needed"
+}
+```
+
+**Response:**
+```json
+{
+  "message": "Your account has been deleted.",
+  "warnings": []
+}
+```
+
+**Status Codes:**
+- 200: Account deleted successfully
+- 400: Missing current password
+- 401: Unauthorized (invalid or missing token)
+- 403: Current password incorrect
+- 500: Server error deleting the account
+
+### Billing
+
+#### Get Credit Summary
+
+```
+GET /me/credits
+```
+
+Retrieve the current balance, active lots (with remaining amounts and expirations), and a paginated slice of recent transactions. Optional query parameters:
+
+- `history_limit` (default 20, max 100) – number of transactions to include.
+- `history_offset` – starting offset for the embedded history.
+- `type` – comma-separated list of transaction types to include (`credit`, `debit`, `refund`, `expire`).
+
+**Headers:**
+- Authorization: Bearer {access_token}
+
+**Response:**
+```json
+{
+  "balance": 25,
+  "unit_label": "Story Points (Punkty Magii)",
+  "unit_size": 1000,
+  "lots": [
+    {
+      "id": 10,
+      "source": "monthly",
+      "amount_granted": 20,
+      "amount_remaining": 12,
+      "expires_at": "2025-07-01T00:00:00Z",
+      "created_at": "2025-06-01T00:00:00Z",
+      "updated_at": "2025-06-15T08:30:00Z",
+      "is_active": true
+    }
+  ],
+  "history": {
+    "items": [
+      {
+        "id": 200,
+        "type": "debit",
+        "amount": -3,
+        "reason": "audio_synthesis:42",
+        "status": "applied",
+        "audio_story_id": 42,
+        "story_id": null,
+        "metadata": {},
+        "created_at": "2025-06-18T11:27:00Z",
+        "updated_at": "2025-06-18T11:27:00Z"
+      }
+    ],
+    "total": 5,
+    "limit": 20,
+    "offset": 0,
+    "next_offset": null,
+    "applied_types": []
+  },
+  "recent_transactions": [
+    {
+      "id": 200,
+      "type": "debit",
+      "amount": -3,
+      "reason": "audio_synthesis:42",
+      "status": "applied",
+      "audio_story_id": 42,
+      "story_id": null,
+      "metadata": {},
+      "created_at": "2025-06-18T11:27:00Z",
+      "updated_at": "2025-06-18T11:27:00Z"
+    }
+  ]
+}
+```
+
+**Status Codes:**
+- 200: Summary returned successfully
+- 401: Unauthorized
+- 403: Account inactive or email not confirmed
+
+#### Get Credit History
+
+```
+GET /me/credits/history
+```
+
+Retrieve a paginated list of credit transactions. Optional query parameters:
+
+- `limit` (default 20, max 100)
+- `offset`
+- `type` – comma-separated list of transaction types (`credit`, `debit`, `refund`, `expire`)
+
+**Headers:**
+- Authorization: Bearer {access_token}
+
+**Response:**
+```json
+{
+  "items": [
+    {
+      "id": 201,
+      "type": "credit",
+      "amount": 10,
+      "reason": "monthly_grant",
+      "status": "applied",
+      "audio_story_id": null,
+      "story_id": null,
+      "metadata": {
+        "source": "monthly"
+      },
+      "created_at": "2025-06-01T08:00:00Z",
+      "updated_at": "2025-06-01T08:00:00Z"
+    }
+  ],
+  "total": 5,
+  "limit": 20,
+  "offset": 0,
+  "next_offset": 20,
+  "applied_types": [
+    "credit"
+  ]
+}
+```
+
+**Status Codes:**
+- 200: History retrieved successfully
+- 401: Unauthorized
+- 403: Account inactive or email not confirmed
+
 #### Confirm Email
 
 ```

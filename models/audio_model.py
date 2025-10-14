@@ -415,6 +415,52 @@ class AudioModel:
             return False, str(e)
     
     @staticmethod
+    def delete_audio_for_user(user_id):
+        """
+        Delete all audio stories and associated S3 files for a user.
+
+        Args:
+            user_id: User ID
+
+        Returns:
+            tuple: (success, details)
+        """
+        try:
+            records = AudioStory.query.filter_by(user_id=user_id).all()
+
+            if not records:
+                return True, {
+                    "deleted_records": 0,
+                    "deleted_files": 0,
+                    "s3_errors": None,
+                }
+
+            keys_to_delete = [record.s3_key for record in records if record.s3_key]
+
+            for record in records:
+                db.session.delete(record)
+
+            db.session.commit()
+
+            deleted_files = 0
+            s3_errors = None
+            if keys_to_delete:
+                success, deleted_count, errors = S3Client.delete_objects(keys_to_delete)
+                deleted_files = deleted_count
+                if not success:
+                    s3_errors = errors
+
+            return True, {
+                "deleted_records": len(records),
+                "deleted_files": deleted_files,
+                "s3_errors": s3_errors,
+            }
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"Error deleting audio for user {user_id}: {str(e)}")
+            return False, str(e)
+
+    @staticmethod
     def synthesize_audio(voice_id, story_id, user_id, text):
         """
         Create or find an audio record and queue an async job to synthesize audio
