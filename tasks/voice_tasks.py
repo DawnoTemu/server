@@ -307,6 +307,88 @@ def reclaim_idle_voices(self, max_to_reclaim: Optional[int] = None):
     return reclaimed
 
 
+@celery_app.task(
+    bind=True,
+    base=VoiceTask,
+    name='voice.reset_stuck_allocations',
+)
+def reset_stuck_allocations(self, max_to_reset: Optional[int] = None, stale_after_seconds: Optional[int] = None):
+    """Reset voices stuck in ALLOCATING beyond the configured timeout and re-enqueue."""
+    from models.voice_model import (
+        Voice,
+        VoiceAllocationStatus,
+        VoiceSlotEvent,
+        VoiceSlotEventType,
+        VoiceStatus,
+    )
+
+    now = datetime.utcnow()
+    stale_seconds = stale_after_seconds
+    if stale_seconds is None:
+        stale_seconds = getattr(Config, "VOICE_ALLOCATION_STUCK_SECONDS", 600) or 600
+    threshold = now - timedelta(seconds=stale_seconds)
+
+    query = (
+        Voice.query.filter(Voice.allocation_status == VoiceAllocationStatus.ALLOCATING)
+        .filter(
+            or_(
+                Voice.slot_lock_expires_at.is_(None),
+                Voice.slot_lock_expires_at <= now,
+                Voice.updated_at <= threshold,
+            )
+        )
+        .order_by(Voice.updated_at.asc())
+    )
+    if max_to_reset:
+        query = query.limit(max_to_reset)
+
+    stuck = query.all()
+    if not stuck:
+        return 0
+
+    reset_count = 0
+    for voice in stuck:
+        try:
+            voice.status = VoiceStatus.RECORDED
+            voice.allocation_status = VoiceAllocationStatus.RECORDED
+            voice.error_message = "stale_allocation_reset"
+            voice.slot_lock_expires_at = None
+            VoiceSlotQueue.enqueue(
+                voice.id,
+                {
+                    "voice_id": voice.id,
+                    "s3_key": voice.recording_s3_key or voice.s3_sample_key,
+                    "filename": voice.sample_filename or f"voice_{voice.id}.mp3",
+                    "user_id": voice.user_id,
+                    "voice_name": voice.name,
+                    "attempts": 0,
+                    "service_provider": voice.service_provider,
+                },
+            )
+            VoiceSlotEvent.log_event(
+                voice_id=voice.id,
+                user_id=voice.user_id,
+                event_type=VoiceSlotEventType.ALLOCATION_QUEUED,
+                reason="stuck_allocation_reset",
+                metadata={"stale_seconds": stale_seconds},
+            )
+            reset_count += 1
+        except Exception as exc:
+            logger.error("Failed to reset stuck allocation for voice %s: %s", voice.id, exc)
+            db.session.rollback()
+
+    if reset_count:
+        try:
+            db.session.commit()
+        except Exception as exc:
+            logger.error("Failed to commit reset of stuck allocations: %s", exc)
+            db.session.rollback()
+            raise
+        process_voice_queue.delay()
+        logger.info("Reset %s stuck allocations", reset_count)
+    return reset_count
+
+
 _existing_schedule = getattr(celery_app.conf, 'beat_schedule', None) or {}
 celery_app.conf.beat_schedule = {
     **_existing_schedule,
@@ -316,6 +398,10 @@ celery_app.conf.beat_schedule = {
     },
     'voice-reclaim-idle': {
         'task': 'voice.reclaim_idle_voices',
+        'schedule': timedelta(minutes=5),
+    },
+    'voice-reset-stuck-allocations': {
+        'task': 'voice.reset_stuck_allocations',
         'schedule': timedelta(minutes=5),
     },
 }
@@ -350,6 +436,20 @@ def allocate_voice_slot(self, voice_id, s3_key, filename, user_id, voice_name=No
             return False
 
         provider = service_provider or voice.service_provider
+
+        # Idempotency: if already allocated with remote ID and marked ready, short-circuit
+        if voice.elevenlabs_voice_id and voice.allocation_status == VoiceAllocationStatus.READY:
+            VoiceSlotEvent.log_event(
+                voice_id=voice.id,
+                user_id=user_id,
+                event_type=VoiceSlotEventType.ALLOCATION_COMPLETED,
+                reason="idempotent_skip",
+                metadata={"external_voice_id": voice.elevenlabs_voice_id, "service_provider": provider},
+            )
+            VoiceSlotQueue.remove(voice.id)
+            db.session.commit()
+            logger.info("Voice %s already allocated; skipping duplicate clone", voice_id)
+            return True
 
         slot_capacity = VoiceModel.available_slot_capacity(provider)
         payload = {
