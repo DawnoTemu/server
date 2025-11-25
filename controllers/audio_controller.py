@@ -148,6 +148,13 @@ class AudioController:
                 remote_voice_id = remote_voice_id or voice.elevenlabs_voice_id
             if slot_state.status == VoiceSlotManager.STATUS_READY and not remote_voice_id:
                 logger.error("Voice %s ready without remote identifier", voice.id)
+                try:
+                    refund_by_audio(audio_record.id, reason="missing_remote_voice_id")
+                except Exception as refund_exc:
+                    logger.error("Refund after missing remote voice ID failed: %s", refund_exc)
+                audio_record.status = AudioStatus.ERROR.value
+                audio_record.error_message = "Voice ready but missing remote ID"
+                db.session.commit()
                 return False, {"error": "Voice is ready but missing remote identifier"}, 500
             if remote_voice_id:
                 slot_state.metadata.setdefault("elevenlabs_voice_id", remote_voice_id)
