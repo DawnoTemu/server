@@ -39,7 +39,7 @@ def get_audio(current_user, voice_id, story_id):
             
             if success:
                 return redirect(result)
-            return jsonify({"error": "Audio not found"}), 404
+            return jsonify(result if isinstance(result, dict) else {"error": result}), status_code
         
         # Stream audio with range support
         range_header = request.headers.get('Range')
