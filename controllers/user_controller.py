@@ -154,6 +154,14 @@ class UserController:
             logger.info("Enqueued account deletion", extra={"user_id": user.id, "task_id": task.id})
         except Exception as exc:
             logger.exception("Failed to enqueue account deletion for user %s: %s", user.id, exc)
+            # Reactivate the account since deletion is not proceeding
+            try:
+                user = UserModel.get_by_id(user.id)
+                if user:
+                    user.is_active = previous_active
+                    db.session.commit()
+            except Exception as inner_exc:
+                logger.error("Failed to reactivate user %s after enqueue failure: %s", user.id, inner_exc)
             return False, {"error": "Unable to start account deletion."}, 500
 
         response = {
