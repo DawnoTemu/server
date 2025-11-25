@@ -68,6 +68,45 @@ class VoiceSlotQueue:
             return payload
 
     @classmethod
+    def dequeue_ready_batch(cls, limit: int = 10) -> list[Dict[str, Any]]:
+        """Pop up to `limit` ready entries in order and return their payloads."""
+        client = RedisClient.get_client()
+        now = time.time()
+        if limit <= 0:
+            return []
+
+        keys = client.zrangebyscore(
+            cls.QUEUE_KEY,
+            '-inf',
+            now,
+            start=0,
+            num=limit,
+        )
+        if not keys:
+            return []
+
+        results: list[Dict[str, Any]] = []
+        for voice_key in keys:
+            with client.pipeline() as pipe:
+                pipe.zrem(cls.QUEUE_KEY, voice_key)
+                pipe.hget(cls.DETAILS_KEY, voice_key)
+                pipe.hdel(cls.DETAILS_KEY, voice_key)
+                removed, data, _ = pipe.execute()
+
+            if removed == 0 or data is None:
+                continue
+
+            try:
+                payload = json.loads(data)
+            except json.JSONDecodeError:
+                logger.exception("Failed to decode payload for voice %s; skipping", voice_key)
+                continue
+
+            results.append(payload)
+
+        return results
+
+    @classmethod
     def remove(cls, voice_id: int) -> None:
         client = RedisClient.get_client()
         voice_key = str(voice_id)

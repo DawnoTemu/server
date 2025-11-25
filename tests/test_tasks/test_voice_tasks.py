@@ -254,10 +254,7 @@ def test_process_voice_queue_dispatches(monkeypatch):
         'service_provider': VoiceServiceProvider.ELEVENLABS,
     }]
 
-    def fake_dequeue():
-        return queue.pop(0) if queue else None
-
-    monkeypatch.setattr('tasks.voice_tasks.VoiceSlotQueue.dequeue', fake_dequeue)
+    monkeypatch.setattr('tasks.voice_tasks.VoiceSlotQueue.dequeue_ready_batch', lambda limit=20: list(queue))
     monkeypatch.setattr('tasks.voice_tasks.allocate_voice_slot.delay', lambda **kwargs: dispatched.append(kwargs))
     monkeypatch.setattr('tasks.voice_tasks.VoiceSlotQueue.length', lambda: 1)
 
@@ -298,9 +295,6 @@ def test_process_voice_queue_requeues_when_provider_full(monkeypatch):
         },
     ]
 
-    def fake_dequeue():
-        return queue.pop(0) if queue else None
-
     requeued = []
 
     def fake_enqueue(voice_id, payload, delay_seconds=0):
@@ -308,7 +302,7 @@ def test_process_voice_queue_requeues_when_provider_full(monkeypatch):
 
     dispatched = []
 
-    monkeypatch.setattr('tasks.voice_tasks.VoiceSlotQueue.dequeue', fake_dequeue)
+    monkeypatch.setattr('tasks.voice_tasks.VoiceSlotQueue.dequeue_ready_batch', lambda limit=20: list(queue))
     monkeypatch.setattr('tasks.voice_tasks.VoiceSlotQueue.enqueue', fake_enqueue)
     monkeypatch.setattr('tasks.voice_tasks.allocate_voice_slot.delay', lambda **kwargs: dispatched.append(kwargs))
 
@@ -340,17 +334,67 @@ def test_process_voice_queue_fetches_provider_for_legacy_payload(monkeypatch):
         'attempts': 0,
     }]
 
-    def fake_dequeue():
-        return queue.pop(0) if queue else None
-
     dispatched = []
 
-    monkeypatch.setattr('tasks.voice_tasks.VoiceSlotQueue.dequeue', fake_dequeue)
+    monkeypatch.setattr('tasks.voice_tasks.VoiceSlotQueue.dequeue_ready_batch', lambda limit=20: list(queue))
     monkeypatch.setattr('tasks.voice_tasks.allocate_voice_slot.delay', lambda **kwargs: dispatched.append(kwargs))
 
     processed = process_voice_queue.run()
     assert processed == 1
     assert dispatched and dispatched[0]['service_provider'] == VoiceServiceProvider.CARTESIA
+
+
+def test_process_voice_queue_respects_capacity_per_provider(monkeypatch):
+    capacity_map = {
+        VoiceServiceProvider.ELEVENLABS: 1,
+        VoiceServiceProvider.CARTESIA: 1,
+    }
+
+    def capacity(provider=None):
+        return capacity_map.get(provider, 0)
+
+    monkeypatch.setattr('models.voice_model.VoiceModel.available_slot_capacity', staticmethod(capacity))
+
+    queue = [
+        {
+            'voice_id': 1,
+            's3_key': 'k1',
+            'filename': 'f1',
+            'user_id': 11,
+            'voice_name': 'first',
+            'attempts': 0,
+            'service_provider': VoiceServiceProvider.ELEVENLABS,
+        },
+        {
+            'voice_id': 2,
+            's3_key': 'k2',
+            'filename': 'f2',
+            'user_id': 22,
+            'voice_name': 'second',
+            'attempts': 0,
+            'service_provider': VoiceServiceProvider.ELEVENLABS,
+        },
+        {
+            'voice_id': 3,
+            's3_key': 'k3',
+            'filename': 'f3',
+            'user_id': 33,
+            'voice_name': 'third',
+            'attempts': 0,
+            'service_provider': VoiceServiceProvider.CARTESIA,
+        },
+    ]
+
+    dispatched = []
+    requeued = []
+    monkeypatch.setattr('tasks.voice_tasks.VoiceSlotQueue.dequeue_ready_batch', lambda limit=20: list(queue))
+    monkeypatch.setattr('tasks.voice_tasks.allocate_voice_slot.delay', lambda **kwargs: dispatched.append(kwargs))
+    monkeypatch.setattr('tasks.voice_tasks.VoiceSlotQueue.enqueue', lambda voice_id, payload, delay_seconds=0: requeued.append((voice_id, delay_seconds)))
+
+    processed = process_voice_queue.run()
+    assert processed == 2  # one per provider
+    assert {d['voice_id'] for d in dispatched} == {1, 3}
+    assert requeued and requeued[0][0] == 2
 
 def test_reclaim_idle_voices_evicts_and_triggers_queue(monkeypatch, fake_db):
     now = datetime.utcnow()

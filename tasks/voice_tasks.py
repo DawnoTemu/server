@@ -177,49 +177,53 @@ def process_voice_queue(self):
     from models.voice_model import Voice, VoiceModel, VoiceServiceProvider
 
     processed = 0
-    dispatched_per_provider = defaultdict(int)
-    requeued_in_cycle: set[int] = set()
+    batch_size = getattr(Config, "VOICE_QUEUE_BATCH_SIZE", 20) or 20
+    ready_items = VoiceSlotQueue.dequeue_ready_batch(batch_size)
+    if not ready_items:
+        return 0
 
-    while True:
-        request = VoiceSlotQueue.dequeue()
-        if not request:
-            break
+    # Populate provider where missing (legacy payloads)
+    for item in ready_items:
+        if not item.get("service_provider"):
+            voice_id = item.get("voice_id")
+            provider = None
+            if voice_id is not None:
+                voice = Voice.query.get(voice_id)
+                if voice:
+                    provider = voice.service_provider
+            item["service_provider"] = provider or VoiceServiceProvider.ELEVENLABS
 
-        voice_id = request.get('voice_id')
-        provider = request.get('service_provider')
-        if provider is None and voice_id is not None:
-            voice = Voice.query.get(voice_id)
-            if voice:
-                provider = voice.service_provider
-                request['service_provider'] = provider
+    # Group by provider to apply per-provider capacity
+    grouped: dict[str, list[dict]] = defaultdict(list)
+    for item in ready_items:
+        grouped[item["service_provider"]].append(item)
 
-        if provider is None:
-            provider = VoiceServiceProvider.ELEVENLABS
-
+    for provider, items in grouped.items():
         capacity = VoiceModel.available_slot_capacity(provider)
-        already_dispatched = dispatched_per_provider[provider]
-        remaining_capacity = float('inf') if capacity == float('inf') else max(0, capacity - already_dispatched)
+        if capacity != float("inf"):
+            capacity = max(int(capacity or 0), 0)
 
-        if remaining_capacity <= 0:
+        if capacity == 0:
             base_delay = max(int(getattr(Config, "VOICE_QUEUE_POLL_INTERVAL", 30) or 30) // 2, 5)
             jitter = random.randint(-base_delay // 3, base_delay // 3)
             delay_seconds = max(5, base_delay + jitter)
-            VoiceSlotQueue.enqueue(voice_id, request, delay_seconds=delay_seconds)
-            logger.debug(
-                "Deferring voice %s due to slot capacity for provider %s",
-                voice_id,
-                provider,
-            )
-            if voice_id is not None:
-                requeued_in_cycle.add(voice_id)
-                if len(requeued_in_cycle) > 10:
-                    break
+            for item in items:
+                VoiceSlotQueue.enqueue(item["voice_id"], item, delay_seconds=delay_seconds)
             continue
 
-        emit_metric("voice.queue.dispatch", provider=str(provider))
-        allocate_voice_slot.delay(from_queue=True, **request)
-        dispatched_per_provider[provider] += 1
-        processed += 1
+        to_dispatch = items if capacity == float("inf") else items[:capacity]
+        for item in to_dispatch:
+            emit_metric("voice.queue.dispatch", provider=str(provider))
+            allocate_voice_slot.delay(from_queue=True, **item)
+            processed += 1
+
+        if capacity != float("inf") and len(items) > capacity:
+            # Re-enqueue overflow with jitter to avoid immediate contention
+            base_delay = max(int(getattr(Config, "VOICE_QUEUE_POLL_INTERVAL", 30) or 30) // 2, 5)
+            for item in items[capacity:]:
+                jitter = random.randint(-base_delay // 3, base_delay // 3)
+                delay_seconds = max(5, base_delay + jitter)
+                VoiceSlotQueue.enqueue(item["voice_id"], item, delay_seconds=delay_seconds)
 
     if processed:
         logger.info("Dispatched %s queued allocation request(s)", processed)
