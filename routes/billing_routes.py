@@ -2,6 +2,7 @@ from flask import jsonify, request
 
 from routes import billing_bp
 from utils.auth_middleware import token_required
+from utils.rate_limiter import rate_limit
 from utils.credits import get_credit_config, calculate_required_credits
 from models.credit_model import get_user_credit_summary, get_user_transactions
 from models.story_model import StoryModel
@@ -16,6 +17,7 @@ def _parse_transaction_types(arg_value: str | None):
 
 @billing_bp.route('/me/credits', methods=['GET'])
 @token_required
+@rate_limit(limit=30, window_seconds=60)
 def get_my_credits(current_user):
     cfg = get_credit_config()
 
@@ -36,12 +38,15 @@ def get_my_credits(current_user):
     )
     summary['unit_label'] = cfg['unit_label']
     summary['unit_size'] = cfg['unit_size']
+    # Surface cached vs computed for reconciliation visibility
+    summary['balance_source'] = 'computed'
 
     return jsonify(summary), 200
 
 
 @billing_bp.route('/me/credits/history', methods=['GET'])
 @token_required
+@rate_limit(limit=30, window_seconds=60)
 def get_my_credit_history(current_user):
     limit = request.args.get('limit', type=int)
     if limit is None:

@@ -4,6 +4,7 @@ from flask import current_app
 from models.user_model import UserModel, User
 from utils.email_service import EmailService
 from database import db
+from utils.validators import is_valid_email, validate_password
 
 class AuthController:
     """Controller for authentication-related operations"""
@@ -21,6 +22,10 @@ class AuthController:
         Returns:
             tuple: (success, data/error message, status_code)
         """
+        if not is_valid_email(email):
+            return False, {"error": "Invalid email format"}, 400
+        if not validate_password(password):
+            return False, {"error": "Password must be at least 8 characters"}, 400
         # Check if passwords match
         if password != password_confirm:
             return False, {"error": "Passwords do not match"}, 400
@@ -59,6 +64,8 @@ class AuthController:
         Returns:
             tuple: (success, data/error message, status_code)
         """
+        if not is_valid_email(email):
+            return False, {"error": "Invalid email format"}, 400
         # Get user by email
         user = UserModel.get_by_email(email)
         
@@ -203,6 +210,9 @@ class AuthController:
         Returns:
             tuple: (success, message, status_code)
         """
+        if not is_valid_email(email):
+            return False, {"error": "Invalid email format"}, 400
+
         user = UserModel.get_by_email(email)
         
         # Always return success to prevent email enumeration
@@ -230,6 +240,8 @@ class AuthController:
         Returns:
             tuple: (success, message, status_code)
         """
+        if not validate_password(new_password):
+            return False, {"error": "Password must be at least 8 characters"}, 400
         # Check if passwords match
         if new_password != new_password_confirm:
             return False, {"error": "Passwords do not match"}, 400

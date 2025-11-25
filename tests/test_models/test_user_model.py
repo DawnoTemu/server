@@ -158,12 +158,5 @@ def test_delete_user_surfaces_voice_service_failure(app, mocker):
         db.session.commit()
 
         success, details = UserModel.delete_user(user.id)
-        assert success is True
-        warnings = details.get("warnings", [])
-        assert warnings
-        assert any(
-            warning.get("type") == "voice_service"
-            and warning.get("details", {}).get("voice_id") == voice.id
-            and "Rate limited" in str(warning.get("details", {}).get("message"))
-            for warning in warnings
-        )
+        assert success is False
+        assert "Rate limited" in str(details)

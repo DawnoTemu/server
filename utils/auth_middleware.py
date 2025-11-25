@@ -1,4 +1,5 @@
 from functools import wraps
+from datetime import datetime, timezone
 import jwt
 import os
 from flask import request, jsonify, current_app
@@ -51,6 +52,16 @@ def token_required(f):
                 
             if not current_user.is_active:
                 return jsonify({"error": "User account is inactive"}), 403
+
+            token_iat = payload.get("iat")
+            if token_iat:
+                issued_at = datetime.fromtimestamp(token_iat, tz=timezone.utc)
+                updated_at = current_user.updated_at
+                if updated_at:
+                    updated_at = updated_at.replace(tzinfo=timezone.utc)
+                    # Invalidate tokens issued before the last profile change/deactivation
+                    if issued_at < updated_at:
+                        return jsonify({"error": "Token is no longer valid, please log in again"}), 401
                 
             # Check if email is confirmed
             if not current_user.email_confirmed:
@@ -113,6 +124,15 @@ def admin_required(f):
                 
             if not current_user.is_active:
                 return jsonify({"error": "User account is inactive"}), 403
+
+            token_iat = payload.get("iat")
+            if token_iat:
+                issued_at = datetime.fromtimestamp(token_iat, tz=timezone.utc)
+                updated_at = current_user.updated_at
+                if updated_at:
+                    updated_at = updated_at.replace(tzinfo=timezone.utc)
+                    if issued_at < updated_at:
+                        return jsonify({"error": "Token is no longer valid, please log in again"}), 401
                 
             # Check if email is confirmed
             if not current_user.email_confirmed:

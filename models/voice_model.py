@@ -335,7 +335,14 @@ class VoiceModel:
             return False, str(e)
     
     @staticmethod
-    def _clone_voice_api(file_data, filename, user_id, voice_name=None, remove_background_noise=False):
+    def _clone_voice_api(
+        file_data,
+        filename,
+        user_id,
+        voice_name=None,
+        remove_background_noise=False,
+        service_provider=None,
+    ):
         """
         Internal method to handle the actual API call for voice cloning
         This is called by the async task, not directly by controllers
@@ -361,10 +368,11 @@ class VoiceModel:
             
             # Get the language from config - default to 'pl' if not specified
             language = getattr(Config, 'DEFAULT_LANGUAGE', 'pl')
-            service_provider = VoiceModel._resolve_service_provider()
+            # Honor explicit provider to keep queue/provider decisions consistent
+            provider = service_provider or VoiceModel._resolve_service_provider()
             
             # For ElevenLabs, we need to split the audio
-            if service_provider == VoiceServiceProvider.ELEVENLABS:
+            if provider == VoiceServiceProvider.ELEVENLABS:
                 # Split audio into chunks if needed
                 audio_chunks = split_audio_file(file_data, filename)
                 logger.info(f"Split audio into {len(audio_chunks)} chunks")
@@ -375,7 +383,7 @@ class VoiceModel:
                     filename=filename,
                     user_id=user_id,
                     voice_name=voice_name,
-                    service=service_provider
+                    service=provider
                 )
             else:
                 # Use the CartesiaService through VoiceService
@@ -385,7 +393,7 @@ class VoiceModel:
                     user_id=user_id,
                     voice_name=voice_name,
                     language=language,
-                    service=service_provider
+                    service=provider
                 )
                 
         except Exception as e:

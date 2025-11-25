@@ -149,12 +149,50 @@ def test_update_profile_duplicate_email(client, app):
     _cleanup_user(app, existing_user_id)
 
 
+def test_update_profile_rejects_invalid_email(client, app):
+    user_id, token = _create_active_user(app, email="valid@example.com")
+
+    response = client.patch(
+        "/auth/me",
+        json={
+            "email": "invalid-email",
+            "current_password": "CurrentPass1!",
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 400
+    data = response.get_json()
+    assert "Invalid email" in data["error"]
+
+    _cleanup_user(app, user_id)
+
+
+def test_update_profile_rejects_weak_password(client, app):
+    user_id, token = _create_active_user(app, email="valid2@example.com")
+
+    response = client.patch(
+        "/auth/me",
+        json={
+            "current_password": "CurrentPass1!",
+            "new_password": "short",
+            "new_password_confirm": "short",
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 400
+    data = response.get_json()
+    assert "Password must be at least 8 characters" in data["error"]
+
+    _cleanup_user(app, user_id)
+
+
 def test_delete_profile_success(client, app, mocker):
     user_id, token = _create_active_user(app)
-    mock_delete_user = mocker.patch(
-        "models.user_model.UserModel.delete_user",
-        return_value=(True, {"warnings": []}),
-    )
+    task_stub = mocker.Mock()
+    task_stub.id = "task-123"
+    mocker.patch("tasks.account_tasks.delete_user_account.delay", return_value=task_stub)
 
     response = client.delete(
         "/auth/me",
@@ -162,10 +200,14 @@ def test_delete_profile_success(client, app, mocker):
         headers={"Authorization": f"Bearer {token}"},
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 202
     data = response.get_json()
-    assert "Your account has been deleted." in data["message"]
-    mock_delete_user.assert_called_once_with(user_id)
+    assert "being deleted" in data["message"]
+    assert data["task_id"] == "task-123"
+
+    with app.app_context():
+        refreshed = UserModel.get_by_id(user_id)
+        assert refreshed.is_active is False
 
     _cleanup_user(app, user_id)
 
@@ -188,7 +230,7 @@ def test_delete_profile_requires_current_password(client, app):
 
 def test_delete_profile_with_wrong_password(client, app, mocker):
     user_id, token = _create_active_user(app)
-    mock_delete_user = mocker.patch("models.user_model.UserModel.delete_user")
+    mock_delete_user = mocker.patch("tasks.account_tasks.delete_user_account.delay")
 
     response = client.delete(
         "/auth/me",
@@ -207,8 +249,8 @@ def test_delete_profile_with_wrong_password(client, app, mocker):
 def test_delete_profile_backend_failure(client, app, mocker):
     user_id, token = _create_active_user(app)
     mocker.patch(
-        "models.user_model.UserModel.delete_user",
-        return_value=(False, "database down"),
+        "tasks.account_tasks.delete_user_account.delay",
+        side_effect=Exception("enqueue failed"),
     )
 
     response = client.delete(
@@ -219,6 +261,31 @@ def test_delete_profile_backend_failure(client, app, mocker):
 
     assert response.status_code == 500
     data = response.get_json()
-    assert "Unable to delete account" in data["error"]
+    assert "Unable to start account deletion" in data["error"]
+
+    with app.app_context():
+        refreshed = UserModel.get_by_id(user_id)
+        assert refreshed.is_active is True
+
+    _cleanup_user(app, user_id)
+
+
+def test_token_invalid_after_profile_update(client, app):
+    user_id, token = _create_active_user(app)
+
+    # Force an updated_at bump to simulate profile change
+    with app.app_context():
+        user = UserModel.get_by_id(user_id)
+        user.email = "updated@example.com"
+        db.session.commit()
+
+    response = client.get(
+        "/auth/me",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 401
+    data = response.get_json()
+    assert "Token is no longer valid" in data["error"]
 
     _cleanup_user(app, user_id)

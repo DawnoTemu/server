@@ -134,6 +134,59 @@ def test_allocate_voice_slot_honors_explicit_service_provider(monkeypatch, fake_
     assert enqueue_calls and enqueue_calls[0] == VoiceServiceProvider.CARTESIA
 
 
+def test_allocate_voice_slot_passes_provider_to_clone(monkeypatch, fake_db):
+    class FakeVoiceQuery:
+        def __init__(self, voice):
+            self.voice = voice
+
+        def get(self, _):
+            return self.voice
+
+    voice = SimpleNamespace(
+        id=3,
+        user_id=77,
+        status=VoiceStatus.RECORDED,
+        allocation_status=VoiceAllocationStatus.RECORDED,
+        elevenlabs_voice_id=None,
+        service_provider=VoiceServiceProvider.ELEVENLABS,
+        error_message=None,
+        name="Explicit Provider Voice",
+    )
+
+    monkeypatch.setattr(voice_model_module, "Voice", SimpleNamespace(query=FakeVoiceQuery(voice)))
+    monkeypatch.setattr(
+        "models.voice_model.VoiceModel.available_slot_capacity",
+        staticmethod(lambda provider=None: 5),
+    )
+
+    clone_calls = []
+
+    def fake_clone(file_data, filename, user_id, voice_name, service_provider=None):
+        clone_calls.append(service_provider)
+        return True, {"voice_id": "remote-id"}
+
+    monkeypatch.setattr("models.voice_model.VoiceModel._clone_voice_api", staticmethod(fake_clone))
+    monkeypatch.setattr(
+        "tasks.voice_tasks.S3Client.download_fileobj",
+        staticmethod(lambda _: SimpleNamespace(read=lambda: b"audio-bytes")),
+    )
+    monkeypatch.setattr("tasks.voice_tasks.VoiceSlotQueue.remove", lambda *_: None)
+    monkeypatch.setattr("models.voice_model.VoiceSlotEvent.log_event", lambda **kwargs: None, raising=False)
+
+    result = allocate_voice_slot.run(
+        voice_id=3,
+        s3_key="voice_samples/77/voice_3.wav",
+        filename="sample.wav",
+        user_id=77,
+        voice_name="Voice",
+        service_provider=VoiceServiceProvider.CARTESIA,
+    )
+
+    assert result is True
+    assert clone_calls and clone_calls[0] == VoiceServiceProvider.CARTESIA
+    assert voice.service_provider == VoiceServiceProvider.CARTESIA
+
+
 def test_process_voice_queue_dispatches(monkeypatch):
     dispatched = []
 

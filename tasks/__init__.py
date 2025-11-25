@@ -74,4 +74,4 @@ def init_app(app):
 
 # Import task modules to register with Celery
 # Keep these imports at the bottom to avoid circular import issues
-from tasks import voice_tasks, audio_tasks, billing_tasks
+from tasks import voice_tasks, audio_tasks, billing_tasks, account_tasks

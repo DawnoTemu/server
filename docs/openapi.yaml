@@ -923,7 +923,7 @@ paths:
       tags:
         - Authentication
       summary: Delete current user account
-      description: Delete the authenticated user's account after confirming the current password.
+      description: Deactivate and delete the authenticated user's account after confirming the current password. Cleanup runs asynchronously.
       operationId: deleteCurrentUser
       security:
         - bearerAuth: []
@@ -934,12 +934,12 @@ paths:
             schema:
               $ref: '#/components/schemas/DeleteAccountRequest'
       responses:
-        '200':
-          description: Account deleted successfully
+        '202':
+          description: Account deletion enqueued
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DeleteAccountResponse'
+                $ref: '#/components/schemas/Success'
         '400':
           description: Missing current password
           content:

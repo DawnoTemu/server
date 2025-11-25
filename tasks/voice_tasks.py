@@ -5,6 +5,7 @@ This module contains Celery tasks for handling audio hygiene and metadata update
 
 import logging
 import sentry_sdk
+import random
 from datetime import datetime, timedelta
 from typing import Optional
 from collections import defaultdict
@@ -15,6 +16,7 @@ from database import db
 from config import Config
 from sqlalchemy import or_
 from utils.voice_slot_queue import VoiceSlotQueue
+from utils.metrics import emit_metric
 
 # Configure logger
 logger = logging.getLogger('voice_tasks')
@@ -155,6 +157,8 @@ def process_voice_recording(self, voice_id, s3_key, filename, user_id, voice_nam
             voice_name=voice_name,
         )
 
+        emit_metric("voice.process.dispatch_allocation", provider=str(voice.service_provider))
+
         logger.info("Enqueued allocation task %s for voice %s", allocation_task.id, voice_id)
         return True
 
@@ -197,7 +201,9 @@ def process_voice_queue(self):
         remaining_capacity = float('inf') if capacity == float('inf') else max(0, capacity - already_dispatched)
 
         if remaining_capacity <= 0:
-            delay_seconds = max(int(getattr(Config, "VOICE_QUEUE_POLL_INTERVAL", 30) or 30) // 2, 5)
+            base_delay = max(int(getattr(Config, "VOICE_QUEUE_POLL_INTERVAL", 30) or 30) // 2, 5)
+            jitter = random.randint(-base_delay // 3, base_delay // 3)
+            delay_seconds = max(5, base_delay + jitter)
             VoiceSlotQueue.enqueue(voice_id, request, delay_seconds=delay_seconds)
             logger.debug(
                 "Deferring voice %s due to slot capacity for provider %s",
@@ -210,12 +216,14 @@ def process_voice_queue(self):
                     break
             continue
 
+        emit_metric("voice.queue.dispatch", provider=str(provider))
         allocate_voice_slot.delay(from_queue=True, **request)
         dispatched_per_provider[provider] += 1
         processed += 1
 
     if processed:
         logger.info("Dispatched %s queued allocation request(s)", processed)
+        emit_metric("voice.queue.processed", processed)
     return processed
 
 
@@ -401,7 +409,13 @@ def allocate_voice_slot(self, voice_id, s3_key, filename, user_id, voice_name=No
             db.session.commit()
             return False
 
-        success, result = VoiceModel._clone_voice_api(file_data, filename, user_id, voice_name)
+        success, result = VoiceModel._clone_voice_api(
+            file_data,
+            filename,
+            user_id,
+            voice_name,
+            service_provider=provider,
+        )
 
         if success:
             external_voice_id = result.get("voice_id")
@@ -421,7 +435,8 @@ def allocate_voice_slot(self, voice_id, s3_key, filename, user_id, voice_name=No
             voice.elevenlabs_voice_id = external_voice_id
             voice.status = VoiceStatus.READY
             voice.allocation_status = VoiceAllocationStatus.READY
-            voice.service_provider = VoiceModel._resolve_service_provider()
+            # Persist the provider used for this allocation to keep capacity accounting consistent
+            voice.service_provider = provider
             voice.elevenlabs_allocated_at = datetime.utcnow()
             voice.last_used_at = datetime.utcnow()
             VoiceSlotQueue.remove(voice.id)

@@ -84,6 +84,19 @@ class UserController:
             "password_updated": password_changed,
         }
 
+        # Rotate tokens after profile changes so old tokens are invalidated quickly
+        try:
+            from controllers.auth_controller import AuthController  # local import to avoid circular dep
+
+            response["access_token"] = AuthController.generate_access_token(user)
+            response["refresh_token"] = AuthController.generate_refresh_token(user)
+            logger.info(
+                "Rotated tokens after profile update",
+                extra={"user_id": user.id, "email_changed": email_changed, "password_changed": password_changed},
+            )
+        except Exception as exc:
+            logger.warning("Failed to issue new tokens after profile update for user %s: %s", user.id, exc)
+
         if email_changed:
             response["email_confirmation_required"] = True
 
@@ -118,19 +131,29 @@ class UserController:
         if not user.check_password(current_password):
             return False, {"error": "Current password is incorrect."}, 403
 
-        success, details = UserModel.delete_user(user.id)
-        if not success:
-            return False, {
-                "error": "Unable to delete account at this time.",
-                "details": details
-            }, 500
+        # Deactivate to block further access while cleanup runs; commit only after enqueue succeeds
+        previous_active = user.is_active
+        try:
+            user.is_active = False
+            db.session.flush()
+            from tasks.account_tasks import delete_user_account
+
+            task = delete_user_account.delay(user.id)
+            logger.info("Enqueued account deletion", extra={"user_id": user.id, "task_id": task.id})
+            db.session.commit()
+        except Exception as exc:
+            logger.exception("Failed to enqueue account deletion for user %s: %s", user.id, exc)
+            db.session.rollback()
+            # Restore prior state in session for downstream handlers
+            try:
+                user.is_active = previous_active
+            except Exception:
+                pass
+            return False, {"error": "Unable to start account deletion."}, 500
 
         response = {
-            "message": "Your account has been deleted.",
+            "message": "Your account is being deleted.",
+            "task_id": task.id,
         }
 
-        warnings = details.get("warnings") if isinstance(details, dict) else None
-        if warnings:
-            response["warnings"] = warnings
-
-        return True, response, 200
+        return True, response, 202

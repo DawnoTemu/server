@@ -2,6 +2,8 @@ from flask import request, jsonify, render_template
 from controllers.auth_controller import AuthController
 from controllers.user_controller import UserController
 from utils.auth_middleware import token_required
+from utils.rate_limiter import rate_limit
+from utils.validators import is_valid_email, validate_password
 from routes import auth_bp
 
 # POST /auth/register - Register a new user
@@ -76,6 +78,7 @@ def get_current_user(current_user):
 # PATCH /auth/me - Update current user profile
 @auth_bp.route('/me', methods=['PATCH'])
 @token_required
+@rate_limit(limit=5, window_seconds=60)
 def update_current_user(current_user):
     """Update the authenticated user's profile information"""
     data = request.get_json() or {}
@@ -84,6 +87,11 @@ def update_current_user(current_user):
     current_password = data.get('current_password')
     new_password = data.get('new_password')
     new_password_confirm = data.get('new_password_confirm')
+
+    if new_email and not is_valid_email(new_email):
+        return jsonify({"error": "Invalid email format"}), 400
+    if new_password and not validate_password(new_password):
+        return jsonify({"error": "Password must be at least 8 characters"}), 400
 
     success, result, status_code = UserController.update_profile(
         current_user,
@@ -99,6 +107,7 @@ def update_current_user(current_user):
 # DELETE /auth/me - Delete current user account
 @auth_bp.route('/me', methods=['DELETE'])
 @token_required
+@rate_limit(limit=3, window_seconds=300)
 def delete_current_user(current_user):
     """Delete the authenticated user's account"""
     data = request.get_json(silent=True) or {}

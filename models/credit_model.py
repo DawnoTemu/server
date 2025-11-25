@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
+import logging
 from sqlalchemy import and_, or_, func, select
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -190,7 +191,7 @@ def get_user_credit_summary(
     history_types: Optional[List[str] | Tuple[str, ...]] = None,
 ) -> Dict[str, object]:
     user = db.session.get(User, user_id)
-    balance = int(user.credits_balance or 0) if user else 0
+    balance_cached = int(user.credits_balance or 0) if user else 0
 
     now = datetime.utcnow()
     lots_query = (
@@ -201,7 +202,17 @@ def get_user_credit_summary(
             CreditLot.created_at.asc(),
         )
     )
-    lots = [_serialize_lot(lot, now) for lot in lots_query.all()]
+    lot_rows = lots_query.all()
+    lots = [_serialize_lot(lot, now) for lot in lot_rows]
+    balance_from_lots = sum(int(lot.amount_remaining or 0) for lot in lot_rows)
+    balance = balance_cached
+    if balance_from_lots != balance_cached:
+        logging.getLogger(__name__).warning(
+            "Credit balance mismatch for user %s: cached=%s, computed=%s",
+            user_id,
+            balance_cached,
+            balance_from_lots,
+        )
 
     history = get_user_transactions(
         user_id,
@@ -211,11 +222,14 @@ def get_user_credit_summary(
     )
 
     summary = {
-        "balance": balance,
+        "balance": balance_from_lots if balance_from_lots == balance_cached else balance_from_lots,
         "lots": lots,
         "history": history,
     }
     summary["recent_transactions"] = history["items"]
+    summary["balance_cached"] = balance_cached
+    summary["balance_computed"] = balance_from_lots
+
     return summary
 
 
