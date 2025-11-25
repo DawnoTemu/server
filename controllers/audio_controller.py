@@ -61,7 +61,9 @@ class AudioController:
                 return False, "Voice not found", 404
 
             success, result, status = AudioController.check_audio_exists(voice_id, story_id)
-            if not success or not result.get("exists", False):
+            if not success:
+                return success, result, status
+            if not result.get("exists", False):
                 return False, "Audio not found", 404
 
             success, url = AudioModel.get_audio_presigned_url(voice.id, story_id, expires_in)
