@@ -18,6 +18,10 @@ def delete_user_account(user_id: int):
     """Async account deletion task to avoid long HTTP waits."""
     success, details = UserModel.delete_user(user_id)
     if not success:
+        # Treat missing user as idempotent success to tolerate replays
+        if str(details).lower().startswith("user not found"):
+            logger.info("Account deletion idempotent no-op", extra={"user_id": user_id})
+            return {"warnings": []}
         logger.error(
             "Account deletion failed",
             extra={"user_id": user_id, "error": str(details)},

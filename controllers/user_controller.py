@@ -131,24 +131,29 @@ class UserController:
         if not user.check_password(current_password):
             return False, {"error": "Current password is incorrect."}, 403
 
-        # Deactivate to block further access while cleanup runs; commit only after enqueue succeeds
+        # Deactivate to block further access while cleanup runs; enqueue only after commit
         previous_active = user.is_active
         try:
             user.is_active = False
             db.session.flush()
-            from tasks.account_tasks import delete_user_account
-
-            task = delete_user_account.delay(user.id)
-            logger.info("Enqueued account deletion", extra={"user_id": user.id, "task_id": task.id})
             db.session.commit()
         except Exception as exc:
-            logger.exception("Failed to enqueue account deletion for user %s: %s", user.id, exc)
+            logger.exception("Failed to deactivate user %s prior to deletion", user.id)
             db.session.rollback()
             # Restore prior state in session for downstream handlers
             try:
                 user.is_active = previous_active
             except Exception:
                 pass
+            return False, {"error": "Unable to start account deletion."}, 500
+
+        try:
+            from tasks.account_tasks import delete_user_account
+
+            task = delete_user_account.delay(user.id)
+            logger.info("Enqueued account deletion", extra={"user_id": user.id, "task_id": task.id})
+        except Exception as exc:
+            logger.exception("Failed to enqueue account deletion for user %s: %s", user.id, exc)
             return False, {"error": "Unable to start account deletion."}, 500
 
         response = {
