@@ -85,15 +85,24 @@ def expire_credit_lots():
     - Decreases users.credits_balance by the total amount removed per user (not below 0).
     """
     now = datetime.utcnow()
-    expired_lots = (
+    query = (
         db.session.query(CreditLot)
         .filter(
             CreditLot.expires_at.isnot(None),
             CreditLot.expires_at <= now,
             CreditLot.amount_remaining > 0,
         )
-        .all()
     )
+    # Use row-level locks when supported to avoid racing concurrent debits
+    dialect_name = None
+    try:
+        bind = getattr(db.session, "get_bind", lambda: None)()
+        dialect_name = getattr(getattr(bind, "dialect", None), "name", None)
+    except Exception:
+        dialect_name = None
+    if hasattr(query, "with_for_update") and dialect_name not in (None, "sqlite"):
+        query = query.with_for_update()
+    expired_lots = query.all()
     if not expired_lots:
         logger.info('No expiring credit lots found.')
         return

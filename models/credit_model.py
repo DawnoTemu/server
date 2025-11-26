@@ -204,15 +204,32 @@ def get_user_credit_summary(
     )
     lot_rows = lots_query.all()
     lots = [_serialize_lot(lot, now) for lot in lot_rows]
-    balance_from_lots = sum(int(lot.amount_remaining or 0) for lot in lot_rows)
-    balance = balance_cached
-    if balance_from_lots != balance_cached:
-        logging.getLogger(__name__).warning(
-            "Credit balance mismatch for user %s: cached=%s, computed=%s",
+    active_lots = [
+        lot
+        for lot in lot_rows
+        if (lot.amount_remaining or 0) > 0 and (lot.expires_at is None or lot.expires_at > now)
+    ]
+    balance_from_active_lots = sum(int(lot.amount_remaining or 0) for lot in active_lots)
+
+    if balance_from_active_lots != balance_cached and user:
+        logger = logging.getLogger(__name__)
+        logger.warning(
+            "Credit balance mismatch for user %s: cached=%s, computed_active=%s",
             user_id,
             balance_cached,
-            balance_from_lots,
+            balance_from_active_lots,
         )
+        try:
+            user.credits_balance = balance_from_active_lots
+            db.session.commit()
+            balance_cached = balance_from_active_lots
+        except Exception as exc:
+            db.session.rollback()
+            logger.error(
+                "Failed to reconcile cached balance for user %s: %s",
+                user_id,
+                exc,
+            )
 
     history = get_user_transactions(
         user_id,
@@ -222,13 +239,13 @@ def get_user_credit_summary(
     )
 
     summary = {
-        "balance": balance_from_lots if balance_from_lots == balance_cached else balance_from_lots,
+        "balance": balance_from_active_lots,
         "lots": lots,
         "history": history,
     }
     summary["recent_transactions"] = history["items"]
     summary["balance_cached"] = balance_cached
-    summary["balance_computed"] = balance_from_lots
+    summary["balance_computed"] = balance_from_active_lots
 
     return summary
 
@@ -266,7 +283,15 @@ def grant(user_id: int, amount: int, reason: str, source: str, expires_at: Optio
     return True, tx
 
 
-def debit(user_id: int, amount: int, reason: str, audio_story_id: Optional[int] = None, story_id: Optional[int] = None):
+def debit(
+    user_id: int,
+    amount: int,
+    reason: str,
+    audio_story_id: Optional[int] = None,
+    story_id: Optional[int] = None,
+    *,
+    auto_commit: bool = True,
+):
     if amount <= 0:
         raise ValueError("Debit amount must be positive")
     # Acquire per-user lock to prevent concurrent races
@@ -301,7 +326,10 @@ def debit(user_id: int, amount: int, reason: str, audio_story_id: Optional[int] 
             if amount <= outstanding:
                 # Existing debit already covers the requested amount.
                 # Commit to persist any upstream changes (e.g., AudioStory status/credits_charged).
-                db.session.commit()
+                if auto_commit:
+                    db.session.commit()
+                else:
+                    db.session.flush()
                 return True, existing, 0
             # Need to charge the difference on top of existing debit
             extra_needed = amount - outstanding
@@ -364,7 +392,10 @@ def debit(user_id: int, amount: int, reason: str, audio_story_id: Optional[int] 
                         CreditTransactionAllocation(transaction_id=existing.id, lot_id=lot.id, amount=-take)
                     )
             user.credits_balance = int(user.credits_balance or 0) - extra_needed
-            db.session.commit()
+            if auto_commit:
+                db.session.commit()
+            else:
+                db.session.flush()
             return True, existing, extra_needed
 
     # Gather active lots and order by configured priority and soonest expiry
@@ -435,7 +466,10 @@ def debit(user_id: int, amount: int, reason: str, audio_story_id: Optional[int] 
     # Adjust cached balance
     user.credits_balance = int(user.credits_balance or 0) - amount
 
-    db.session.commit()
+    if auto_commit:
+        db.session.commit()
+    else:
+        db.session.flush()
     return True, tx, amount
 
 

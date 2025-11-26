@@ -2,7 +2,7 @@ import logging
 from typing import Tuple
 
 from database import db
-from models.audio_model import AudioModel, AudioStatus
+from models.audio_model import AudioModel, AudioStatus, AudioStory
 from models.story_model import StoryModel
 from models.voice_model import VoiceModel
 from models.credit_model import (
@@ -112,12 +112,13 @@ class AudioController:
             audio_record.error_message = None
             audio_record.credits_charged = required
             try:
-                _, _debit_tx, charged_delta = credit_debit(
+                _, _debit_tx, _ = credit_debit(
                     user_id=voice.user_id,
                     amount=required,
                     reason=f"audio_synthesis:{story_id}",
                     audio_story_id=audio_record.id,
                     story_id=story_id,
+                    auto_commit=False,
                 )
             except InsufficientCreditsError as exc:
                 db.session.rollback()
@@ -128,18 +129,45 @@ class AudioController:
                 return False, {"error": "Failed to charge credits"}, 500
 
             request_meta = {"story_id": story_id, "audio_story_id": audio_record.id}
+            def _mark_audio_error(msg: str, status_code: int):
+                """Rollback pending debit and mark audio as error."""
+                try:
+                    db.session.rollback()
+                except Exception:
+                    pass
+                fresh = None
+                if hasattr(db.session, "get"):
+                    try:
+                        fresh = db.session.get(AudioStory, audio_record.id)
+                    except Exception:
+                        fresh = None
+                try:
+                    target = fresh or audio_record
+                    if hasattr(db.session, "add"):
+                        db.session.add(target)
+                    target.status = AudioStatus.ERROR.value
+                    target.error_message = msg
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
+                return False, {"error": msg}, status_code
+
+            def _attempt_refund(reason: str):
+                try:
+                    refund_by_audio(audio_record.id, reason=reason)
+                except Exception as refund_exc:
+                    logger.error("Refund after %s failed: %s", reason, refund_exc)
+
             try:
                 slot_state = VoiceSlotManager.ensure_active_voice(voice, request_metadata=request_meta)
             except VoiceSlotManagerError as exc:
                 logger.warning("Voice slot manager error after debit: %s", exc)
-                try:
-                    refund_by_audio(audio_record.id, reason="voice_slot_manager_error")
-                except Exception as refund_exc:
-                    logger.error("Refund after slot-manager error failed: %s", refund_exc)
-                audio_record.status = AudioStatus.ERROR.value
-                audio_record.error_message = str(exc)
-                db.session.commit()
-                return False, {"error": str(exc)}, 409
+                _attempt_refund("voice_slot_manager_error")
+                return _mark_audio_error(str(exc), 409)
+            except Exception as exc:
+                logger.error("Unexpected voice slot manager error: %s", exc)
+                _attempt_refund("voice_slot_manager_error")
+                return _mark_audio_error("Failed to allocate voice", 500)
 
             remote_voice_id = (
                 slot_state.metadata.get("elevenlabs_voice_id") or voice.elevenlabs_voice_id
@@ -148,14 +176,8 @@ class AudioController:
                 remote_voice_id = remote_voice_id or voice.elevenlabs_voice_id
             if slot_state.status == VoiceSlotManager.STATUS_READY and not remote_voice_id:
                 logger.error("Voice %s ready without remote identifier", voice.id)
-                try:
-                    refund_by_audio(audio_record.id, reason="missing_remote_voice_id")
-                except Exception as refund_exc:
-                    logger.error("Refund after missing remote voice ID failed: %s", refund_exc)
-                audio_record.status = AudioStatus.ERROR.value
-                audio_record.error_message = "Voice ready but missing remote ID"
-                db.session.commit()
-                return False, {"error": "Voice is ready but missing remote identifier"}, 500
+                _attempt_refund("missing_remote_voice_id")
+                return _mark_audio_error("Voice is ready but missing remote identifier", 500)
             if remote_voice_id:
                 slot_state.metadata.setdefault("elevenlabs_voice_id", remote_voice_id)
 
@@ -163,7 +185,6 @@ class AudioController:
                 audio_record.status = AudioStatus.PROCESSING.value
             else:
                 audio_record.status = AudioStatus.PENDING.value
-            db.session.commit()
 
             try:
                 from tasks.audio_tasks import synthesize_audio_task
@@ -174,18 +195,15 @@ class AudioController:
                 )
             except Exception as exc:
                 logger.error("Queueing synthesis task failed: %s", exc)
-                if "charged_delta" in locals() and charged_delta and charged_delta > 0:
-                    try:
-                        refund_by_audio(audio_record.id, reason="queue_failed")
-                    except Exception as refund_exc:
-                        logger.error("Refund after queue failure also failed: %s", refund_exc)
-                try:
-                    audio_record.status = AudioStatus.ERROR.value
-                    audio_record.error_message = "Queueing failed"
-                    db.session.commit()
-                except Exception:
-                    db.session.rollback()
-                return False, {"error": "Failed to queue synthesis task"}, 503
+                _attempt_refund("queue_failed")
+                return _mark_audio_error("Failed to queue synthesis task", 503)
+
+            try:
+                db.session.commit()
+            except Exception as exc:
+                logger.error("Commit failed after queueing audio %s: %s", audio_record.id, exc)
+                db.session.rollback()
+                return False, {"error": "Failed to persist audio request"}, 500
 
             response_status = (
                 "processing"

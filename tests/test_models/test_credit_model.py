@@ -32,3 +32,43 @@ def test_credit_summary_includes_cache_and_computed(app):
         db.session.delete(user)
         db.session.commit()
 
+
+def test_credit_summary_excludes_expired_and_reconciles_cache(app):
+    with app.app_context():
+        user = User(email="credit-expired@example.com", is_active=True, email_confirmed=True)
+        user.set_password("Password123!")
+        # Deliberately stale cached balance
+        user.credits_balance = 50
+        db.session.add(user)
+        db.session.commit()
+
+        now = datetime.utcnow()
+        active_lot = CreditLot(
+            user_id=user.id,
+            source="monthly",
+            amount_granted=10,
+            amount_remaining=7,
+            expires_at=now + timedelta(days=2),
+        )
+        expired_lot = CreditLot(
+            user_id=user.id,
+            source="event",
+            amount_granted=20,
+            amount_remaining=20,
+            expires_at=now - timedelta(days=1),
+        )
+        db.session.add_all([active_lot, expired_lot])
+        db.session.commit()
+
+        summary = get_user_credit_summary(user.id)
+
+        assert summary["balance"] == 7
+        assert summary["balance_computed"] == 7
+        assert summary["balance_cached"] == 7
+
+        lots_by_source = {lot["source"]: lot for lot in summary["lots"]}
+        assert lots_by_source["monthly"]["is_active"] is True
+        assert lots_by_source["event"]["is_active"] is False
+
+        refreshed = db.session.get(User, user.id)
+        assert refreshed.credits_balance == 7

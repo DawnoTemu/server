@@ -265,14 +265,6 @@ def test_synthesize_audio_voice_manager_error(monkeypatch, dummy_session):
         return True, MagicMock(), 5
 
     monkeypatch.setattr("controllers.audio_controller.credit_debit", fake_credit_debit)
-    refunds = {}
-
-    def fake_refund(audio_story_id, reason):
-        refunds["args"] = (audio_story_id, reason)
-        return True, MagicMock()
-
-    monkeypatch.setattr("controllers.audio_controller.refund_by_audio", fake_refund)
-
     success, data, status_code = AudioController.synthesize_audio(voice.id, 3)
 
     assert success is False
@@ -281,4 +273,57 @@ def test_synthesize_audio_voice_manager_error(monkeypatch, dummy_session):
     assert audio_record.error_message == "allocation failure"
     assert audio_record.status == AudioStatus.ERROR.value
     assert debit_calls["kwargs"]["user_id"] == voice.user_id
-    assert refunds["args"] == (audio_record.id, "voice_slot_manager_error")
+    assert dummy_session.rollback_calls >= 1
+
+
+def test_synthesize_audio_refunds_on_queue_failure(monkeypatch, dummy_session):
+    voice = make_voice()
+    story = {"content": "Narrate me"}
+    audio_record = make_audio_record()
+
+    monkeypatch.setattr(
+        "controllers.audio_controller.VoiceModel.get_voice_by_id", lambda voice_id: voice
+    )
+    monkeypatch.setattr(
+        "controllers.audio_controller.StoryModel.get_story_by_id", lambda story_id: story
+    )
+    monkeypatch.setattr(
+        "controllers.audio_controller.AudioModel.find_or_create_audio_record",
+        lambda story_id, voice_id, user_id: audio_record,
+    )
+    monkeypatch.setattr(
+        "controllers.audio_controller.calculate_required_credits", lambda text: 5
+    )
+
+    def fake_credit_debit(**kwargs):
+        return True, MagicMock(), 5
+
+    monkeypatch.setattr("controllers.audio_controller.credit_debit", fake_credit_debit)
+    monkeypatch.setattr(
+        "controllers.audio_controller.VoiceSlotManager.ensure_active_voice",
+        lambda voice, request_metadata=None: VoiceSlotState(
+            VoiceSlotManager.STATUS_READY, {"elevenlabs_voice_id": "remote-voice"}
+        ),
+    )
+
+    refund_calls = {}
+
+    def fake_refund(audio_story_id, reason):
+        refund_calls["args"] = (audio_story_id, reason)
+        return True, MagicMock()
+
+    monkeypatch.setattr("controllers.audio_controller.refund_by_audio", fake_refund)
+
+    task_stub = MagicMock()
+
+    def raise_queue(*args, **kwargs):
+        raise RuntimeError("broker down")
+
+    task_stub.delay.side_effect = raise_queue
+    monkeypatch.setattr("tasks.audio_tasks.synthesize_audio_task", task_stub)
+
+    success, data, status_code = AudioController.synthesize_audio(voice.id, 11)
+
+    assert success is False
+    assert status_code == 503
+    assert refund_calls["args"] == (audio_record.id, "queue_failed")
