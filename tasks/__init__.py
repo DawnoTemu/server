@@ -50,13 +50,11 @@ def init_app(app):
     
     # Update Celery config from Flask app config
     # Convert Flask-style config keys to Celery-style keys
+    allowed_prefixes = ('broker_', 'result_', 'task_', 'worker_', 'beat_', 'redbeat_')
+    allowed_keys = {'accept_content', 'enable_utc', 'timezone'}
     celery_config = {
         key: value for key, value in app.config.items()
-        if key.startswith('broker_') or 
-           key.startswith('result_') or 
-           key.startswith('task_') or 
-           key.startswith('worker_') or
-           key in ['accept_content', 'enable_utc']
+        if key.startswith(allowed_prefixes) or key in allowed_keys
     }
     
     celery_app.conf.update(celery_config)

@@ -431,6 +431,16 @@ git push heroku main
 heroku run flask db upgrade
 ```
 
+### Render.com Deployment
+
+- Create three services pointing at this repo/branch:
+  - **Web Service**: command `gunicorn app:app --bind 0.0.0.0:${PORT:-8000}`
+  - **Background Worker**: command `celery -A celery_worker.celery_app worker --loglevel=info`
+  - **Background Worker (Beat)**: command `celery -A celery_worker.celery_app beat --loglevel=info`
+- Set environment variables on all services: `REDIS_URL` (Render Redis add-on), `SECRET_KEY`, database credentials, S3, Cartesia/ElevenLabs/Resend keys, etc. Beat uses the same `REDIS_URL` for broker, backend, and schedule storage.
+- Beat uses RedBeat to persist the schedule in Redis, so no disk is required; keep the Beat worker scaled to a single instance to avoid duplicate scheduling.
+- Bring up Redis first, then deploy the web and worker services, and finally the Beat worker. Watch Beat logs to confirm periodic tasks enqueue successfully.
+
 ### Production Considerations
 
 - **Scaling**: Use Heroku's dyno scaling for web and worker processes

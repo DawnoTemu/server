@@ -58,8 +58,21 @@ def create_app(testing=False):
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = Config.SQLALCHEMY_TRACK_MODIFICATIONS
     
     # Celery configuration
-    app.config['broker_url'] = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
-    app.config['result_backend'] = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+    redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+    app.config['broker_url'] = redis_url
+    app.config['result_backend'] = redis_url
+
+    # Use Redis-backed beat scheduler by default to avoid ephemeral local files
+    redbeat_url = redis_url
+    app.config['beat_scheduler'] = os.getenv('CELERY_BEAT_SCHEDULER', 'redbeat.RedBeatScheduler')
+    app.config['redbeat_redis_url'] = redbeat_url
+    try:
+        app.config['redbeat_lock_timeout'] = int(os.getenv('REDBEAT_LOCK_TIMEOUT', '120'))
+    except ValueError:
+        app.config['redbeat_lock_timeout'] = 120
+    key_prefix = os.getenv('REDBEAT_KEY_PREFIX')
+    if key_prefix:
+        app.config['redbeat_key_prefix'] = key_prefix
     
     # Now validate configuration after app is initialized
     if not testing:
