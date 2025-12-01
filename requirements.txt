@@ -77,7 +77,7 @@ pytest-mock==3.14.1
 python-dateutil==2.9.0.post0
 python-dotenv==1.0.0
 redis==5.0.1
-redbeat==2.1.0
+celery-redbeat==2.3.3
 requests==2.31.0
 resend==0.6.0
 s3transfer==0.9.0
