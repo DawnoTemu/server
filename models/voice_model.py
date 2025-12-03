@@ -26,11 +26,19 @@ class VoiceStatus:
 
 
 class VoiceAllocationStatus:
-    RECORDED = "recorded"
-    ALLOCATING = "allocating"
-    READY = "ready"
-    COOLING = "cooling"
-    EVICTED = "evicted"
+    """
+    Slot lifecycle states. Active transitions:
+      RECORDED -> ALLOCATING -> READY -> RECORDED (on eviction)
+
+    Note: COOLING and EVICTED are defined for future use but not currently
+    implemented. Evicted voices transition directly to RECORDED.
+    """
+    RECORDED = "recorded"    # Voice sample stored, no remote slot allocated
+    ALLOCATING = "allocating"  # Clone operation in progress with external API
+    READY = "ready"          # Remote voice ID obtained, slot is active
+    # Future states (not currently used in transitions):
+    COOLING = "cooling"      # Reserved: grace period before eviction
+    EVICTED = "evicted"      # Reserved: slot released, marked for cleanup
 
 
 class VoiceServiceProvider:

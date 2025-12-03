@@ -9,8 +9,15 @@ This document explains how DawnoTemu allocates, queues, and evicts ElevenLabs vo
 | `recorded` | Voice has a stored sample but no remote slot | `Voice.status=recorded`, `Voice.allocation_status=recorded` |
 | `allocating` | A Celery task is activating the ElevenLabs voice | `Voice.allocation_status=allocating`; audio POST returns `status=allocating_voice` |
 | `ready` | Remote voice exists and can generate audio immediately | Audio POST returns `status=processing` or `ready`; `Voice.elevenlabs_voice_id` is populated |
-| `cooling` | Optional warm-hold window before eviction (configured by `VOICE_WARM_HOLD_SECONDS`) | Present in DB, treated as ready but eligible for eviction |
-| `evicted` | Voice was released to free a slot | `Voice.allocation_status=recorded`, `Voice.elevenlabs_voice_id` cleared |
+
+**State Transitions:**
+```
+recorded -> allocating -> ready -> recorded (on eviction)
+```
+
+**Warm-Hold Mechanism:** The `VOICE_WARM_HOLD_SECONDS` config (default 900s/15min) is enforced via the `Voice.slot_lock_expires_at` field, not a separate state. Voices in `ready` state are protected from eviction while their lock hasn't expired.
+
+**Note:** `cooling` and `evicted` states are defined in code but not currently used. Evicted voices transition directly back to `recorded` with `elevenlabs_voice_id` cleared.
 
 Slot events are recorded in `voice_slot_events` with types such as `allocation_queued`, `allocation_started`, `allocation_completed`, `slot_evicted`, and `slot_lock_released`.
 

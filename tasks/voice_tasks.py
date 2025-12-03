@@ -237,7 +237,7 @@ def process_voice_queue(self):
     name='voice.reclaim_idle_voices',
 )
 def reclaim_idle_voices(self, max_to_reclaim: Optional[int] = None):
-    """Release idle voices to free slots for queued requests."""
+    """Release idle voices to free slots for queued requests or proactive cleanup."""
     from models.voice_model import (
         Voice,
         VoiceAllocationStatus,
@@ -247,30 +247,8 @@ def reclaim_idle_voices(self, max_to_reclaim: Optional[int] = None):
     )
     from utils.voice_service import VoiceService
 
-    queue_length = VoiceSlotQueue.length()
-    if queue_length == 0:
-        return 0
-
-    now = datetime.utcnow()
-    warm_hold_seconds = getattr(Config, "VOICE_WARM_HOLD_SECONDS", 900) or 0
-    threshold = now - timedelta(seconds=warm_hold_seconds) if warm_hold_seconds > 0 else now
-
-    limit = min(queue_length, max_to_reclaim) if max_to_reclaim else queue_length
-
-    candidates = (
-        Voice.query.filter(Voice.allocation_status == VoiceAllocationStatus.READY)
-        .filter(or_(Voice.last_used_at.is_(None), Voice.last_used_at <= threshold))
-        .filter(or_(Voice.slot_lock_expires_at.is_(None), Voice.slot_lock_expires_at <= now))
-        .order_by(Voice.last_used_at.asc())
-        .limit(limit)
-        .all()
-    )
-
-    if not candidates:
-        return 0
-
-    reclaimed = 0
-    for voice in candidates:
+    def _evict_voice(voice, reason: str, metadata: dict) -> bool:
+        """Evict a single voice. Returns True on success."""
         try:
             if voice.elevenlabs_voice_id:
                 success, message = VoiceService.delete_voice(
@@ -280,34 +258,77 @@ def reclaim_idle_voices(self, max_to_reclaim: Optional[int] = None):
                 )
                 if not success:
                     logger.error(
-                        "Failed to delete remote voice %s during reclaim: %s",
-                        voice.id,
-                        message,
+                        "Failed to delete remote voice %s during %s: %s",
+                        voice.id, reason, message,
                     )
-                    continue
+                    return False
         except Exception as exc:
             logger.error("Failed to release remote voice %s: %s", voice.id, exc)
-            continue
+            return False
 
         voice.status = VoiceStatus.RECORDED
         voice.allocation_status = VoiceAllocationStatus.RECORDED
         voice.elevenlabs_voice_id = None
         voice.elevenlabs_allocated_at = None
         voice.slot_lock_expires_at = None
-        voice.last_used_at = now
+        voice.last_used_at = datetime.utcnow()
         VoiceSlotEvent.log_event(
             voice_id=voice.id,
             user_id=voice.user_id,
             event_type=VoiceSlotEventType.SLOT_EVICTED,
-            reason="idle_reclaim",
-            metadata={'queue_size': queue_length},
+            reason=reason,
+            metadata=metadata,
         )
-        reclaimed += 1
+        return True
+
+    now = datetime.utcnow()
+    queue_length = VoiceSlotQueue.length()
+    reclaimed = 0
+
+    # Fast path: reclaim for queue pressure (uses warm-hold threshold)
+    if queue_length > 0:
+        warm_hold_seconds = getattr(Config, "VOICE_WARM_HOLD_SECONDS", 900) or 0
+        threshold = now - timedelta(seconds=warm_hold_seconds) if warm_hold_seconds > 0 else now
+        limit = min(queue_length, max_to_reclaim) if max_to_reclaim else queue_length
+
+        candidates = (
+            Voice.query.filter(Voice.allocation_status == VoiceAllocationStatus.READY)
+            .filter(or_(Voice.last_used_at.is_(None), Voice.last_used_at <= threshold))
+            .filter(or_(Voice.slot_lock_expires_at.is_(None), Voice.slot_lock_expires_at <= now))
+            .order_by(Voice.last_used_at.asc())
+            .limit(limit)
+            .all()
+        )
+
+        for voice in candidates:
+            if _evict_voice(voice, "idle_reclaim", {'queue_size': queue_length}):
+                reclaimed += 1
+
+    # Slow path: proactive cleanup of very stale voices (even when queue is empty)
+    max_idle_hours = getattr(Config, "VOICE_MAX_IDLE_HOURS", 24) or 0
+    if max_idle_hours > 0:
+        stale_threshold = now - timedelta(hours=max_idle_hours)
+        # Limit proactive cleanup to avoid long-running task
+        proactive_limit = 5
+
+        stale_candidates = (
+            Voice.query.filter(Voice.allocation_status == VoiceAllocationStatus.READY)
+            .filter(Voice.last_used_at <= stale_threshold)
+            .filter(or_(Voice.slot_lock_expires_at.is_(None), Voice.slot_lock_expires_at <= now))
+            .order_by(Voice.last_used_at.asc())
+            .limit(proactive_limit)
+            .all()
+        )
+
+        for voice in stale_candidates:
+            if _evict_voice(voice, "proactive_cleanup", {'max_idle_hours': max_idle_hours}):
+                reclaimed += 1
 
     if reclaimed:
         db.session.commit()
-        process_voice_queue.delay()
-        logger.info("Reclaimed %s idle voices", reclaimed)
+        if queue_length > 0:
+            process_voice_queue.delay()
+        logger.info("Reclaimed %s idle voices (queue_length=%s)", reclaimed, queue_length)
     return reclaimed
 
 

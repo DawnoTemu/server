@@ -12,9 +12,13 @@ from models.credit_model import (
 )
 from utils.credits import calculate_required_credits
 from utils.voice_slot_manager import VoiceSlotManager, VoiceSlotManagerError
+from utils.redis_client import RedisClient
 
 
 logger = logging.getLogger("audio_controller")
+
+# Short TTL for request deduplication (seconds)
+SYNTH_DEDUP_TTL = 10
 
 
 class AudioController:
@@ -91,6 +95,24 @@ class AudioController:
             if not text:
                 return False, {"error": "Story text not found in story"}, 400
 
+            # Request deduplication: prevent duplicate tasks from rapid clicks
+            dedup_key = f"audio:synth:dedup:{voice_id}:{story_id}"
+            try:
+                redis_client = RedisClient.get_client()
+                # set() with nx=True returns True only if key was created (not existing)
+                if not redis_client.set(dedup_key, "1", nx=True, ex=SYNTH_DEDUP_TTL):
+                    # Key already exists - request is being processed
+                    logger.info("Duplicate synthesis request blocked: voice=%s story=%s", voice_id, story_id)
+                    audio_record = AudioModel.find_or_create_audio_record(story_id, voice.id, voice.user_id)
+                    return True, {
+                        "status": "pending",
+                        "id": audio_record.id,
+                        "message": "Audio synthesis request already in progress",
+                    }, 202
+            except Exception as dedup_exc:
+                # Don't fail if Redis is unavailable; continue without dedup
+                logger.warning("Request deduplication check failed: %s", dedup_exc)
+
             audio_record = AudioModel.find_or_create_audio_record(story_id, voice.id, voice.user_id)
 
             if audio_record.status == AudioStatus.READY.value and audio_record.s3_key:
@@ -106,11 +128,25 @@ class AudioController:
                     "message": "Audio synthesis is already in progress",
                 }, 202
 
+            if audio_record.status == AudioStatus.PENDING.value and audio_record.credits_charged:
+                return True, {
+                    "status": "pending",
+                    "id": audio_record.id,
+                    "message": "Audio synthesis request already queued",
+                    "error_message": audio_record.error_message,
+                }, 202
+
+            retry_after_error = audio_record.status == AudioStatus.ERROR.value
+            if retry_after_error:
+                audio_record.status = AudioStatus.PENDING.value
+                audio_record.error_message = None
+
             required = calculate_required_credits(text)
 
             audio_record.status = AudioStatus.PENDING.value
-            audio_record.error_message = None
             audio_record.credits_charged = required
+
+            debit_performed = False
             try:
                 _, _debit_tx, _ = credit_debit(
                     user_id=voice.user_id,
@@ -120,6 +156,7 @@ class AudioController:
                     story_id=story_id,
                     auto_commit=False,
                 )
+                debit_performed = True
             except InsufficientCreditsError as exc:
                 db.session.rollback()
                 return False, {"error": str(exc), "required": required}, 402
@@ -153,6 +190,8 @@ class AudioController:
                 return False, {"error": msg}, status_code
 
             def _attempt_refund(reason: str):
+                if not debit_performed:
+                    return
                 try:
                     refund_by_audio(audio_record.id, reason=reason)
                 except Exception as refund_exc:

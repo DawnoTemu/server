@@ -85,8 +85,12 @@ class Config:
     ALLOWED_EXTENSIONS = {"wav", "mp3", "m4a"}
     VOICE_NAME = "MyClonedVoice"
     ELEVENLABS_SLOT_LIMIT = int(os.getenv("ELEVENLABS_SLOT_LIMIT", "30") or 0)
+    # Concurrent synthesis API calls (separate from slot limit - ElevenLabs typically allows 5)
+    ELEVENLABS_SYNTHESIS_CONCURRENCY = int(os.getenv("ELEVENLABS_SYNTHESIS_CONCURRENCY", "5") or 5)
     VOICE_WARM_HOLD_SECONDS = int(os.getenv("VOICE_WARM_HOLD_SECONDS", "900") or 0)
     VOICE_QUEUE_POLL_INTERVAL = int(os.getenv("VOICE_QUEUE_POLL_INTERVAL", "60") or 0)
+    # Proactive cleanup: evict voices idle longer than this even when queue is empty (0 = disabled)
+    VOICE_MAX_IDLE_HOURS = int(os.getenv("VOICE_MAX_IDLE_HOURS", "24") or 0)
 
     # Credits configuration (tolerant to invalid env input)
     CREDITS_UNIT_LABEL = os.getenv("CREDITS_UNIT_LABEL", "Story Points (Punkty Magii)")

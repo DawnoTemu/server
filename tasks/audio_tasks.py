@@ -98,8 +98,13 @@ def synthesize_audio_task(self, audio_story_id, voice_id, story_id, text, attemp
         from models.credit_model import refund_by_audio
         from models.voice_model import (
             Voice,
+            VoiceServiceProvider,
             VoiceSlotEvent,
             VoiceSlotEventType,
+        )
+        from utils.concurrency_limiter import (
+            ConcurrencyLimitExceeded,
+            ConcurrencyLimiter,
         )
         from utils.voice_slot_manager import VoiceSlotManager, VoiceSlotManagerError
 
@@ -201,9 +206,79 @@ def synthesize_audio_task(self, audio_story_id, voice_id, story_id, text, attemp
         audio_story.status = AudioStatus.PROCESSING.value
         db.session.commit()
 
-        synth_success, audio_data = AudioModel.synthesize_speech(remote_voice_id, text)
+        limiter_wait = getattr(Config, "VOICE_QUEUE_POLL_INTERVAL", 60) or 60
+        limiter_ttl = getattr(Config, "ELEVENLABS_SYNTH_TTL", 180) or 180
+        # Use dedicated synthesis concurrency limit (not slot limit!)
+        # ELEVENLABS_SLOT_LIMIT (30) = how many cloned voices can exist
+        # ELEVENLABS_SYNTHESIS_CONCURRENCY (5) = how many parallel API calls allowed
+        synth_limit = getattr(Config, "ELEVENLABS_SYNTHESIS_CONCURRENCY", 5) or 5
+
+        # Acquire warm-hold lock BEFORE synthesis to prevent eviction during the operation
+        warm_hold_seconds = getattr(Config, "VOICE_WARM_HOLD_SECONDS", 900) or 0
+        if warm_hold_seconds > 0:
+            now = datetime.utcnow()
+            # Lock for duration of synthesis TTL + warm-hold window
+            voice.slot_lock_expires_at = now + timedelta(seconds=limiter_ttl + warm_hold_seconds)
+            db.session.commit()
+
+        try:
+            if voice.service_provider == VoiceServiceProvider.ELEVENLABS and synth_limit > 0:
+                with ConcurrencyLimiter.guard(
+                    "elevenlabs:synth", limit=synth_limit, ttl=limiter_ttl
+                ):
+                    synth_success, audio_data = AudioModel.synthesize_speech(
+                        remote_voice_id, text
+                    )
+            else:
+                synth_success, audio_data = AudioModel.synthesize_speech(remote_voice_id, text)
+        except ConcurrencyLimitExceeded:
+            wait_seconds = max(5, min(limiter_wait, 120))
+            logger.info(
+                "ElevenLabs synth concurrency limit reached; rescheduling audio %s in %s seconds",
+                audio_story_id,
+                wait_seconds,
+            )
+            audio_story.status = AudioStatus.PENDING.value
+            audio_story.error_message = "Rate limited by ElevenLabs concurrency; retrying soon"
+            db.session.commit()
+            raise self.retry(countdown=wait_seconds)
 
         if not synth_success:
+            if isinstance(audio_data, dict):
+                is_rate_limit = (
+                    audio_data.get("error") == "rate_limited"
+                    or audio_data.get("status") == "too_many_concurrent_requests"
+                    or audio_data.get("status_code") == 429
+                )
+                if is_rate_limit:
+                    retry_after = audio_data.get("retry_after")
+                    try:
+                        retry_after = int(retry_after)
+                    except Exception:
+                        retry_after = None
+                    wait_seconds = retry_after or max(5, min(limiter_wait, 120))
+                    logger.info(
+                        "ElevenLabs rate limit response; rescheduling audio %s in %s seconds",
+                        audio_story_id,
+                        wait_seconds,
+                    )
+                    audio_story.status = AudioStatus.PENDING.value
+                    audio_story.error_message = "Rate limited by ElevenLabs; retrying soon"
+                    db.session.commit()
+                    raise self.retry(countdown=wait_seconds)
+
+            if isinstance(audio_data, str) and "Too many concurrent requests" in audio_data:
+                wait_seconds = max(5, min(limiter_wait, 120))
+                logger.info(
+                    "ElevenLabs concurrency message detected; rescheduling audio %s in %s seconds",
+                    audio_story_id,
+                    wait_seconds,
+                )
+                audio_story.status = AudioStatus.PENDING.value
+                audio_story.error_message = "Rate limited by ElevenLabs; retrying soon"
+                db.session.commit()
+                raise self.retry(countdown=wait_seconds)
+
             logger.error("Speech synthesis failed: %s", audio_data)
             audio_story.status = AudioStatus.ERROR.value
             audio_story.error_message = str(audio_data)
