@@ -1,9 +1,35 @@
 from functools import wraps
-from datetime import datetime, timezone
+from datetime import timezone
 import jwt
 import os
 from flask import request, jsonify, current_app
 from models.user_model import UserModel
+
+
+def _token_issued_before_user_update(token_iat, updated_at):
+    """
+    Return True when JWT iat predates the user's update timestamp.
+
+    JWT `iat` is encoded with second-level precision, while SQL timestamps
+    usually include microseconds. Comparing full datetimes can incorrectly
+    reject freshly issued tokens from the same second.
+    """
+    if token_iat is None or updated_at is None:
+        return False
+
+    try:
+        issued_at_epoch = int(token_iat)
+    except (TypeError, ValueError):
+        return False
+
+    if updated_at.tzinfo is None:
+        updated_at_utc = updated_at.replace(tzinfo=timezone.utc)
+    else:
+        updated_at_utc = updated_at.astimezone(timezone.utc)
+
+    updated_at_epoch = int(updated_at_utc.timestamp())
+    return issued_at_epoch < updated_at_epoch
+
 
 def token_required(f):
     """
@@ -53,15 +79,9 @@ def token_required(f):
             if not current_user.is_active:
                 return jsonify({"error": "User account is inactive"}), 403
 
-            token_iat = payload.get("iat")
-            if token_iat:
-                issued_at = datetime.fromtimestamp(token_iat, tz=timezone.utc)
-                updated_at = current_user.updated_at
-                if updated_at:
-                    updated_at = updated_at.replace(tzinfo=timezone.utc)
-                    # Invalidate tokens issued before the last profile change/deactivation
-                    if issued_at < updated_at:
-                        return jsonify({"error": "Token is no longer valid, please log in again"}), 401
+            if _token_issued_before_user_update(payload.get("iat"), getattr(current_user, "updated_at", None)):
+                # Invalidate tokens issued before the last profile change/deactivation
+                return jsonify({"error": "Token is no longer valid, please log in again"}), 401
                 
             # Check if email is confirmed
             if not current_user.email_confirmed:
@@ -125,14 +145,8 @@ def admin_required(f):
             if not current_user.is_active:
                 return jsonify({"error": "User account is inactive"}), 403
 
-            token_iat = payload.get("iat")
-            if token_iat:
-                issued_at = datetime.fromtimestamp(token_iat, tz=timezone.utc)
-                updated_at = current_user.updated_at
-                if updated_at:
-                    updated_at = updated_at.replace(tzinfo=timezone.utc)
-                    if issued_at < updated_at:
-                        return jsonify({"error": "Token is no longer valid, please log in again"}), 401
+            if _token_issued_before_user_update(payload.get("iat"), getattr(current_user, "updated_at", None)):
+                return jsonify({"error": "Token is no longer valid, please log in again"}), 401
                 
             # Check if email is confirmed
             if not current_user.email_confirmed:
