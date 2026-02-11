@@ -17,7 +17,7 @@ class User(db.Model):
     email = db.Column(db.String(255), unique=True, nullable=False, index=True)
     password_hash = db.Column(db.String(255), nullable=False)
     email_confirmed = db.Column(db.Boolean, default=False)
-    is_active = db.Column(db.Boolean, default=False)
+    is_active = db.Column(db.Boolean, default=True)
     is_admin = db.Column(db.Boolean, default=False)
     # Credits balance for Story Points (Punkty Magii)
     credits_balance = db.Column(db.Integer, nullable=False, default=0)
@@ -130,7 +130,7 @@ class UserModel:
         return User.query.filter_by(email=email).first()
     
     @staticmethod
-    def create_user(email, password, is_admin=False):
+    def create_user(email, password, is_admin=False, is_active=True):
         """
         Create a new user
         
@@ -138,6 +138,7 @@ class UserModel:
             email: User's email address
             password: Plaintext password (will be hashed)
             is_admin: Whether user should have admin privileges
+            is_active: Whether user is active on creation
             
         Returns:
             User: Newly created user object
@@ -145,7 +146,7 @@ class UserModel:
         from config import Config
         initial_credits = getattr(Config, 'INITIAL_CREDITS', 0) or 0
         # Create the user with zero cached balance; grant will create a free lot and update balance
-        user = User(email=email, is_admin=is_admin, credits_balance=0)
+        user = User(email=email, is_admin=is_admin, is_active=is_active, credits_balance=0)
         user.set_password(password)
         
         # Add to database
