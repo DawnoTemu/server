@@ -35,8 +35,8 @@ class AuthController:
             return False, {"error": "Email already registered"}, 409
             
         try:
-            # Create the user
-            user = UserModel.create_user(email, password)
+            # New users are active immediately; only email confirmation is required.
+            user = UserModel.create_user(email, password, is_active=True)
             
             # Generate confirmation token
             token = user.get_confirmation_token()
@@ -45,7 +45,7 @@ class AuthController:
             EmailService.send_confirmation_email(email, token)
             
             return True, {
-                "message": "Registration successful! Please check your email to confirm your account. After confirmation, your account will be reviewed for beta access. You'll be notified when your account is activated."
+                "message": "Registration successful! Please check your email to confirm your account. You can log in immediately after confirmation."
             }, 201
             
         except Exception as e:
@@ -157,6 +157,9 @@ class AuthController:
             
         # Confirm the email
         if UserModel.confirm_email(user_id):
+            # Keep current onboarding process simple: confirmed email means active account.
+            UserModel.activate_user(user_id)
+
             # Get user to send confirmation email
             user = UserModel.get_by_id(user_id)
             if user:
@@ -164,7 +167,7 @@ class AuthController:
                 EmailService.send_email_verification_success(user.email)
             
             return True, {
-                "message": "Email pomyślnie zweryfikowany! DawnoTemu jest obecnie w fazie beta. Twoje konto oczekuje na weryfikację przez nasz zespół. Zostaniesz powiadomiony/a emailem, gdy Twoje konto zostanie aktywowane."
+                "message": "Email pomyślnie zweryfikowany! Możesz teraz zalogować się do aplikacji."
             }, 200
         else:
             return False, {"error": "User not found"}, 404

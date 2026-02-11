@@ -183,30 +183,35 @@ class EmailService:
     @staticmethod
     def send_email_verification_success(user_email):
         """
-        Send email verification success notification with beta access information
+        Send email verification success notification with login shortcut.
         
         Args:
             user_email: User's email address
         """
-        subject = "Email zweryfikowany! Oczekujemy na aktywację konta ✨"
+        login_url = "dawnotemu://login"
+
+        subject = "Email zweryfikowany! Możesz się zalogować ✨"
         
         # Plain text version
-        text_body = """
+        text_body = f"""
         Gratulacje!
 
         Twój email został pomyślnie zweryfikowany! 🎉
 
-        DawnoTemu jest obecnie w fazie beta, dlatego Twoje konto oczekuje na weryfikację przez nasz zespół.
+        Możesz teraz zalogować się do aplikacji:
+        {login_url}
 
-        Zostaniesz powiadomiony/a emailem, gdy Twoje konto zostanie aktywowane i będziesz mógł/mogła zacząć tworzyć magiczne chwile z bajkami opowiadanymi Twoim głosem.
-
-        Dziękujemy za cierpliwość! Pracujemy nad tym, aby zapewnić najlepsze doświadczenie dla wszystkich rodziców.
-
-        Pamiętasz ten wieczór, gdy nie mogłeś/mogłaś być blisko? Wkrótce Twój głos zawsze będzie przy Twoim dziecku. ❤️
+        Do zobaczenia w DawnoTemu! ❤️
 
         Pozdrawiamy,
         Zespół DawnoTemu
         """
+
+        button_html = EmailTemplateHelper.create_button_html(
+            url=login_url,
+            text="Przejdź do logowania",
+            icon="🔐"
+        )
         
         # Create HTML content using template helper
         content_html = f"""
@@ -223,35 +228,20 @@ class EmailService:
         </div>
         
         <p style="margin: 0 0 25px 0; color: #6C6F93; font-size: 18px; line-height: 1.6;" class="mobile-text">
-            DawnoTemu jest obecnie w {EmailTemplateHelper.create_gradient_text("fazie beta")}, dlatego Twoje konto oczekuje na weryfikację przez nasz zespół.
+            Możesz teraz zalogować się do aplikacji i korzystać z DawnoTemu.
         </p>
-        
-        <div style="background-color: rgba(218, 143, 255, 0.1); padding: 25px; border-radius: 16px; border-left: 4px solid #DA8FFF; margin-bottom: 25px;">
-            <p style="margin: 0 0 15px 0; color: #2D3047; font-size: 16px; line-height: 1.6; font-weight: 600;">
-                🚀 Co dalej?
-            </p>
-            <p style="margin: 0; color: #6C6F93; font-size: 16px; line-height: 1.6;">
-                <strong>Zostaniesz powiadomiony/a emailem</strong>, gdy Twoje konto zostanie aktywowane i będziesz mógł/mogła zacząć tworzyć magiczne chwile z bajkami opowiadanymi Twoim głosem.
-            </p>
-        </div>
         
         <p style="margin: 0 0 30px 0; color: #6C6F93; font-size: 16px; line-height: 1.6; font-style: italic;">
-            Pamiętasz ten wieczór, gdy nie mogłeś/mogłaś być blisko? Wkrótce Twój głos zawsze będzie przy Twoim dziecku. ❤️
+            Do zobaczenia w DawnoTemu! ❤️
         </p>
-        
-        <div style="background-color: rgba(251, 190, 159, 0.1); padding: 20px; border-radius: 12px; text-align: center;">
-            <p style="margin: 0; color: #2D3047; font-size: 14px; font-style: italic;">
-                💜 Dziękujemy za cierpliwość! Pracujemy nad tym, aby zapewnić najlepsze doświadczenie dla wszystkich rodziców.
-            </p>
-        </div>
         """
         
         # Generate HTML using template helper
         html_body = EmailTemplateHelper.get_base_email_template(
-            preheader_text="Email zweryfikowany! Oczekujemy na aktywację konta w fazie beta ✨",
+            preheader_text="Email zweryfikowany! Możesz się teraz zalogować ✨",
             email_title="Email zweryfikowany! 🎉",
             email_content=content_html,
-            button_section=""
+            button_section=button_html
         )
         
         return EmailService.send_email(subject, user_email, text_body, html_body)
