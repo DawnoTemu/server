@@ -30,6 +30,8 @@ def test_reset_password_post_form_renders_success(mock_reset_password, client):
     assert response.status_code == 200
     assert response.content_type == "text/html; charset=utf-8"
     assert b"Haslo zostalo zresetowane" in response.data or b"Has\xc5\x82o zosta\xc5\x82o zresetowane" in response.data
+    assert b"dawnotemu://login" in response.data
+    assert b"Przejdz do logowania" in response.data or b"Przejd\xc5\xba do logowania" in response.data
     mock_reset_password.assert_called_once_with(
         "sample-token",
         "Password123",
