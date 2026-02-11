@@ -8,6 +8,7 @@ from routes import auth_bp
 
 # POST /auth/register - Register a new user
 @auth_bp.route('/register', methods=['POST'])
+@rate_limit(limit=5, window_seconds=60)
 def register():
     """Register a new user account"""
     data = request.json
@@ -32,6 +33,7 @@ def register():
 
 # POST /auth/login - Authenticate user
 @auth_bp.route('/login', methods=['POST'])
+@rate_limit(limit=10, window_seconds=60)
 def login():
     """Log in a user and return authentication tokens"""
     data = request.json
@@ -51,6 +53,7 @@ def login():
 
 # POST /auth/refresh - Refresh access token
 @auth_bp.route('/refresh', methods=['POST'])
+@rate_limit(limit=20, window_seconds=60)
 def refresh_token():
     """Generate a new access token using a refresh token"""
     data = request.json
@@ -81,7 +84,7 @@ def get_current_user(current_user):
 @rate_limit(limit=5, window_seconds=60)
 def update_current_user(current_user):
     """Update the authenticated user's profile information"""
-    data = request.get_json() or {}
+    data = request.get_json(silent=True) or request.form or {}
 
     new_email = data.get('email')
     current_password = data.get('current_password')
@@ -134,6 +137,7 @@ def confirm_email(token):
 
 # POST /auth/resend-confirmation - Resend confirmation email
 @auth_bp.route('/resend-confirmation', methods=['POST'])
+@rate_limit(limit=5, window_seconds=300)
 def resend_confirmation():
     """Resend the email confirmation link"""
     data = request.json
@@ -152,6 +156,7 @@ def resend_confirmation():
 
 # POST /auth/reset-password-request - Request password reset
 @auth_bp.route('/reset-password-request', methods=['POST'])
+@rate_limit(limit=5, window_seconds=300)
 def reset_password_request():
     """Request a password reset email"""
     data = request.json
@@ -168,25 +173,52 @@ def reset_password_request():
     
     return jsonify(result), status_code
 
-# POST /auth/reset-password/:token - Reset password
-@auth_bp.route('/reset-password/<token>', methods=['POST'])
+# GET/POST /auth/reset-password/:token - Reset password
+@auth_bp.route('/reset-password/<token>', methods=['GET', 'POST'])
+@rate_limit(limit=5, window_seconds=300)
 def reset_password(token):
-    """Reset a user's password using a token"""
-    data = request.json
-    
-    # Required fields
-    new_password = data.get('new_password')
-    new_password_confirm = data.get('new_password_confirm')
-    
-    # Validate required fields
+    """Reset a user's password using a token."""
+    if request.method == "GET":
+        # Render a simple HTML form so email links work in browsers
+        return render_template("auth/reset_password.html", token=token, success=False, error=None)
+
+    # Accept JSON or form payloads without requiring application/json
+    if request.is_json:
+        data = request.get_json(silent=True) or {}
+    else:
+        data = request.form.to_dict() if request.form else {}
+
+    new_password = data.get("new_password")
+    new_password_confirm = data.get("new_password_confirm")
+
     if not all([new_password, new_password_confirm]):
-        return jsonify({"error": "New password and confirmation are required"}), 400
-    
-    # Reset the password
+        if request.is_json:
+            return jsonify({"error": "New password and confirmation are required"}), 400
+        return render_template(
+            "auth/reset_password.html",
+            token=token,
+            success=False,
+            error="Nowe hasło i potwierdzenie są wymagane.",
+        ), 400
+
     success, result, status_code = AuthController.reset_password(
-        token,
-        new_password,
-        new_password_confirm
+        token, new_password, new_password_confirm
     )
-    
-    return jsonify(result), status_code
+    if request.is_json:
+        return jsonify(result), status_code
+
+    if success:
+        return render_template(
+            "auth/reset_password.html",
+            token=None,
+            success=True,
+            message="Hasło zostało zresetowane. Możesz się teraz zalogować.",
+            error=None,
+        ), status_code
+
+    return render_template(
+        "auth/reset_password.html",
+        token=token,
+        success=False,
+        error=result.get("error") if isinstance(result, dict) else "Reset hasła nie powiódł się.",
+    ), status_code
