@@ -692,18 +692,35 @@ class VoiceModel:
         return query.count()
 
     @staticmethod
+    def count_active_slots(service_provider: Optional[str] = None) -> int:
+        """Count voices holding or acquiring remote slots (READY + ALLOCATING)."""
+        query = Voice.query.filter(
+            Voice.allocation_status.in_([
+                VoiceAllocationStatus.READY,
+                VoiceAllocationStatus.ALLOCATING,
+            ])
+        )
+        if service_provider:
+            query = query.filter(Voice.service_provider == service_provider)
+        return query.count()
+
+    @staticmethod
     def available_slot_capacity(service_provider: Optional[str] = None):
-        """Return remaining slot capacity for the given provider."""
+        """Return remaining slot capacity for the given provider.
+
+        Counts both READY and ALLOCATING voices against the limit to prevent
+        over-subscription when multiple allocations are in flight.
+        """
         if service_provider and service_provider != VoiceServiceProvider.ELEVENLABS:
             # No enforced cap for non-ElevenLabs providers unless configured separately
             provider_limit = getattr(Config, "CARTESIA_SLOT_LIMIT", None)
             if provider_limit is None or provider_limit <= 0:
                 return float("inf")
-            used = VoiceModel.count_ready_slots(service_provider)
+            used = VoiceModel.count_active_slots(service_provider)
             return max(0, provider_limit - used)
 
         limit = getattr(Config, "ELEVENLABS_SLOT_LIMIT", 0) or 0
         if limit <= 0:
             return float("inf")
-        used = VoiceModel.count_ready_slots(VoiceServiceProvider.ELEVENLABS)
+        used = VoiceModel.count_active_slots(VoiceServiceProvider.ELEVENLABS)
         return max(0, limit - used)
