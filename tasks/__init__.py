@@ -1,7 +1,7 @@
 import os
 import sentry_sdk
 from sentry_sdk.integrations.celery import CeleryIntegration
-from celery import Celery
+from celery import Celery, Task
 import logging
 from config import Config
 
@@ -42,6 +42,28 @@ celery_app.conf.update(
 
 # This will be set in app.py
 flask_app = None
+
+
+class FlaskTask(Task):
+    """Base task that ensures execution inside a Flask application context.
+
+    Use as ``base=FlaskTask`` for any task that touches the database, config,
+    or other Flask extensions.  The Flask app reference is resolved lazily so
+    the class can be defined before ``init_app()`` is called.
+    """
+
+    _flask_app = None
+
+    @property
+    def _app(self):
+        if self._flask_app is None:
+            from tasks import flask_app as _fa
+            self._flask_app = _fa
+        return self._flask_app
+
+    def __call__(self, *args, **kwargs):
+        with self._app.app_context():
+            return self.run(*args, **kwargs)
 
 def init_app(app):
     """Initialize Celery with Flask app for task context"""

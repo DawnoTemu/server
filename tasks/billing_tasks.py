@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 
 from celery.schedules import crontab
 
-from tasks import celery_app
+from tasks import celery_app, FlaskTask
 from database import db
 from config import Config
 from models.user_model import User
@@ -17,7 +17,7 @@ from models.credit_model import (
 logger = logging.getLogger('billing_tasks')
 
 
-@celery_app.task(name='billing.grant_monthly_credits', ignore_result=True)
+@celery_app.task(name='billing.grant_monthly_credits', base=FlaskTask, ignore_result=True)
 def grant_monthly_credits():
     """Daily scheduler task that grants monthly Story Points to eligible users.
 
@@ -74,7 +74,7 @@ celery_app.conf.beat_schedule = {
 }
 
 
-@celery_app.task(name='billing.expire_credit_lots', ignore_result=True)
+@celery_app.task(name='billing.expire_credit_lots', base=FlaskTask, ignore_result=True)
 def expire_credit_lots():
     """Daily job to expire credit lots at or before now and adjust balances.
 
