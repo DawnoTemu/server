@@ -43,6 +43,9 @@ jobs:
       AWS_SECRET_ACCESS_KEY: test_aws_secret
       AWS_REGION: test-region-1
       S3_BUCKET_NAME: test-bucket
+      CARTESIA_API_KEY: test_cartesia_key
+      RESEND_API_KEY: test_resend_key
+      SENTRY_DSN: ""
       FLASK_DEBUG: "False"
       SECRET_KEY: test-secret-key
       ADMIN_PASSWORD: test-admin-password
