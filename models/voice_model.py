@@ -23,6 +23,7 @@ class VoiceStatus:
     RECORDED = "recorded"
     READY = "ready"
     ERROR = "error"
+    NEEDS_RERECORD = "needs_rerecord"
 
 
 class VoiceAllocationStatus:

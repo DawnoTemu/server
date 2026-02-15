@@ -167,7 +167,7 @@ def process_voice_recording(self, voice_id, s3_key, filename, user_id, voice_nam
 )
 def process_voice_queue(self):
     """Attempt to process queued allocation requests based on capacity."""
-    from models.voice_model import Voice, VoiceModel, VoiceServiceProvider
+    from models.voice_model import Voice, VoiceModel, VoiceServiceProvider, VoiceStatus
 
     processed = 0
     batch_size = getattr(Config, "VOICE_QUEUE_BATCH_SIZE", 20) or 20
@@ -175,20 +175,23 @@ def process_voice_queue(self):
     if not ready_items:
         return 0
 
-    # Populate provider where missing (legacy payloads)
+    # Populate provider where missing (legacy payloads) and drop ineligible voices
+    eligible_items = []
     for item in ready_items:
+        voice_id = item.get("voice_id")
+        voice = Voice.query.get(voice_id) if voice_id is not None else None
+        if voice and voice.status == VoiceStatus.NEEDS_RERECORD:
+            VoiceSlotQueue.remove(voice_id)
+            logger.info("Skipping voice %s from queue (needs re-record)", voice_id)
+            continue
         if not item.get("service_provider"):
-            voice_id = item.get("voice_id")
-            provider = None
-            if voice_id is not None:
-                voice = Voice.query.get(voice_id)
-                if voice:
-                    provider = voice.service_provider
+            provider = voice.service_provider if voice else None
             item["service_provider"] = provider or VoiceServiceProvider.ELEVENLABS
+        eligible_items.append(item)
 
     # Group by provider to apply per-provider capacity
     grouped: dict[str, list[dict]] = defaultdict(list)
-    for item in ready_items:
+    for item in eligible_items:
         grouped[item["service_provider"]].append(item)
 
     for provider, items in grouped.items():
@@ -521,15 +524,27 @@ def allocate_voice_slot(self, voice_id, s3_key, filename, user_id, voice_name=No
             file_data = BytesIO(file_obj.read())
         except Exception as e:
             logger.error("Failed to download recording for allocation: %s", e)
-            voice.status = VoiceStatus.ERROR
+            # Detect missing S3 object (NoSuchKey / 404) to avoid endless retries
+            error_code = getattr(getattr(e, 'response', None), 'Error', {}).get('Code', '') if hasattr(e, 'response') else ''
+            is_missing = (
+                'NoSuchKey' in str(e)
+                or '404' in str(e)
+                or error_code == 'NoSuchKey'
+            )
+            if is_missing:
+                voice.status = VoiceStatus.NEEDS_RERECORD
+                voice.error_message = "Recording sample missing from storage; please re-upload"
+            else:
+                voice.status = VoiceStatus.ERROR
+                voice.error_message = f"Could not download recording: {e}"
             voice.allocation_status = VoiceAllocationStatus.RECORDED
-            voice.error_message = f"Could not download recording: {e}"
+            VoiceSlotQueue.remove(voice.id)
             VoiceSlotEvent.log_event(
                 voice_id=voice.id,
                 user_id=user_id,
                 event_type=VoiceSlotEventType.ALLOCATION_FAILED,
-                reason="download_failed",
-                metadata={'error': str(e)},
+                reason="sample_missing" if is_missing else "download_failed",
+                metadata={'error': str(e), 'needs_rerecord': is_missing},
             )
             db.session.commit()
             VoiceSlotManager._release_voice_lock(voice_id)
