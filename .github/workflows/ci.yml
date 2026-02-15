@@ -45,6 +45,7 @@ jobs:
       S3_BUCKET_NAME: test-bucket
       FLASK_DEBUG: "False"
       SECRET_KEY: test-secret-key
+      ADMIN_PASSWORD: test-admin-password
 
     steps:
       - name: Checkout
