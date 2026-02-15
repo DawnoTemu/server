@@ -58,6 +58,11 @@ class VoiceSlotManager:
 
         voice = cls._reload_voice_state(voice)
 
+        if voice.status == VoiceStatus.NEEDS_RERECORD:
+            raise VoiceSlotManagerError(
+                "Voice sample is missing from storage; please re-upload the recording."
+            )
+
         if not voice.recording_s3_key and not voice.s3_sample_key:
             if voice.elevenlabs_voice_id and voice.allocation_status == VoiceAllocationStatus.READY:
                 logger.warning(
