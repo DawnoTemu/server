@@ -2,6 +2,7 @@ from flask import request, jsonify, redirect
 from routes import voice_bp
 from controllers.voice_controller import VoiceController
 from utils.auth_middleware import token_required
+from utils.rate_limiter import limiter
 
 # GET /voices - List all voices for the authenticated user
 @voice_bp.route('/voices', methods=['GET'])
@@ -13,6 +14,7 @@ def list_voices(current_user):
 
 # POST /voices - Create a new voice
 @voice_bp.route('/voices', methods=['POST'])
+@limiter.limit("5 per minute")
 @token_required
 def create_voice(current_user):
     """Create a new voice clone from uploaded audio"""
@@ -46,6 +48,7 @@ def get_voice(current_user, voice_id):
 
 # DELETE /voices/:id - Delete a voice
 @voice_bp.route('/voices/<int:voice_id>', methods=['DELETE'])
+@limiter.limit("10 per minute")
 @token_required
 def delete_voice(current_user, voice_id):
     """Delete a voice by ID"""

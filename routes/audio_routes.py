@@ -3,6 +3,7 @@ from routes import audio_bp
 from controllers.audio_controller import AudioController
 from models.voice_model import VoiceModel
 from utils.auth_middleware import token_required
+from utils.rate_limiter import limiter
 import logging
 
 # Configure logger
@@ -84,6 +85,7 @@ def check_audio_exists(current_user, voice_id, story_id):
 
 # POST /voices/:voice_id/stories/:story_id/audio - Generate new audio
 @audio_bp.route('/voices/<string:voice_id>/stories/<int:story_id>/audio', methods=['POST'])
+@limiter.limit("10 per minute")
 @token_required
 def synthesize_audio(current_user, voice_id, story_id):
     """Generate new audio synthesis for a voice and story"""

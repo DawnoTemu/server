@@ -107,58 +107,71 @@ class TestVoiceController:
         assert status_code == 500
         mock_clone.assert_called_once_with(mock_file.stream, mock_file.filename, 1, voice_name=None)
 
-    @patch('models.voice_model.VoiceModel.get_voice_by_id', return_value=None)
+    @patch('models.audio_model.AudioModel.delete_voice_audio')
     @patch('models.voice_model.VoiceModel.delete_voice')
-    def test_delete_voice_success(self, mock_delete, mock_get_voice):
-        """Test successful voice deletion"""
-        # Arrange
-        voice_id = "test-voice-id"
+    def test_delete_voice_success(self, mock_delete, mock_delete_audio):
+        """Test successful voice deletion cleans up audio first"""
+        voice_id = 42
+        mock_delete_audio.return_value = (True, "Audio deleted")
         mock_delete.return_value = (True, "Voice deleted successfully")
-        
-        # Act
+
         success, result, status_code = VoiceController.delete_voice(voice_id)
-        
-        # Assert
+
         assert success is True
-        assert "message" in result
         assert "deleted" in result["message"].lower()
         assert status_code == 200
+        mock_delete_audio.assert_called_once_with(voice_id)
         mock_delete.assert_called_once_with(voice_id)
 
-    @patch('models.voice_model.VoiceModel.get_voice_by_id', return_value=None)
+    @patch('models.audio_model.AudioModel.delete_voice_audio')
     @patch('models.voice_model.VoiceModel.delete_voice')
-    def test_delete_voice_api_error(self, mock_delete, mock_get_voice):
+    def test_delete_voice_api_error(self, mock_delete, mock_delete_audio):
         """Test handling API errors during voice deletion"""
-        # Arrange
-        voice_id = "test-voice-id"
+        voice_id = 42
+        mock_delete_audio.return_value = (True, "Audio deleted")
         mock_delete.return_value = (False, "API error")
-        
-        # Act
+
         success, result, status_code = VoiceController.delete_voice(voice_id)
-        
-        # Assert
+
         assert success is False
-        assert "error" in result
         assert "Failed to delete voice" in result["error"]
         assert "API error" in result["details"]
         assert status_code == 500
 
-    @patch('models.voice_model.VoiceModel.get_voice_by_id', return_value=SimpleNamespace(elevenlabs_voice_id="test-voice-id"))
-    @patch('models.voice_model.VoiceModel.delete_voice')
     @patch('models.audio_model.AudioModel.delete_voice_audio')
-    def test_delete_voice_audio_error(self, mock_delete_audio, mock_delete_voice, mock_get_voice):
+    @patch('models.voice_model.VoiceModel.delete_voice')
+    def test_delete_voice_audio_error(self, mock_delete_voice, mock_delete_audio):
         """Test handling audio deletion errors during voice deletion"""
-        # Arrange
-        voice_id = "test-voice-id"
+        voice_id = 42
         mock_delete_voice.return_value = (True, "Voice deleted successfully")
         mock_delete_audio.return_value = (False, "S3 error")
-        
-        # Act
+
         success, result, status_code = VoiceController.delete_voice(voice_id)
-        
-        # Assert
+
         assert success is True
-        assert "message" in result
         assert "Voice deleted, but failed" in result["message"]
         assert "S3 error" in result["details"]
         assert status_code == 200
+        mock_delete_audio.assert_called_once_with(voice_id)
+
+    @patch('models.audio_model.AudioModel.delete_voice_audio')
+    @patch('models.voice_model.VoiceModel.delete_voice')
+    def test_delete_voice_audio_cleanup_before_voice_delete(self, mock_delete, mock_delete_audio):
+        """Audio records must be deleted BEFORE the voice record to avoid FK orphans."""
+        voice_id = 42
+        call_order = []
+
+        def track_audio(*args, **kwargs):
+            call_order.append("delete_audio")
+            return True, "ok"
+
+        def track_voice(*args, **kwargs):
+            call_order.append("delete_voice")
+            return True, "ok"
+
+        mock_delete_audio.side_effect = track_audio
+        mock_delete.side_effect = track_voice
+
+        VoiceController.delete_voice(voice_id)
+
+        assert call_order == ["delete_audio", "delete_voice"]

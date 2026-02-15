@@ -226,6 +226,14 @@ class AudioController:
                 audio_record.status = AudioStatus.PENDING.value
 
             try:
+                db.session.commit()
+            except Exception as exc:
+                logger.error("Commit failed for audio %s: %s", audio_record.id, exc)
+                db.session.rollback()
+                _attempt_refund("commit_failed")
+                return False, {"error": "Failed to persist audio request"}, 500
+
+            try:
                 from tasks.audio_tasks import synthesize_audio_task
 
                 task = synthesize_audio_task.delay(audio_record.id, voice.id, story_id, text)
@@ -236,13 +244,6 @@ class AudioController:
                 logger.error("Queueing synthesis task failed: %s", exc)
                 _attempt_refund("queue_failed")
                 return _mark_audio_error("Failed to queue synthesis task", 503)
-
-            try:
-                db.session.commit()
-            except Exception as exc:
-                logger.error("Commit failed after queueing audio %s: %s", audio_record.id, exc)
-                db.session.rollback()
-                return False, {"error": "Failed to persist audio request"}, 500
 
             response_status = (
                 "processing"

@@ -57,27 +57,26 @@ class VoiceController:
     def delete_voice(voice_id):
         """
         Process voice deletion request
-        
+
         Args:
             voice_id: ID of the voice to delete
-            
+
         Returns:
             tuple: (success, message, status_code)
         """
-        # Delete voice using the VoiceModel
+        # Delete associated audio records and S3 audio files BEFORE
+        # removing the voice itself (the voice record is needed for FK refs).
+        audio_success, audio_message = AudioModel.delete_voice_audio(voice_id)
+        if not audio_success:
+            logger.warning("Audio cleanup issue for voice %s: %s", voice_id, audio_message)
+
         success, message = VoiceModel.delete_voice(voice_id)
-        
         if not success:
             return False, {"error": "Failed to delete voice", "details": message}, 500
-            
-        # Delete associated audio files from S3
-        voice = VoiceModel.get_voice_by_id(voice_id)
-        if voice:
-            audio_success, audio_message = AudioModel.delete_voice_audio(voice.elevenlabs_voice_id)
-            
-            if not audio_success:
-                return True, {"message": "Voice deleted, but failed to delete some audio files", "details": audio_message}, 200
-        
+
+        if not audio_success:
+            return True, {"message": "Voice deleted, but failed to delete some audio files", "details": audio_message}, 200
+
         return True, {"message": "Voice and associated files deleted"}, 200
     
     @staticmethod

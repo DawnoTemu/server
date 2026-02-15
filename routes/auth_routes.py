@@ -2,13 +2,13 @@ from flask import request, jsonify, render_template
 from controllers.auth_controller import AuthController
 from controllers.user_controller import UserController
 from utils.auth_middleware import token_required
-from utils.rate_limiter import rate_limit
+from utils.rate_limiter import limiter
 from utils.validators import is_valid_email, validate_password
 from routes import auth_bp
 
 # POST /auth/register - Register a new user
 @auth_bp.route('/register', methods=['POST'])
-@rate_limit(limit=5, window_seconds=60)
+@limiter.limit("5 per minute")
 def register():
     """Register a new user account"""
     data = request.json
@@ -33,7 +33,7 @@ def register():
 
 # POST /auth/login - Authenticate user
 @auth_bp.route('/login', methods=['POST'])
-@rate_limit(limit=10, window_seconds=60)
+@limiter.limit("10 per minute")
 def login():
     """Log in a user and return authentication tokens"""
     data = request.json
@@ -53,7 +53,7 @@ def login():
 
 # POST /auth/refresh - Refresh access token
 @auth_bp.route('/refresh', methods=['POST'])
-@rate_limit(limit=20, window_seconds=60)
+@limiter.limit("20 per minute")
 def refresh_token():
     """Generate a new access token using a refresh token"""
     data = request.json
@@ -81,7 +81,7 @@ def get_current_user(current_user):
 # PATCH /auth/me - Update current user profile
 @auth_bp.route('/me', methods=['PATCH'])
 @token_required
-@rate_limit(limit=5, window_seconds=60)
+@limiter.limit("5 per minute")
 def update_current_user(current_user):
     """Update the authenticated user's profile information"""
     data = request.get_json(silent=True) or request.form or {}
@@ -110,7 +110,7 @@ def update_current_user(current_user):
 # DELETE /auth/me - Delete current user account
 @auth_bp.route('/me', methods=['DELETE'])
 @token_required
-@rate_limit(limit=3, window_seconds=300)
+@limiter.limit("3 per 5 minutes")
 def delete_current_user(current_user):
     """Delete the authenticated user's account"""
     data = request.get_json(silent=True) or {}
@@ -137,7 +137,7 @@ def confirm_email(token):
 
 # POST /auth/resend-confirmation - Resend confirmation email
 @auth_bp.route('/resend-confirmation', methods=['POST'])
-@rate_limit(limit=5, window_seconds=300)
+@limiter.limit("5 per 5 minutes")
 def resend_confirmation():
     """Resend the email confirmation link"""
     data = request.json
@@ -156,7 +156,7 @@ def resend_confirmation():
 
 # POST /auth/reset-password-request - Request password reset
 @auth_bp.route('/reset-password-request', methods=['POST'])
-@rate_limit(limit=5, window_seconds=300)
+@limiter.limit("5 per 5 minutes")
 def reset_password_request():
     """Request a password reset email"""
     data = request.json
@@ -175,7 +175,7 @@ def reset_password_request():
 
 # GET/POST /auth/reset-password/:token - Reset password
 @auth_bp.route('/reset-password/<token>', methods=['GET', 'POST'])
-@rate_limit(limit=5, window_seconds=300)
+@limiter.limit("5 per 5 minutes")
 def reset_password(token):
     """Reset a user's password using a token."""
     if request.method == "GET":

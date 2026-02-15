@@ -41,6 +41,14 @@ class DummySession:
 def dummy_session(monkeypatch):
     session = DummySession()
     monkeypatch.setattr("utils.voice_slot_manager.db", SimpleNamespace(session=session))
+    # Prevent Redis lock leaks between tests (set nx=True always succeeds)
+    mock_redis = MagicMock()
+    mock_redis.set.return_value = True
+    mock_redis.delete.return_value = True
+    monkeypatch.setattr(
+        "utils.voice_slot_manager.RedisClient",
+        MagicMock(get_client=lambda: mock_redis),
+    )
     return session
 
 
@@ -78,6 +86,49 @@ def test_ready_voice_short_circuits(monkeypatch, dummy_session):
     assert state.metadata["voice_id"] == voice.id
     assert state.metadata["elevenlabs_voice_id"] == "remote-voice"
     assert dummy_session.flush_calls == 0
+
+
+def test_ready_voice_extends_slot_lock(monkeypatch, dummy_session):
+    """ensure_active_voice should extend slot_lock_expires_at for READY voices
+    to prevent eviction during the window between HTTP request and Celery task."""
+    now = datetime.utcnow()
+    voice = make_voice(
+        status=VoiceStatus.READY,
+        allocation_status=VoiceAllocationStatus.READY,
+        elevenlabs_voice_id="remote-voice",
+        elevenlabs_allocated_at=now,
+        slot_lock_expires_at=None,
+    )
+    monkeypatch.setattr("config.Config.VOICE_WARM_HOLD_SECONDS", 600)
+
+    state = VoiceSlotManager.ensure_active_voice(voice)
+
+    assert state.status == VoiceSlotManager.STATUS_READY
+    assert voice.slot_lock_expires_at is not None
+    assert voice.slot_lock_expires_at > now
+    assert dummy_session.commit_calls == 1
+
+
+def test_ready_voice_slot_lock_survives_commit_failure(monkeypatch, dummy_session):
+    """If commit fails when extending slot lock, voice should still return READY."""
+    now = datetime.utcnow()
+    voice = make_voice(
+        status=VoiceStatus.READY,
+        allocation_status=VoiceAllocationStatus.READY,
+        elevenlabs_voice_id="remote-voice",
+        elevenlabs_allocated_at=now,
+    )
+
+    def fail_commit():
+        dummy_session.commit_calls += 1
+        raise RuntimeError("db down")
+
+    dummy_session.commit = fail_commit
+
+    state = VoiceSlotManager.ensure_active_voice(voice)
+
+    assert state.status == VoiceSlotManager.STATUS_READY
+    assert dummy_session.rollback_calls == 1
 
 
 def test_allocating_voice_uses_queue_metadata(monkeypatch, dummy_session):
@@ -193,8 +244,12 @@ def test_ensure_active_voice_refreshes_stale_state(app, mocker):
     mocker.patch("utils.voice_slot_manager.VoiceSlotQueue.length", return_value=0)
 
     with app.app_context():
+        from models.voice_model import VoiceSlotEvent
+
         existing = User.query.filter_by(email="stale@example.com").first()
         if existing:
+            for v in Voice.query.filter_by(user_id=existing.id).all():
+                VoiceSlotEvent.query.filter_by(voice_id=v.id).delete()
             Voice.query.filter_by(user_id=existing.id).delete()
             db.session.delete(existing)
             db.session.commit()
