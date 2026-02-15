@@ -149,17 +149,10 @@ def process_voice_recording(self, voice_id, s3_key, filename, user_id, voice_nam
 
         logger.info("Completed processing for voice %s", voice_id)
 
-        allocation_task = allocate_voice_slot.delay(
-            voice_id=voice_id,
-            s3_key=voice.recording_s3_key,
-            filename=filename,
-            user_id=user_id,
-            voice_name=voice_name,
-        )
-
-        emit_metric("voice.process.dispatch_allocation", provider=str(voice.service_provider))
-
-        logger.info("Enqueued allocation task %s for voice %s", allocation_task.id, voice_id)
+        # Voice remains in RECORDED state. Remote slot allocation is deferred
+        # until the first audio synthesis request (just-in-time allocation via
+        # VoiceSlotManager.ensure_active_voice).
+        emit_metric("voice.process.completed", provider=str(voice.service_provider))
         return True
 
     except Exception as e:
@@ -454,10 +447,12 @@ def allocate_voice_slot(self, voice_id, s3_key, filename, user_id, voice_name=No
             VoiceStatus,
         )
         from utils.s3_client import S3Client
+        from utils.voice_slot_manager import VoiceSlotManager
 
         voice = Voice.query.get(voice_id)
         if not voice:
             logger.error("Voice record %s not found during allocation", voice_id)
+            VoiceSlotManager._release_voice_lock(voice_id)
             return False
 
         provider = service_provider or voice.service_provider
@@ -473,6 +468,7 @@ def allocate_voice_slot(self, voice_id, s3_key, filename, user_id, voice_name=No
             )
             VoiceSlotQueue.remove(voice.id)
             db.session.commit()
+            VoiceSlotManager._release_voice_lock(voice_id)
             logger.info("Voice %s already allocated; skipping duplicate clone", voice_id)
             return True
 
@@ -532,6 +528,7 @@ def allocate_voice_slot(self, voice_id, s3_key, filename, user_id, voice_name=No
                 metadata={'error': str(e)},
             )
             db.session.commit()
+            VoiceSlotManager._release_voice_lock(voice_id)
             return False
 
         success, result = VoiceModel._clone_voice_api(
@@ -555,6 +552,7 @@ def allocate_voice_slot(self, voice_id, s3_key, filename, user_id, voice_name=No
                     reason="missing_external_id",
                 )
                 db.session.commit()
+                VoiceSlotManager._release_voice_lock(voice_id)
                 return False
 
             voice.elevenlabs_voice_id = external_voice_id
@@ -577,6 +575,7 @@ def allocate_voice_slot(self, voice_id, s3_key, filename, user_id, voice_name=No
                 },
             )
             db.session.commit()
+            VoiceSlotManager._release_voice_lock(voice_id)
             logger.info("Voice %s allocated with external ID %s", voice_id, external_voice_id)
             process_voice_queue.delay()
             return True
@@ -592,11 +591,17 @@ def allocate_voice_slot(self, voice_id, s3_key, filename, user_id, voice_name=No
             metadata={'error': str(result)},
         )
         db.session.commit()
+        VoiceSlotManager._release_voice_lock(voice_id)
         logger.error("Voice allocation failed for voice_id=%s: %s", voice_id, result)
         return False
 
     except Exception as e:
         logger.exception("Exception in allocate_voice_slot: %s", e)
+        try:
+            from utils.voice_slot_manager import VoiceSlotManager as _VSM
+            _VSM._release_voice_lock(voice_id)
+        except Exception:
+            pass
         try:
             from models.voice_model import (
                 Voice,

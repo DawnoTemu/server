@@ -14,10 +14,14 @@ from models.voice_model import (
     VoiceModel,
 )
 from utils.voice_slot_queue import VoiceSlotQueue
+from utils.redis_client import RedisClient
 from sqlalchemy.exc import InvalidRequestError
 
 
 logger = logging.getLogger("voice_slot_manager")
+
+# Default TTL for the per-voice allocation lock (seconds).
+_VOICE_ALLOC_LOCK_TTL = 300
 
 
 class VoiceSlotManagerError(Exception):
@@ -105,6 +109,33 @@ class VoiceSlotManager:
             result["queue_position"] = position
         return result
 
+    # Redis key template for per-voice allocation locks.
+    _ALLOC_LOCK_KEY = "voice_alloc_lock:{voice_id}"
+
+    @classmethod
+    def _acquire_voice_lock(cls, voice_id: int, ttl: int) -> bool:
+        """Try to acquire a distributed lock for a voice allocation.
+
+        Returns True when the lock is acquired, False when another worker
+        already holds it (preventing duplicate clones).
+        """
+        try:
+            client = RedisClient.get_client()
+            key = cls._ALLOC_LOCK_KEY.format(voice_id=voice_id)
+            return bool(client.set(key, "1", nx=True, ex=ttl))
+        except Exception as exc:
+            logger.warning("Redis lock unavailable for voice %s, allowing allocation: %s", voice_id, exc)
+            return True  # Fail-open: proceed if Redis is down (rare)
+
+    @classmethod
+    def _release_voice_lock(cls, voice_id: int) -> None:
+        try:
+            client = RedisClient.get_client()
+            key = cls._ALLOC_LOCK_KEY.format(voice_id=voice_id)
+            client.delete(key)
+        except Exception:
+            pass  # Best-effort; TTL provides eventual cleanup
+
     @classmethod
     def _initiate_allocation(
         cls,
@@ -112,10 +143,23 @@ class VoiceSlotManager:
         metadata: Dict[str, Any],
         request_metadata: Optional[Dict[str, Any]],
     ) -> VoiceSlotState:
-        """Kick off allocation or enqueue when capacity is exhausted."""
+        """Kick off allocation or enqueue when capacity is exhausted.
+
+        Acquires a per-voice distributed lock to prevent concurrent duplicate
+        allocations for the same voice.
+        """
+        lock_seconds = getattr(Config, "VOICE_SLOT_LOCK_SECONDS", 300) or 300
+
+        # Prevent duplicate allocation: only one worker can hold this lock.
+        if not cls._acquire_voice_lock(voice.id, lock_seconds):
+            logger.info("Voice %s allocation already in progress (lock held); returning ALLOCATING", voice.id)
+            metadata.update(cls._queue_metadata(voice.id))
+            return VoiceSlotState(cls.STATUS_ALLOCATING, metadata)
+
         capacity = VoiceModel.available_slot_capacity(voice.service_provider)
         unlimited = capacity == float("inf")
         if not unlimited and capacity <= 0:
+            cls._release_voice_lock(voice.id)
             cls._enqueue_voice(voice, request_metadata)
             metadata.update(cls._queue_metadata(voice.id))
             return VoiceSlotState(cls.STATUS_QUEUED, metadata)
@@ -123,7 +167,6 @@ class VoiceSlotManager:
         logger.info("Dispatching allocation for voice %s (capacity remaining: %s)", voice.id, capacity)
         metadata["queued"] = False
 
-        lock_seconds = getattr(Config, "VOICE_SLOT_LOCK_SECONDS", 300) or 300
         voice.status = VoiceStatus.PROCESSING
         voice.allocation_status = VoiceAllocationStatus.ALLOCATING
         voice.error_message = None
@@ -142,6 +185,7 @@ class VoiceSlotManager:
         except Exception as exc:
             logger.exception("Failed to prepare allocation state for voice %s: %s", voice.id, exc)
             db.session.rollback()
+            cls._release_voice_lock(voice.id)
             raise VoiceSlotManagerError("Failed to prepare allocation") from exc
 
         payload = {
@@ -155,20 +199,21 @@ class VoiceSlotManager:
         }
 
         try:
+            db.session.commit()
+        except Exception as exc:
+            logger.exception("Failed to persist allocation state for voice %s: %s", voice.id, exc)
+            db.session.rollback()
+            cls._release_voice_lock(voice.id)
+            raise VoiceSlotManagerError("Failed to persist allocation state") from exc
+
+        try:
             from tasks.voice_tasks import allocate_voice_slot  # local import to avoid circular dep
 
             allocate_voice_slot.delay(**payload)
         except Exception as exc:
             logger.exception("Queueing allocation task failed for voice %s: %s", voice.id, exc)
-            db.session.rollback()
+            cls._release_voice_lock(voice.id)
             raise VoiceSlotManagerError("Failed to queue allocation task") from exc
-
-        try:
-            db.session.commit()
-        except Exception as exc:
-            logger.exception("Failed to persist allocation state for voice %s: %s", voice.id, exc)
-            db.session.rollback()
-            raise VoiceSlotManagerError("Failed to persist allocation state") from exc
 
         metadata.update(cls._queue_metadata(voice.id))
         return VoiceSlotState(cls.STATUS_ALLOCATING, metadata)

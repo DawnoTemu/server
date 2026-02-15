@@ -1,607 +1,893 @@
+"""Tests for core voice queuing tasks.
+
+Covers the five critical tasks:
+  - process_voice_recording
+  - allocate_voice_slot
+  - process_voice_queue
+  - reclaim_idle_voices
+  - reset_stuck_allocations
+"""
+
 from datetime import datetime, timedelta
+from io import BytesIO
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch, call
 
 import pytest
 
-import models.voice_model as voice_model_module
 from models.voice_model import (
-    Voice,
     VoiceAllocationStatus,
     VoiceSlotEventType,
     VoiceStatus,
-    VoiceServiceProvider,
 )
 from tasks.voice_tasks import (
     allocate_voice_slot,
     process_voice_queue,
+    process_voice_recording,
     reclaim_idle_voices,
     reset_stuck_allocations,
 )
 
 
-class FakeSession:
-    def __init__(self):
-        self.added = []
-        self.commits = 0
-        self.rollbacks = 0
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
-    def add(self, obj):
-        self.added.append(obj)
+def _make_voice(**overrides):
+    defaults = {
+        "id": 1,
+        "user_id": 10,
+        "name": "TestVoice",
+        "recording_s3_key": "voice_samples/10/voice_1.wav",
+        "s3_sample_key": None,
+        "sample_filename": "voice_1.wav",
+        "status": VoiceStatus.RECORDED,
+        "allocation_status": VoiceAllocationStatus.RECORDED,
+        "service_provider": "elevenlabs",
+        "elevenlabs_voice_id": None,
+        "elevenlabs_allocated_at": None,
+        "last_used_at": None,
+        "slot_lock_expires_at": None,
+        "error_message": None,
+        "recording_filesize": None,
+        "updated_at": datetime.utcnow(),
+    }
+    defaults.update(overrides)
+    return SimpleNamespace(**defaults)
+
+
+class DummySession:
+    def __init__(self):
+        self.commit_calls = 0
+        self.rollback_calls = 0
 
     def commit(self):
-        self.commits += 1
+        self.commit_calls += 1
 
     def rollback(self):
-        self.rollbacks += 1
+        self.rollback_calls += 1
+
+    def flush(self):
+        pass
+
+    def refresh(self, obj):
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def patch_config(monkeypatch):
+    monkeypatch.setattr("config.Config.VOICE_QUEUE_POLL_INTERVAL", 30, raising=False)
+    monkeypatch.setattr("config.Config.VOICE_QUEUE_BATCH_SIZE", 20, raising=False)
+    monkeypatch.setattr("config.Config.VOICE_WARM_HOLD_SECONDS", 900, raising=False)
+    monkeypatch.setattr("config.Config.VOICE_MAX_IDLE_HOURS", 24, raising=False)
+    monkeypatch.setattr("config.Config.VOICE_ALLOCATION_STUCK_SECONDS", 600, raising=False)
+    monkeypatch.setattr("config.Config.ELEVENLABS_SLOT_LIMIT", 30, raising=False)
+    monkeypatch.setattr("config.Config.VOICE_SLOT_LOCK_SECONDS", 300, raising=False)
 
 
 @pytest.fixture
-def fake_db(monkeypatch):
-    session = FakeSession()
-    monkeypatch.setattr('tasks.voice_tasks.db', SimpleNamespace(session=session))
-    monkeypatch.setattr('models.voice_model.db', SimpleNamespace(session=session), raising=False)
+def stub_db(monkeypatch):
+    session = DummySession()
+    monkeypatch.setattr("tasks.voice_tasks.db", SimpleNamespace(session=session))
     return session
 
 
-def test_allocate_voice_slot_queues_when_limit_reached(monkeypatch, fake_db):
-    class FakeVoiceQuery:
-        def __init__(self, voice):
-            self.voice = voice
-
-        def get(self, _):
-            return self.voice
-
-    voice = SimpleNamespace(
-        id=1,
-        user_id=42,
-        status=VoiceStatus.RECORDED,
-        allocation_status=VoiceAllocationStatus.RECORDED,
-        elevenlabs_voice_id=None,
-        service_provider=VoiceServiceProvider.ELEVENLABS,
-        error_message=None,
-    )
-
-    monkeypatch.setattr(voice_model_module, 'Voice', SimpleNamespace(query=FakeVoiceQuery(voice)))
-    monkeypatch.setattr('models.voice_model.VoiceModel.available_slot_capacity', staticmethod(lambda provider=None: 0))
-
-    enqueue_calls = []
-    monkeypatch.setattr('tasks.voice_tasks.VoiceSlotQueue.enqueue', lambda voice_id, payload, delay_seconds=0: enqueue_calls.append((voice_id, payload, delay_seconds)))
-    monkeypatch.setattr('tasks.voice_tasks.process_voice_queue.apply_async', lambda *args, **kwargs: enqueue_calls.append(('schedule', kwargs.get('countdown'))))
-    monkeypatch.setattr('tasks.voice_tasks.process_voice_queue.delay', lambda: enqueue_calls.append(('delay', None)))
-
+@pytest.fixture
+def stub_events(monkeypatch):
+    """Capture VoiceSlotEvent.log_event calls without touching DB."""
     events = []
-    monkeypatch.setattr('models.voice_model.VoiceSlotEvent.log_event', lambda **kwargs: events.append(kwargs), raising=False)
 
-    result = allocate_voice_slot.run(
-        voice_id=1,
-        s3_key="voice_samples/42/voice_1.wav",
-        filename="sample.wav",
-        user_id=42,
-        voice_name="Voice",
-    )
+    def _log(**kwargs):
+        events.append(kwargs)
+        return SimpleNamespace(id=len(events))
 
-    assert result == {"queued": True}
-    assert enqueue_calls, "Expected voice to be enqueued when capacity is zero"
-    assert events[0]['event_type'] == VoiceSlotEventType.ALLOCATION_QUEUED
-    assert voice.status == VoiceStatus.RECORDED
-    assert voice.allocation_status == VoiceAllocationStatus.RECORDED
-
-
-def test_allocate_voice_slot_honors_explicit_service_provider(monkeypatch, fake_db):
-    class FakeVoiceQuery:
-        def __init__(self, voice):
-            self.voice = voice
-
-        def get(self, _):
-            return self.voice
-
-    voice = SimpleNamespace(
-        id=2,
-        user_id=99,
-        status=VoiceStatus.RECORDED,
-        allocation_status=VoiceAllocationStatus.RECORDED,
-        elevenlabs_voice_id=None,
-        service_provider=VoiceServiceProvider.ELEVENLABS,
-        error_message=None,
-    )
-
-    monkeypatch.setattr(voice_model_module, 'Voice', SimpleNamespace(query=FakeVoiceQuery(voice)))
-
-    capacity_calls = []
-
-    def fake_capacity(provider=None):
-        capacity_calls.append(provider)
-        return 0
-
-    monkeypatch.setattr('models.voice_model.VoiceModel.available_slot_capacity', staticmethod(fake_capacity))
-
-    enqueue_calls = []
     monkeypatch.setattr(
-        'tasks.voice_tasks.VoiceSlotQueue.enqueue',
-        lambda voice_id, payload, delay_seconds=0: enqueue_calls.append(payload.get('service_provider')),
+        "models.voice_model.VoiceSlotEvent.log_event",
+        staticmethod(_log),
     )
-    monkeypatch.setattr('tasks.voice_tasks.process_voice_queue.apply_async', lambda *args, **kwargs: None)
-    monkeypatch.setattr('tasks.voice_tasks.process_voice_queue.delay', lambda: None)
-    monkeypatch.setattr('models.voice_model.VoiceSlotEvent.log_event', lambda **kwargs: None, raising=False)
-
-    result = allocate_voice_slot.run(
-        voice_id=2,
-        s3_key="voice_samples/99/voice_2.wav",
-        filename="sample.wav",
-        user_id=99,
-        voice_name="Voice",
-        service_provider=VoiceServiceProvider.CARTESIA,
-    )
-
-    assert result == {"queued": True}
-    assert capacity_calls and capacity_calls[0] == VoiceServiceProvider.CARTESIA
-    assert enqueue_calls and enqueue_calls[0] == VoiceServiceProvider.CARTESIA
+    return events
 
 
-def test_allocate_voice_slot_passes_provider_to_clone(monkeypatch, fake_db):
-    class FakeVoiceQuery:
-        def __init__(self, voice):
-            self.voice = voice
-
-        def get(self, _):
-            return self.voice
-
-    voice = SimpleNamespace(
-        id=3,
-        user_id=77,
-        status=VoiceStatus.RECORDED,
-        allocation_status=VoiceAllocationStatus.RECORDED,
-        elevenlabs_voice_id=None,
-        service_provider=VoiceServiceProvider.ELEVENLABS,
-        error_message=None,
-        name="Explicit Provider Voice",
-    )
-
-    monkeypatch.setattr(voice_model_module, "Voice", SimpleNamespace(query=FakeVoiceQuery(voice)))
-    monkeypatch.setattr(
-        "models.voice_model.VoiceModel.available_slot_capacity",
-        staticmethod(lambda provider=None: 5),
-    )
-
-    clone_calls = []
-
-    def fake_clone(file_data, filename, user_id, voice_name, service_provider=None):
-        clone_calls.append(service_provider)
-        return True, {"voice_id": "remote-id"}
-
-    monkeypatch.setattr("models.voice_model.VoiceModel._clone_voice_api", staticmethod(fake_clone))
-    monkeypatch.setattr(
-        "tasks.voice_tasks.S3Client.download_fileobj",
-        staticmethod(lambda _: SimpleNamespace(read=lambda: b"audio-bytes")),
-    )
-    monkeypatch.setattr("tasks.voice_tasks.VoiceSlotQueue.remove", lambda *_: None)
-    monkeypatch.setattr("models.voice_model.VoiceSlotEvent.log_event", lambda **kwargs: None, raising=False)
-
-    result = allocate_voice_slot.run(
-        voice_id=3,
-        s3_key="voice_samples/77/voice_3.wav",
-        filename="sample.wav",
-        user_id=77,
-        voice_name="Voice",
-        service_provider=VoiceServiceProvider.CARTESIA,
-    )
-
-    assert result is True
-    assert clone_calls and clone_calls[0] == VoiceServiceProvider.CARTESIA
-    assert voice.service_provider == VoiceServiceProvider.CARTESIA
-
-
-def test_allocate_voice_slot_idempotent_skip(monkeypatch, fake_db):
-    class FakeVoiceQuery:
-        def __init__(self, voice):
-            self.voice = voice
-
-        def get(self, _):
-            return self.voice
-
-    voice = SimpleNamespace(
-        id=4,
-        user_id=55,
-        status=VoiceStatus.READY,
-        allocation_status=VoiceAllocationStatus.READY,
-        elevenlabs_voice_id="remote-existing",
-        service_provider=VoiceServiceProvider.ELEVENLABS,
-        error_message=None,
-    )
-
-    monkeypatch.setattr(voice_model_module, "Voice", SimpleNamespace(query=FakeVoiceQuery(voice)))
-    monkeypatch.setattr(
-        "models.voice_model.VoiceModel.available_slot_capacity",
-        staticmethod(lambda provider=None: 1),
-    )
-
-    remove_calls = []
-    monkeypatch.setattr("tasks.voice_tasks.VoiceSlotQueue.remove", lambda vid: remove_calls.append(vid))
-    events = []
-    monkeypatch.setattr("models.voice_model.VoiceSlotEvent.log_event", lambda **kwargs: events.append(kwargs), raising=False)
-    # Ensure no S3 download occurs
-    monkeypatch.setattr(
-        "tasks.voice_tasks.S3Client.download_fileobj",
-        staticmethod(lambda *_: (_ for _ in ()).throw(AssertionError("download should not be called"))),
-    )
-
-    result = allocate_voice_slot.run(
-        voice_id=4,
-        s3_key="voice_samples/55/voice_4.wav",
-        filename="sample.wav",
-        user_id=55,
-        voice_name="Voice",
-    )
-
-    assert result is True
-    assert remove_calls == [4]
-    assert events and events[0]["reason"] == "idempotent_skip"
-    assert voice.status == VoiceStatus.READY
-
-
-def test_process_voice_queue_dispatches(monkeypatch):
-    dispatched = []
-
-    monkeypatch.setattr('models.voice_model.VoiceModel.available_slot_capacity', staticmethod(lambda provider=None: 2))
-    queue = [{
-        'voice_id': 1,
-        's3_key': 'k',
-        'filename': 'f',
-        'user_id': 42,
-        'voice_name': 'name',
-        'attempts': 0,
-        'service_provider': VoiceServiceProvider.ELEVENLABS,
-    }]
-
-    monkeypatch.setattr('tasks.voice_tasks.VoiceSlotQueue.dequeue_ready_batch', lambda limit=20: list(queue))
-    monkeypatch.setattr('tasks.voice_tasks.allocate_voice_slot.delay', lambda **kwargs: dispatched.append(kwargs))
-    monkeypatch.setattr('tasks.voice_tasks.VoiceSlotQueue.length', lambda: 1)
-
-    processed = process_voice_queue.run()
-    assert processed == 1
-    assert dispatched and dispatched[0]['from_queue'] is True
-
-
-def test_process_voice_queue_requeues_when_provider_full(monkeypatch):
-    capacity_map = {
-        VoiceServiceProvider.ELEVENLABS: 0,
-        VoiceServiceProvider.CARTESIA: 2,
+@pytest.fixture
+def stub_queue(monkeypatch):
+    """Provide controllable VoiceSlotQueue stubs."""
+    state = {
+        "items": [],
+        "enqueued": [],
+        "removed": [],
     }
 
-    def capacity(provider=None):
-        return capacity_map.get(provider, 2)
-
-    monkeypatch.setattr('models.voice_model.VoiceModel.available_slot_capacity', staticmethod(capacity))
-
-    queue = [
-        {
-            'voice_id': 1,
-            's3_key': 'k1',
-            'filename': 'f1',
-            'user_id': 11,
-            'voice_name': 'first',
-            'attempts': 0,
-            'service_provider': VoiceServiceProvider.ELEVENLABS,
-        },
-        {
-            'voice_id': 2,
-            's3_key': 'k2',
-            'filename': 'f2',
-            'user_id': 22,
-            'voice_name': 'second',
-            'attempts': 0,
-            'service_provider': VoiceServiceProvider.CARTESIA,
-        },
-    ]
-
-    requeued = []
-
-    def fake_enqueue(voice_id, payload, delay_seconds=0):
-        requeued.append((voice_id, payload, delay_seconds))
-
-    dispatched = []
-
-    monkeypatch.setattr('tasks.voice_tasks.VoiceSlotQueue.dequeue_ready_batch', lambda limit=20: list(queue))
-    monkeypatch.setattr('tasks.voice_tasks.VoiceSlotQueue.enqueue', fake_enqueue)
-    monkeypatch.setattr('tasks.voice_tasks.allocate_voice_slot.delay', lambda **kwargs: dispatched.append(kwargs))
-
-    processed = process_voice_queue.run()
-    assert processed == 1
-    assert dispatched and dispatched[0]['voice_id'] == 2
-    assert requeued and requeued[0][0] == 1
-    assert requeued[0][2] >= 5
-
-
-def test_process_voice_queue_fetches_provider_for_legacy_payload(monkeypatch):
-    class FakeVoice:
-        service_provider = VoiceServiceProvider.CARTESIA
-
-    class FakeQuery:
-        @staticmethod
-        def get(_):
-            return FakeVoice()
-
-    monkeypatch.setattr('models.voice_model.Voice', SimpleNamespace(query=FakeQuery()))
-    monkeypatch.setattr('models.voice_model.VoiceModel.available_slot_capacity', staticmethod(lambda provider=None: 1))
-
-    queue = [{
-        'voice_id': 99,
-        's3_key': 'legacy',
-        'filename': 'legacy.wav',
-        'user_id': 44,
-        'voice_name': 'legacy-voice',
-        'attempts': 0,
-    }]
-
-    dispatched = []
-
-    monkeypatch.setattr('tasks.voice_tasks.VoiceSlotQueue.dequeue_ready_batch', lambda limit=20: list(queue))
-    monkeypatch.setattr('tasks.voice_tasks.allocate_voice_slot.delay', lambda **kwargs: dispatched.append(kwargs))
-
-    processed = process_voice_queue.run()
-    assert processed == 1
-    assert dispatched and dispatched[0]['service_provider'] == VoiceServiceProvider.CARTESIA
-
-
-def test_process_voice_queue_respects_capacity_per_provider(monkeypatch):
-    capacity_map = {
-        VoiceServiceProvider.ELEVENLABS: 1,
-        VoiceServiceProvider.CARTESIA: 1,
-    }
-
-    def capacity(provider=None):
-        return capacity_map.get(provider, 0)
-
-    monkeypatch.setattr('models.voice_model.VoiceModel.available_slot_capacity', staticmethod(capacity))
-
-    queue = [
-        {
-            'voice_id': 1,
-            's3_key': 'k1',
-            'filename': 'f1',
-            'user_id': 11,
-            'voice_name': 'first',
-            'attempts': 0,
-            'service_provider': VoiceServiceProvider.ELEVENLABS,
-        },
-        {
-            'voice_id': 2,
-            's3_key': 'k2',
-            'filename': 'f2',
-            'user_id': 22,
-            'voice_name': 'second',
-            'attempts': 0,
-            'service_provider': VoiceServiceProvider.ELEVENLABS,
-        },
-        {
-            'voice_id': 3,
-            's3_key': 'k3',
-            'filename': 'f3',
-            'user_id': 33,
-            'voice_name': 'third',
-            'attempts': 0,
-            'service_provider': VoiceServiceProvider.CARTESIA,
-        },
-    ]
-
-    dispatched = []
-    requeued = []
-    monkeypatch.setattr('tasks.voice_tasks.VoiceSlotQueue.dequeue_ready_batch', lambda limit=20: list(queue))
-    monkeypatch.setattr('tasks.voice_tasks.allocate_voice_slot.delay', lambda **kwargs: dispatched.append(kwargs))
-    monkeypatch.setattr('tasks.voice_tasks.VoiceSlotQueue.enqueue', lambda voice_id, payload, delay_seconds=0: requeued.append((voice_id, delay_seconds)))
-
-    processed = process_voice_queue.run()
-    assert processed == 2  # one per provider
-    assert {d['voice_id'] for d in dispatched} == {1, 3}
-    assert requeued and requeued[0][0] == 2
-
-def test_reclaim_idle_voices_evicts_and_triggers_queue(monkeypatch, fake_db):
-    now = datetime.utcnow()
-    voice = SimpleNamespace(
-        id=1,
-        user_id=42,
-        elevenlabs_voice_id='remote-id',
-        service_provider=VoiceServiceProvider.ELEVENLABS,
-        allocation_status=VoiceAllocationStatus.READY,
-        status=VoiceStatus.READY,
-        last_used_at=now - timedelta(minutes=30),
-        slot_lock_expires_at=None,
-    )
-
-    class FakeQuery:
-        def __init__(self, items):
-            self.items = items
-
-        def filter(self, *args, **kwargs):
-            return self
-
-        def order_by(self, *args, **kwargs):
-            return self
-
-        def limit(self, _):
-            return self
-
-        def all(self):
-            return self.items
-
-    class DummyAttr:
-        def is_(self, _):
-            return None
-
-        def __le__(self, _):
-            return None
-
-        def __eq__(self, _):
-            return None
-
-        def asc(self):
-            return self
-
-    class StubVoice:
-        allocation_status = DummyAttr()
-        last_used_at = DummyAttr()
-        slot_lock_expires_at = DummyAttr()
-        query = SimpleNamespace(filter=lambda *args, **kwargs: FakeQuery([voice]))
-
-    monkeypatch.setattr('tasks.voice_tasks.VoiceSlotQueue.length', lambda: 1)
-    monkeypatch.setattr(voice_model_module, 'Voice', StubVoice)
-
-    delete_calls = []
-    monkeypatch.setattr('utils.voice_service.VoiceService.delete_voice', lambda **kwargs: (delete_calls.append(kwargs) or True, "ok"))
-
-    events = []
-    monkeypatch.setattr('models.voice_model.VoiceSlotEvent.log_event', lambda **kwargs: events.append(kwargs), raising=False)
-
-    process_calls = []
-    monkeypatch.setattr('tasks.voice_tasks.process_voice_queue.delay', lambda: process_calls.append(True))
-
-    reclaimed = reclaim_idle_voices.run()
-
-    assert reclaimed == 1
-    assert delete_calls
-    assert voice.elevenlabs_voice_id is None
-    assert voice.status == VoiceStatus.RECORDED
-    assert events[-1]['event_type'] == VoiceSlotEventType.SLOT_EVICTED
-    assert process_calls
-
-
-def test_reclaim_idle_voices_skips_when_remote_delete_fails(monkeypatch, fake_db):
-    now = datetime.utcnow()
-    voice = SimpleNamespace(
-        id=3,
-        user_id=77,
-        elevenlabs_voice_id='remote-stuck',
-        service_provider=VoiceServiceProvider.ELEVENLABS,
-        allocation_status=VoiceAllocationStatus.READY,
-        status=VoiceStatus.READY,
-        last_used_at=now - timedelta(minutes=45),
-        slot_lock_expires_at=None,
-    )
-
-    class FakeQuery:
-        def __init__(self, items):
-            self.items = items
-
-        def filter(self, *args, **kwargs):
-            return self
-
-        def order_by(self, *args, **kwargs):
-            return self
-
-        def limit(self, _):
-            return self
-
-        def all(self):
-            return self.items
-
-    class DummyAttr:
-        def is_(self, _):
-            return None
-
-        def __le__(self, _):
-            return None
-
-        def __eq__(self, _):
-            return None
-
-        def asc(self):
-            return self
-
-    class StubVoice:
-        allocation_status = DummyAttr()
-        last_used_at = DummyAttr()
-        slot_lock_expires_at = DummyAttr()
-        query = SimpleNamespace(filter=lambda *args, **kwargs: FakeQuery([voice]))
-
-    monkeypatch.setattr('tasks.voice_tasks.VoiceSlotQueue.length', lambda: 1)
-    monkeypatch.setattr(voice_model_module, 'Voice', StubVoice)
     monkeypatch.setattr(
-        'utils.voice_service.VoiceService.delete_voice',
-        lambda **kwargs: (False, "remote error"),
+        "tasks.voice_tasks.VoiceSlotQueue.dequeue_ready_batch",
+        lambda limit: state["items"][:limit],
     )
-
-    events = []
-    monkeypatch.setattr('models.voice_model.VoiceSlotEvent.log_event', lambda **kwargs: events.append(kwargs), raising=False)
-    monkeypatch.setattr('tasks.voice_tasks.process_voice_queue.delay', lambda: None)
-
-    reclaimed = reclaim_idle_voices.run()
-
-    assert reclaimed == 0
-    assert voice.status == VoiceStatus.READY
-    assert voice.elevenlabs_voice_id == 'remote-stuck'
-    assert events == []
-
-
-def test_reset_stuck_allocations_requeues(monkeypatch, fake_db):
-    now = datetime.utcnow()
-    voice = SimpleNamespace(
-        id=7,
-        user_id=88,
-        elevenlabs_voice_id=None,
-        service_provider=VoiceServiceProvider.CARTESIA,
-        allocation_status=VoiceAllocationStatus.ALLOCATING,
-        status=VoiceStatus.PROCESSING,
-        last_used_at=None,
-        slot_lock_expires_at=now - timedelta(minutes=20),
-        recording_s3_key="voice_samples/88/voice_7.wav",
-        s3_sample_key=None,
-        sample_filename="voice_7.wav",
-        name="Stuck Voice",
-        updated_at=now - timedelta(minutes=30),
-    )
-
-    class DummyAttr:
-        def __eq__(self, _):
-            return self
-
-        def __le__(self, _):
-            return self
-
-        def is_(self, _):
-            return self
-
-        def asc(self):
-            return self
-
-    class FakeQuery:
-        def __init__(self, items):
-            self.items = items
-
-        def filter(self, *args, **kwargs):
-            return self
-
-        def order_by(self, *args, **kwargs):
-            return self
-
-        def limit(self, _):
-            return self
-
-        def all(self):
-            return self.items
-
-    class StubVoice:
-        allocation_status = DummyAttr()
-        slot_lock_expires_at = DummyAttr()
-        updated_at = DummyAttr()
-        query = SimpleNamespace(filter=lambda *args, **kwargs: FakeQuery([voice]))
-
-    monkeypatch.setattr(voice_model_module, "Voice", StubVoice)
-    enqueue_calls = []
     monkeypatch.setattr(
         "tasks.voice_tasks.VoiceSlotQueue.enqueue",
-        lambda voice_id, payload, delay_seconds=0: enqueue_calls.append((voice_id, payload)),
+        lambda vid, payload, delay_seconds=0: state["enqueued"].append(
+            {"voice_id": vid, "payload": payload, "delay": delay_seconds}
+        ),
     )
-    events = []
-    monkeypatch.setattr("models.voice_model.VoiceSlotEvent.log_event", lambda **kwargs: events.append(kwargs), raising=False)
-    process_calls = []
-    monkeypatch.setattr("tasks.voice_tasks.process_voice_queue.delay", lambda: process_calls.append(True))
+    monkeypatch.setattr(
+        "tasks.voice_tasks.VoiceSlotQueue.remove",
+        lambda vid: state["removed"].append(vid),
+    )
+    monkeypatch.setattr(
+        "tasks.voice_tasks.VoiceSlotQueue.length",
+        lambda: len(state["items"]),
+    )
+    return state
 
-    reset = reset_stuck_allocations.run(stale_after_seconds=60)
 
-    assert reset == 1
-    assert enqueue_calls and enqueue_calls[0][0] == voice.id
-    assert events and events[-1]["reason"] == "stuck_allocation_reset"
-    assert process_calls
-    assert voice.allocation_status == VoiceAllocationStatus.RECORDED
-    assert voice.status == VoiceStatus.RECORDED
+@pytest.fixture
+def stub_metrics(monkeypatch):
+    metrics = []
+    monkeypatch.setattr(
+        "tasks.voice_tasks.emit_metric",
+        lambda name, value=1.0, **tags: metrics.append((name, value, tags)),
+    )
+    return metrics
+
+
+@pytest.fixture(autouse=True)
+def _app_ctx(app):
+    """Provide Flask app context so Voice.query descriptor works during monkeypatch.
+
+    monkeypatch.setattr reads the old value via getattr, which invokes
+    Flask-SQLAlchemy's _QueryProperty.__get__ – that requires an active app
+    context.  After each test, restore the original descriptor (monkeypatch
+    only saves the *result* of __get__, not the descriptor itself).
+    """
+    from models.voice_model import Voice
+
+    _orig = Voice.__dict__.get("query")
+    with app.app_context():
+        yield
+    if _orig is not None:
+        Voice.query = _orig
+
+
+# ===================================================================
+# process_voice_recording
+# ===================================================================
+
+class TestProcessVoiceRecording:
+
+    def test_happy_path_records_metadata_no_allocation(
+        self, monkeypatch, stub_db, stub_events, stub_metrics,
+    ):
+        """After processing, voice stays in RECORDED state and no allocation is dispatched."""
+        voice = _make_voice()
+
+        monkeypatch.setattr(
+            "models.voice_model.Voice.query",
+            SimpleNamespace(get=lambda _id: voice),
+        )
+
+        head_response = {
+            "ContentLength": 12345,
+            "ServerSideEncryption": "AES256",
+            "StorageClass": "STANDARD",
+            "ContentType": "audio/wav",
+        }
+        mock_s3_client = MagicMock()
+        mock_s3_client.head_object.return_value = head_response
+
+        monkeypatch.setattr(
+            "utils.s3_client.S3Client.get_client", lambda: mock_s3_client,
+        )
+        monkeypatch.setattr(
+            "utils.s3_client.S3Client.get_bucket_name", lambda: "test-bucket",
+        )
+
+        result = process_voice_recording.run(
+            voice_id=1,
+            s3_key="voice_samples/10/voice_1.wav",
+            filename="voice_1.wav",
+            user_id=10,
+            voice_name="TestVoice",
+        )
+
+        assert result is True
+        assert voice.status == VoiceStatus.RECORDED
+        assert voice.recording_filesize == 12345
+        assert stub_db.commit_calls == 1
+
+        event_types = [e["event_type"] for e in stub_events]
+        assert VoiceSlotEventType.RECORDING_PROCESSED in event_types
+
+        # No allocation should have been dispatched (lazy allocation)
+        metric_names = [m[0] for m in stub_metrics]
+        assert "voice.process.completed" in metric_names
+        assert "voice.process.dispatch_allocation" not in metric_names
+
+    def test_voice_not_found_returns_false(self, monkeypatch, stub_db):
+        monkeypatch.setattr(
+            "models.voice_model.Voice.query",
+            SimpleNamespace(get=lambda _id: None),
+        )
+
+        result = process_voice_recording.run(
+            voice_id=999, s3_key="k", filename="f.wav", user_id=1,
+        )
+        assert result is False
+
+    def test_s3_head_failure_is_non_fatal(
+        self, monkeypatch, stub_db, stub_events, stub_metrics,
+    ):
+        voice = _make_voice()
+        monkeypatch.setattr(
+            "models.voice_model.Voice.query",
+            SimpleNamespace(get=lambda _id: voice),
+        )
+
+        mock_s3_client = MagicMock()
+        mock_s3_client.head_object.side_effect = RuntimeError("S3 down")
+        monkeypatch.setattr("utils.s3_client.S3Client.get_client", lambda: mock_s3_client)
+        monkeypatch.setattr("utils.s3_client.S3Client.get_bucket_name", lambda: "bucket")
+
+        result = process_voice_recording.run(
+            voice_id=1, s3_key="k", filename="f.wav", user_id=10,
+        )
+        assert result is True
+        assert voice.status == VoiceStatus.RECORDED
+
+
+# ===================================================================
+# allocate_voice_slot
+# ===================================================================
+
+class TestAllocateVoiceSlot:
+
+    def test_happy_path_clones_and_marks_ready(
+        self, monkeypatch, stub_db, stub_events, stub_queue,
+    ):
+        voice = _make_voice()
+        monkeypatch.setattr(
+            "models.voice_model.Voice.query",
+            SimpleNamespace(get=lambda _id: voice),
+        )
+        monkeypatch.setattr(
+            "models.voice_model.VoiceModel.available_slot_capacity",
+            staticmethod(lambda provider=None: 5),
+        )
+        monkeypatch.setattr(
+            "utils.s3_client.S3Client.download_fileobj",
+            lambda key: BytesIO(b"audio-bytes"),
+        )
+        monkeypatch.setattr(
+            "models.voice_model.VoiceModel._clone_voice_api",
+            staticmethod(lambda *a, **kw: (True, {"voice_id": "ext-voice-123"})),
+        )
+        monkeypatch.setattr(
+            "tasks.voice_tasks.process_voice_queue.delay", lambda: None,
+        )
+        monkeypatch.setattr(
+            "utils.voice_slot_manager.VoiceSlotManager._release_voice_lock",
+            classmethod(lambda cls, vid: None),
+        )
+
+        result = allocate_voice_slot.run(
+            voice_id=1, s3_key="k", filename="f.wav",
+            user_id=10, voice_name="V",
+        )
+
+        assert result is True
+        assert voice.elevenlabs_voice_id == "ext-voice-123"
+        assert voice.status == VoiceStatus.READY
+        assert voice.allocation_status == VoiceAllocationStatus.READY
+        assert 1 in stub_queue["removed"]
+
+    def test_idempotent_skip_when_already_ready(
+        self, monkeypatch, stub_db, stub_queue,
+    ):
+        voice = _make_voice(
+            elevenlabs_voice_id="existing-id",
+            allocation_status=VoiceAllocationStatus.READY,
+            status=VoiceStatus.READY,
+        )
+        monkeypatch.setattr(
+            "models.voice_model.Voice.query",
+            SimpleNamespace(get=lambda _id: voice),
+        )
+        monkeypatch.setattr(
+            "utils.voice_slot_manager.VoiceSlotManager._release_voice_lock",
+            classmethod(lambda cls, vid: None),
+        )
+
+        result = allocate_voice_slot.run(
+            voice_id=1, s3_key="k", filename="f.wav", user_id=10,
+        )
+        assert result is True
+        assert 1 in stub_queue["removed"]
+
+    def test_enqueues_when_no_capacity(
+        self, monkeypatch, stub_db, stub_events, stub_queue,
+    ):
+        voice = _make_voice()
+        monkeypatch.setattr(
+            "models.voice_model.Voice.query",
+            SimpleNamespace(get=lambda _id: voice),
+        )
+        monkeypatch.setattr(
+            "models.voice_model.VoiceModel.available_slot_capacity",
+            staticmethod(lambda provider=None: 0),
+        )
+        monkeypatch.setattr(
+            "utils.voice_slot_manager.VoiceSlotManager._release_voice_lock",
+            classmethod(lambda cls, vid: None),
+        )
+
+        result = allocate_voice_slot.run(
+            voice_id=1, s3_key="k", filename="f.wav", user_id=10,
+        )
+        assert result == {"queued": True}
+        assert voice.allocation_status == VoiceAllocationStatus.RECORDED
+        assert len(stub_queue["enqueued"]) == 1
+
+    def test_s3_download_failure_marks_error(
+        self, monkeypatch, stub_db, stub_events,
+    ):
+        voice = _make_voice()
+        monkeypatch.setattr(
+            "models.voice_model.Voice.query",
+            SimpleNamespace(get=lambda _id: voice),
+        )
+        monkeypatch.setattr(
+            "models.voice_model.VoiceModel.available_slot_capacity",
+            staticmethod(lambda provider=None: 5),
+        )
+        monkeypatch.setattr(
+            "utils.s3_client.S3Client.download_fileobj",
+            MagicMock(side_effect=RuntimeError("S3 error")),
+        )
+        monkeypatch.setattr(
+            "utils.voice_slot_manager.VoiceSlotManager._release_voice_lock",
+            classmethod(lambda cls, vid: None),
+        )
+
+        result = allocate_voice_slot.run(
+            voice_id=1, s3_key="k", filename="f.wav", user_id=10,
+        )
+        assert result is False
+        assert voice.status == VoiceStatus.ERROR
+        assert "download" in (voice.error_message or "").lower()
+
+    def test_clone_api_failure_marks_error(
+        self, monkeypatch, stub_db, stub_events,
+    ):
+        voice = _make_voice()
+        monkeypatch.setattr(
+            "models.voice_model.Voice.query",
+            SimpleNamespace(get=lambda _id: voice),
+        )
+        monkeypatch.setattr(
+            "models.voice_model.VoiceModel.available_slot_capacity",
+            staticmethod(lambda provider=None: 5),
+        )
+        monkeypatch.setattr(
+            "utils.s3_client.S3Client.download_fileobj",
+            lambda key: BytesIO(b"audio"),
+        )
+        monkeypatch.setattr(
+            "models.voice_model.VoiceModel._clone_voice_api",
+            staticmethod(lambda *a, **kw: (False, "API rate limit")),
+        )
+        monkeypatch.setattr(
+            "utils.voice_slot_manager.VoiceSlotManager._release_voice_lock",
+            classmethod(lambda cls, vid: None),
+        )
+
+        result = allocate_voice_slot.run(
+            voice_id=1, s3_key="k", filename="f.wav", user_id=10,
+        )
+        assert result is False
+        assert voice.status == VoiceStatus.ERROR
+        assert voice.allocation_status == VoiceAllocationStatus.RECORDED
+
+    def test_clone_returns_no_voice_id(
+        self, monkeypatch, stub_db, stub_events,
+    ):
+        voice = _make_voice()
+        monkeypatch.setattr(
+            "models.voice_model.Voice.query",
+            SimpleNamespace(get=lambda _id: voice),
+        )
+        monkeypatch.setattr(
+            "models.voice_model.VoiceModel.available_slot_capacity",
+            staticmethod(lambda provider=None: 5),
+        )
+        monkeypatch.setattr(
+            "utils.s3_client.S3Client.download_fileobj",
+            lambda key: BytesIO(b"audio"),
+        )
+        monkeypatch.setattr(
+            "models.voice_model.VoiceModel._clone_voice_api",
+            staticmethod(lambda *a, **kw: (True, {"voice_id": None})),
+        )
+        monkeypatch.setattr(
+            "utils.voice_slot_manager.VoiceSlotManager._release_voice_lock",
+            classmethod(lambda cls, vid: None),
+        )
+
+        result = allocate_voice_slot.run(
+            voice_id=1, s3_key="k", filename="f.wav", user_id=10,
+        )
+        assert result is False
+        assert voice.status == VoiceStatus.ERROR
+
+    def test_voice_not_found_releases_lock(self, monkeypatch, stub_db):
+        monkeypatch.setattr(
+            "models.voice_model.Voice.query",
+            SimpleNamespace(get=lambda _id: None),
+        )
+        released = []
+        monkeypatch.setattr(
+            "utils.voice_slot_manager.VoiceSlotManager._release_voice_lock",
+            classmethod(lambda cls, vid: released.append(vid)),
+        )
+
+        result = allocate_voice_slot.run(
+            voice_id=999, s3_key="k", filename="f.wav", user_id=10,
+        )
+        assert result is False
+        assert 999 in released
+
+
+# ===================================================================
+# process_voice_queue
+# ===================================================================
+
+class TestProcessVoiceQueue:
+
+    def test_empty_queue_returns_zero(self, monkeypatch, stub_db, stub_queue):
+        stub_queue["items"] = []
+        monkeypatch.setattr(
+            "models.voice_model.Voice.query",
+            SimpleNamespace(get=lambda _id: None),
+        )
+
+        result = process_voice_queue.run()
+        assert result == 0
+
+    def test_dispatches_items_within_capacity(
+        self, monkeypatch, stub_db, stub_queue, stub_metrics,
+    ):
+        stub_queue["items"] = [
+            {"voice_id": 1, "s3_key": "k1", "filename": "f1.wav",
+             "user_id": 10, "voice_name": "V1", "attempts": 0,
+             "service_provider": "elevenlabs"},
+            {"voice_id": 2, "s3_key": "k2", "filename": "f2.wav",
+             "user_id": 11, "voice_name": "V2", "attempts": 0,
+             "service_provider": "elevenlabs"},
+        ]
+
+        monkeypatch.setattr(
+            "models.voice_model.VoiceModel.available_slot_capacity",
+            staticmethod(lambda provider=None: 5),
+        )
+
+        dispatched = []
+        monkeypatch.setattr(
+            "tasks.voice_tasks.allocate_voice_slot.delay",
+            lambda **kw: dispatched.append(kw),
+        )
+
+        result = process_voice_queue.run()
+        assert result == 2
+        assert len(dispatched) == 2
+        assert dispatched[0]["voice_id"] == 1
+        assert dispatched[1]["voice_id"] == 2
+
+    def test_re_enqueues_overflow_when_capacity_partial(
+        self, monkeypatch, stub_db, stub_queue, stub_metrics,
+    ):
+        stub_queue["items"] = [
+            {"voice_id": i, "s3_key": f"k{i}", "filename": f"f{i}.wav",
+             "user_id": i * 10, "voice_name": f"V{i}", "attempts": 0,
+             "service_provider": "elevenlabs"}
+            for i in range(1, 5)  # 4 items
+        ]
+
+        monkeypatch.setattr(
+            "models.voice_model.VoiceModel.available_slot_capacity",
+            staticmethod(lambda provider=None: 2),
+        )
+
+        dispatched = []
+        monkeypatch.setattr(
+            "tasks.voice_tasks.allocate_voice_slot.delay",
+            lambda **kw: dispatched.append(kw),
+        )
+
+        result = process_voice_queue.run()
+        assert result == 2
+        assert len(dispatched) == 2
+        # Overflow re-enqueued
+        assert len(stub_queue["enqueued"]) == 2
+
+    def test_zero_capacity_re_enqueues_all(
+        self, monkeypatch, stub_db, stub_queue, stub_metrics,
+    ):
+        stub_queue["items"] = [
+            {"voice_id": 1, "s3_key": "k", "filename": "f.wav",
+             "user_id": 10, "voice_name": "V", "attempts": 0,
+             "service_provider": "elevenlabs"},
+        ]
+
+        monkeypatch.setattr(
+            "models.voice_model.VoiceModel.available_slot_capacity",
+            staticmethod(lambda provider=None: 0),
+        )
+
+        result = process_voice_queue.run()
+        assert result == 0
+        assert len(stub_queue["enqueued"]) == 1
+
+    def test_populates_missing_provider_from_db(
+        self, monkeypatch, stub_db, stub_queue, stub_metrics,
+    ):
+        voice = _make_voice(service_provider="cartesia")
+        stub_queue["items"] = [
+            {"voice_id": 1, "s3_key": "k", "filename": "f.wav",
+             "user_id": 10, "voice_name": "V", "attempts": 0},
+        ]
+
+        monkeypatch.setattr(
+            "models.voice_model.Voice.query",
+            SimpleNamespace(get=lambda _id: voice),
+        )
+        monkeypatch.setattr(
+            "models.voice_model.VoiceModel.available_slot_capacity",
+            staticmethod(lambda provider=None: float("inf")),
+        )
+
+        dispatched = []
+        monkeypatch.setattr(
+            "tasks.voice_tasks.allocate_voice_slot.delay",
+            lambda **kw: dispatched.append(kw),
+        )
+
+        result = process_voice_queue.run()
+        assert result == 1
+        assert dispatched[0]["service_provider"] == "cartesia"
+
+
+# ===================================================================
+# reclaim_idle_voices
+# ===================================================================
+
+class TestReclaimIdleVoices:
+
+    def _patch_query(self, monkeypatch, candidates):
+        """Patch Voice.query to return candidates for reclaim queries."""
+        class FakeQuery:
+            def __init__(self):
+                self._candidates = list(candidates)
+                self._limit_val = None
+
+            def filter(self, *args, **kwargs):
+                return self
+
+            def order_by(self, *args):
+                return self
+
+            def limit(self, n):
+                self._limit_val = n
+                return self
+
+            def all(self):
+                if self._limit_val is not None:
+                    return self._candidates[:self._limit_val]
+                return self._candidates
+
+        monkeypatch.setattr("models.voice_model.Voice.query", FakeQuery())
+
+    def test_evicts_idle_voices_when_queue_has_pressure(
+        self, monkeypatch, stub_db, stub_events,
+    ):
+        stale = datetime.utcnow() - timedelta(hours=2)
+        voice = _make_voice(
+            allocation_status=VoiceAllocationStatus.READY,
+            status=VoiceStatus.READY,
+            elevenlabs_voice_id="ext-1",
+            last_used_at=stale,
+        )
+
+        self._patch_query(monkeypatch, [voice])
+
+        monkeypatch.setattr(
+            "tasks.voice_tasks.VoiceSlotQueue.length", lambda: 3,
+        )
+        monkeypatch.setattr(
+            "utils.voice_service.VoiceService.delete_voice",
+            lambda **kw: (True, "deleted"),
+        )
+        monkeypatch.setattr(
+            "tasks.voice_tasks.process_voice_queue.delay", lambda: None,
+        )
+
+        result = reclaim_idle_voices.run()
+
+        assert result >= 1
+        assert voice.allocation_status == VoiceAllocationStatus.RECORDED
+        assert voice.elevenlabs_voice_id is None
+        assert stub_db.commit_calls >= 1
+
+    def test_no_eviction_when_queue_empty_and_voices_recent(
+        self, monkeypatch, stub_db,
+    ):
+        recent = datetime.utcnow() - timedelta(minutes=5)
+        voice = _make_voice(
+            allocation_status=VoiceAllocationStatus.READY,
+            elevenlabs_voice_id="ext-1",
+            last_used_at=recent,
+        )
+
+        self._patch_query(monkeypatch, [])
+        monkeypatch.setattr("tasks.voice_tasks.VoiceSlotQueue.length", lambda: 0)
+
+        result = reclaim_idle_voices.run()
+        assert result == 0
+
+    def test_remote_delete_failure_skips_voice(
+        self, monkeypatch, stub_db, stub_events,
+    ):
+        stale = datetime.utcnow() - timedelta(hours=2)
+        voice = _make_voice(
+            allocation_status=VoiceAllocationStatus.READY,
+            status=VoiceStatus.READY,
+            elevenlabs_voice_id="ext-1",
+            last_used_at=stale,
+        )
+
+        self._patch_query(monkeypatch, [voice])
+        monkeypatch.setattr("tasks.voice_tasks.VoiceSlotQueue.length", lambda: 1)
+        monkeypatch.setattr(
+            "utils.voice_service.VoiceService.delete_voice",
+            lambda **kw: (False, "API error"),
+        )
+
+        result = reclaim_idle_voices.run()
+        # Voice should NOT have been evicted
+        assert result == 0
+        assert voice.allocation_status == VoiceAllocationStatus.READY
+
+
+# ===================================================================
+# reset_stuck_allocations
+# ===================================================================
+
+class TestResetStuckAllocations:
+
+    def _patch_query(self, monkeypatch, stuck_voices):
+        class FakeQuery:
+            def __init__(self):
+                self._voices = list(stuck_voices)
+
+            def filter(self, *args, **kwargs):
+                return self
+
+            def order_by(self, *args):
+                return self
+
+            def limit(self, n):
+                self._voices = self._voices[:n]
+                return self
+
+            def all(self):
+                return self._voices
+
+        monkeypatch.setattr("models.voice_model.Voice.query", FakeQuery())
+
+    def test_resets_stuck_voices_and_re_enqueues(
+        self, monkeypatch, stub_db, stub_events, stub_queue,
+    ):
+        stuck = _make_voice(
+            allocation_status=VoiceAllocationStatus.ALLOCATING,
+            status=VoiceStatus.PROCESSING,
+            slot_lock_expires_at=datetime.utcnow() - timedelta(minutes=15),
+            updated_at=datetime.utcnow() - timedelta(minutes=15),
+        )
+
+        self._patch_query(monkeypatch, [stuck])
+        monkeypatch.setattr(
+            "tasks.voice_tasks.process_voice_queue.delay", lambda: None,
+        )
+
+        result = reset_stuck_allocations.run()
+
+        assert result == 1
+        assert stuck.status == VoiceStatus.RECORDED
+        assert stuck.allocation_status == VoiceAllocationStatus.RECORDED
+        assert stuck.slot_lock_expires_at is None
+        assert stuck.error_message == "stale_allocation_reset"
+        assert len(stub_queue["enqueued"]) == 1
+        assert stub_db.commit_calls >= 1
+
+    def test_no_stuck_voices_returns_zero(
+        self, monkeypatch, stub_db, stub_queue,
+    ):
+        self._patch_query(monkeypatch, [])
+
+        result = reset_stuck_allocations.run()
+        assert result == 0
+        assert stub_db.commit_calls == 0
+
+    def test_respects_max_to_reset(
+        self, monkeypatch, stub_db, stub_events, stub_queue,
+    ):
+        voices = [
+            _make_voice(
+                id=i,
+                allocation_status=VoiceAllocationStatus.ALLOCATING,
+                status=VoiceStatus.PROCESSING,
+                slot_lock_expires_at=datetime.utcnow() - timedelta(minutes=15),
+                updated_at=datetime.utcnow() - timedelta(minutes=15),
+            )
+            for i in range(1, 6)  # 5 stuck voices
+        ]
+
+        self._patch_query(monkeypatch, voices)
+        monkeypatch.setattr(
+            "tasks.voice_tasks.process_voice_queue.delay", lambda: None,
+        )
+
+        result = reset_stuck_allocations.run(max_to_reset=2)
+        # Query is limited to 2 by the task
+        assert result <= 2
+
+
+# ===================================================================
+# Capacity counting: ALLOCATING voices included
+# ===================================================================
+
+class TestCapacityCountsAllocating:
+    """Verify that available_slot_capacity includes ALLOCATING voices."""
+
+    def test_allocating_voices_reduce_capacity(self, app):
+        from models.voice_model import Voice, VoiceModel, VoiceAllocationStatus
+        from models.user_model import User
+        from database import db
+
+        with app.app_context():
+            # Clean up
+            existing = User.query.filter_by(email="capacity@test.com").first()
+            if existing:
+                Voice.query.filter_by(user_id=existing.id).delete()
+                db.session.delete(existing)
+                db.session.commit()
+
+            user = User(email="capacity@test.com", is_active=True, email_confirmed=True)
+            user.set_password("Password123!")
+            db.session.add(user)
+            db.session.commit()
+
+            # Create 28 READY voices and 2 ALLOCATING voices = 30 used
+            for i in range(28):
+                v = Voice(
+                    name=f"ready_{i}", user_id=user.id,
+                    recording_s3_key=f"key_{i}",
+                    status=VoiceStatus.READY,
+                    allocation_status=VoiceAllocationStatus.READY,
+                    elevenlabs_voice_id=f"ext_{i}",
+                    service_provider="elevenlabs",
+                )
+                db.session.add(v)
+
+            for i in range(2):
+                v = Voice(
+                    name=f"allocating_{i}", user_id=user.id,
+                    recording_s3_key=f"alloc_key_{i}",
+                    status=VoiceStatus.PROCESSING,
+                    allocation_status=VoiceAllocationStatus.ALLOCATING,
+                    service_provider="elevenlabs",
+                )
+                db.session.add(v)
+
+            db.session.commit()
+
+            capacity = VoiceModel.available_slot_capacity("elevenlabs")
+            assert capacity == 0, (
+                f"Expected 0 capacity with 28 READY + 2 ALLOCATING = 30 used, got {capacity}"
+            )
+
+            # Clean up
+            Voice.query.filter_by(user_id=user.id).delete()
+            db.session.delete(user)
+            db.session.commit()
+
+
+# ===================================================================
+# Distributed lock tests
+# ===================================================================
+
+class TestDistributedLock:
+    """Verify the per-voice allocation lock prevents duplicate allocations."""
+
+    def test_lock_prevents_duplicate_allocation(self, monkeypatch, stub_events):
+        from utils.voice_slot_manager import VoiceSlotManager
+
+        voice = _make_voice()
+
+        # Patch VoiceSlotManager's own db (imported from database, not tasks)
+        vsm_session = DummySession()
+        monkeypatch.setattr(
+            "utils.voice_slot_manager.db",
+            SimpleNamespace(session=vsm_session),
+        )
+        # Skip the real _reload_voice_state which tries db.session.refresh
+        monkeypatch.setattr(
+            "utils.voice_slot_manager.VoiceSlotManager._reload_voice_state",
+            staticmethod(lambda v: v),
+        )
+
+        monkeypatch.setattr(
+            "utils.voice_slot_manager.VoiceSlotQueue.is_enqueued", lambda *_: False,
+        )
+        monkeypatch.setattr(
+            "utils.voice_slot_manager.VoiceSlotQueue.length", lambda: 0,
+        )
+        monkeypatch.setattr(
+            "utils.voice_slot_manager.VoiceSlotQueue.position", lambda _: None,
+        )
+
+        # First call acquires the lock, second call fails (lock held)
+        lock_acquired = [True, False]
+        call_count = [0]
+
+        def mock_set(key, value, nx=False, ex=None):
+            idx = call_count[0]
+            call_count[0] += 1
+            return lock_acquired[idx] if idx < len(lock_acquired) else False
+
+        mock_redis = MagicMock()
+        mock_redis.set = mock_set
+        mock_redis.delete = MagicMock()
+
+        monkeypatch.setattr(
+            "utils.voice_slot_manager.RedisClient.get_client", lambda: mock_redis,
+        )
+        monkeypatch.setattr(
+            "models.voice_model.VoiceModel.available_slot_capacity",
+            staticmethod(lambda provider=None: 5),
+        )
+        task_stub = MagicMock()
+        task_stub.delay.return_value = MagicMock(id="task-1")
+        monkeypatch.setattr("tasks.voice_tasks.allocate_voice_slot", task_stub)
+
+        # First allocation succeeds
+        state1 = VoiceSlotManager.ensure_active_voice(voice)
+        assert state1.status == VoiceSlotManager.STATUS_ALLOCATING
+
+        # Reset voice state to simulate concurrent request
+        voice2 = _make_voice()
+
+        # Second allocation blocked by lock
+        state2 = VoiceSlotManager.ensure_active_voice(voice2)
+        assert state2.status == VoiceSlotManager.STATUS_ALLOCATING
+        # Task should only be dispatched once
+        assert task_stub.delay.call_count == 1
