@@ -1,6 +1,6 @@
 import logging
 
-from tasks import celery_app
+from tasks import celery_app, FlaskTask
 from utils.metrics import emit_metric
 from models.user_model import UserModel
 
@@ -10,6 +10,7 @@ logger = logging.getLogger("account_tasks")
 
 @celery_app.task(
     name="account.delete_user_account",
+    base=FlaskTask,
     autoretry_for=(Exception,),
     retry_backoff=True,
     max_retries=3,
