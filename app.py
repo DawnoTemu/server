@@ -12,6 +12,7 @@ from admin import init_admin  # Import only once
 from utils.s3_client import S3Client
 from utils.email_service import EmailService
 from tasks import celery_app, init_app
+from utils.rate_limiter import limiter
 
 # Initialize Sentry SDK before Flask app
 if Config.SENTRY_DSN:
@@ -41,6 +42,11 @@ def create_app(testing=False):
     """Create and configure the Flask application"""
     # Initialize Flask app
     app = Flask(__name__, static_folder='static', static_url_path='/')
+
+    # Harden session cookies (admin UI uses server-side sessions)
+    app.config.setdefault('SESSION_COOKIE_SECURE', os.getenv('SESSION_COOKIE_SECURE', 'true').lower() != 'false')
+    app.config.setdefault('SESSION_COOKIE_HTTPONLY', True)
+    app.config.setdefault('SESSION_COOKIE_SAMESITE', os.getenv('SESSION_COOKIE_SAMESITE', 'Strict'))
     
     # Set secret key for session management
     if os.getenv('FLASK_ENV') == 'development' and not os.getenv('SECRET_KEY'):
@@ -104,6 +110,13 @@ def create_app(testing=False):
         logger.critical(f"Failed to initialize application components: {str(e)}")
         raise
     
+    # Rate limiting
+    redis_url_for_limiter = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+    app.config['RATELIMIT_STORAGE_URI'] = redis_url_for_limiter
+    if testing:
+        app.config['RATELIMIT_ENABLED'] = False
+    limiter.init_app(app)
+
     # Configure CORS
     if is_development:
         # In development mode, allow all origins

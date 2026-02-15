@@ -80,6 +80,7 @@ class VoiceSlotManager:
         }
 
         if voice.elevenlabs_voice_id and voice.allocation_status == VoiceAllocationStatus.READY:
+            cls._extend_slot_lock(voice)
             metadata.update(
                 {
                     "elevenlabs_voice_id": voice.elevenlabs_voice_id,
@@ -108,6 +109,17 @@ class VoiceSlotManager:
         if position is not None:
             result["queue_position"] = position
         return result
+
+    @classmethod
+    def _extend_slot_lock(cls, voice: Voice) -> None:
+        """Extend slot_lock_expires_at to prevent eviction during active use."""
+        warm_hold = getattr(Config, "VOICE_WARM_HOLD_SECONDS", 900) or 900
+        voice.slot_lock_expires_at = datetime.utcnow() + timedelta(seconds=warm_hold)
+        try:
+            db.session.commit()
+        except Exception:
+            logger.warning("Failed to extend slot lock for voice %s", voice.id)
+            db.session.rollback()
 
     # Redis key template for per-voice allocation locks.
     _ALLOC_LOCK_KEY = "voice_alloc_lock:{voice_id}"
