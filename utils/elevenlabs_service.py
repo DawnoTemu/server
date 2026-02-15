@@ -153,7 +153,22 @@ class ElevenLabsService:
                 },
                 headers={"Accept": "audio/mpeg"}
             )
-            
+
+            if response.status_code == 429:
+                # Surface structured rate-limit info so callers can back off
+                retry_after = response.headers.get("Retry-After")
+                try:
+                    body = response.json()
+                except Exception:
+                    body = {}
+                message = body.get("message") or body.get("detail") or response.text
+                return False, {
+                    "error": "rate_limited",
+                    "status_code": 429,
+                    "message": message,
+                    "retry_after": retry_after,
+                }
+
             response.raise_for_status()
             return True, BytesIO(response.content)
             

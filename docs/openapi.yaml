@@ -1,21 +1,17 @@
 openapi: 3.0.3
 info:
-  title: StoryVoice API
-  description: |
-    API for DawnoTemu/StoryVoice — user auth, voice cloning, story access, audio synthesis,
-    and credits (Story Points) billing. This spec reflects the current server capabilities
-    used by mobile apps, including credit charging, refunds, and status endpoints.
-  version: 1.2.0
-  contact:
-    email: api@storyvoice.app
-
+  title: DawnoTemu API
+  version: 1.0.0
+  description: >
+    REST API for DawnoTemu (StoryVoice): authentication, stories, voices, audio synthesis,
+    credit (Story Points) billing, task status, and admin operations. User-facing copy
+    calls the currency "Story Points", while routes and models use "credits" (1:1).
 servers:
   - url: https://api.storyvoice.app
-    description: Production server
+    description: Production
   - url: http://localhost:8000
-    description: Local development server
+    description: Local
 
-# Default security (empty). Protected operations specify bearerAuth explicitly.
 security: []
 
 components:
@@ -24,1550 +20,856 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
-      description: JWT token obtained from the /auth/login or /auth/refresh endpoints. Note that the user's email must be confirmed to access protected resources.
+      description: >
+        Access token from /auth/login or /auth/refresh. For admin endpoints the token
+        must belong to an admin user (is_admin=true) or be an admin token.
 
   schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          example: Unauthorized
+        details:
+          type: string
+          nullable: true
+    Message:
+      type: object
+      properties:
+        message:
+          type: string
+          example: OK
+
     User:
       type: object
       properties:
-        id:
-          type: integer
-          format: int64
-          example: 1
-        email:
-          type: string
-          format: email
-          example: user@example.com
-        email_confirmed:
-          type: boolean
-          example: true
-        is_active:
-          type: boolean
-          example: false
-          description: Whether the user account is active (required for beta access)
-        created_at:
-          type: string
-          format: date-time
-          example: "2025-03-19T14:22:35.982Z"
-        last_login:
-          type: string
-          format: date-time
-          example: "2025-03-23T14:30:15.651Z"
+        id: { type: integer, format: int64 }
+        email: { type: string, format: email }
+        email_confirmed: { type: boolean }
+        is_active: { type: boolean }
+        is_admin: { type: boolean }
+        credits_balance: { type: integer, example: 10 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        last_login: { type: string, format: date-time, nullable: true }
+
+    RegisterRequest:
+      type: object
+      required: [email, password, password_confirm]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, format: password }
+        password_confirm: { type: string, format: password }
+    RegisterResponse:
+      type: object
+      properties:
+        message: { type: string, example: "Registration successful. Please confirm your email." }
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, format: password }
+    LoginResponse:
+      type: object
+      properties:
+        access_token: { type: string }
+        refresh_token: { type: string }
+        user: { $ref: '#/components/schemas/User' }
+
+    RefreshRequest:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token: { type: string }
+    RefreshResponse:
+      type: object
+      properties:
+        access_token: { type: string }
 
     UpdateProfileRequest:
       type: object
       additionalProperties: false
       properties:
-        email:
-          type: string
-          format: email
-          description: New email address for the user.
-        current_password:
-          type: string
-          description: Existing password required to confirm the profile change.
-        new_password:
-          type: string
-          description: Replacement password for the account.
-        new_password_confirm:
-          type: string
-          description: Confirmation of the replacement password.
-      required:
-        - current_password
-
+        email: { type: string, format: email }
+        current_password: { type: string }
+        new_password: { type: string }
+        new_password_confirm: { type: string }
+      required: [current_password]
     UpdateProfileResponse:
       type: object
       properties:
-        user:
-          $ref: '#/components/schemas/User'
-        message:
+        user: { $ref: '#/components/schemas/User' }
+        message: { type: string, example: "Profile updated successfully." }
+        email_confirmation_required: { type: boolean }
+        email_confirmation_error: { type: string, nullable: true }
+        password_updated: { type: boolean }
+
+    DeleteAccountRequest:
+      type: object
+      properties:
+        current_password: { type: string }
+        reason: { type: string }
+      required: [current_password]
+    DeleteAccountResponse:
+      type: object
+      properties:
+        message: { type: string, example: "Account deletion scheduled." }
+
+    ResetPasswordRequest:
+      type: object
+      required: [email]
+      properties:
+        email: { type: string, format: email }
+    ResetPasswordConfirmRequest:
+      type: object
+      required: [new_password, new_password_confirm]
+      properties:
+        new_password: { type: string, format: password }
+        new_password_confirm: { type: string, format: password }
+
+    Story:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        title: { type: string }
+        author: { type: string }
+        description: { type: string }
+        content: { type: string }
+        required_credits: { type: integer, example: 3 }
+        cover_path: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    Voice:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        name: { type: string }
+        status: { type: string, example: ready }
+        allocation_status: { type: string, nullable: true }
+        service_provider: { type: string, example: elevenlabs }
+        elevenlabs_voice_id: { type: string, nullable: true }
+        user_id: { type: integer }
+        recording_s3_key: { type: string, nullable: true }
+        recording_filesize: { type: integer, nullable: true }
+        sample_filename: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        error_message: { type: string, nullable: true }
+
+    AudioSynthesisResponse:
+      type: object
+      properties:
+        id: { type: integer, description: AudioStory id }
+        status:
           type: string
-          example: Profile updated successfully.
-        email_confirmation_required:
-          type: boolean
-          description: Indicates if the user must reconfirm their email address.
-          example: true
-        email_confirmation_error:
-          type: string
+          enum: [processing, ready, allocating_voice, queued_for_slot, pending, error]
+        message: { type: string }
+        url: { type: string, format: uri, nullable: true }
+        voice:
+          type: object
+          properties:
+            queue_position: { type: integer, nullable: true }
+            queue_length: { type: integer, nullable: true }
+            elevenlabs_voice_id: { type: string, nullable: true }
+
+    AudioStatus:
+      type: object
+      properties:
+        id: { type: integer }
+        status: { type: string }
+        story_id: { type: integer }
+        voice_id: { type: integer }
+        duration_seconds: { type: number, nullable: true }
+        file_size_bytes: { type: integer, nullable: true }
+        url: { type: string, format: uri, nullable: true }
+        error: { type: string, nullable: true }
+        task_status:
+          type: object
           nullable: true
-          description: Optional message if sending the confirmation email failed.
-        password_updated:
-          type: boolean
-          description: Indicates if the password was changed during this update.
-          example: false
+          properties:
+            state: { type: string }
+            ready: { type: boolean }
+            successful: { type: boolean, nullable: true }
+            info: { type: string, nullable: true }
+
+    VoiceStatus:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        status: { type: string }
+        allocation_status: { type: string, nullable: true }
+        service_provider: { type: string, nullable: true }
+        elevenlabs_voice_id: { type: string, nullable: true }
+        recording_s3_key: { type: string, nullable: true }
+        recording_filesize: { type: integer, nullable: true }
+        sample_url: { type: string, format: uri, nullable: true }
+        error: { type: string, nullable: true }
+        task_status:
+          type: object
+          nullable: true
+          properties:
+            state: { type: string }
+            ready: { type: boolean }
+            successful: { type: boolean, nullable: true }
+            info: { type: string, nullable: true }
+
     CreditLot:
       type: object
       properties:
-        id:
-          type: integer
-        source:
-          type: string
-          example: monthly
-        amount_granted:
-          type: integer
-          example: 20
-        amount_remaining:
-          type: integer
-          example: 5
-        expires_at:
-          type: string
-          format: date-time
-          nullable: true
-        created_at:
-          type: string
-          format: date-time
-        updated_at:
-          type: string
-          format: date-time
-        is_active:
-          type: boolean
-          description: True when the lot still has remaining credits and has not expired.
-          example: true
-    CreditTransactionEntry:
+        id: { type: integer }
+        source: { type: string, example: monthly }
+        amount_granted: { type: integer }
+        amount_remaining: { type: integer }
+        expires_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        is_active: { type: boolean }
+
+    CreditTransaction:
       type: object
       properties:
-        id:
-          type: integer
-        type:
-          type: string
-          enum: [credit, debit, refund, expire]
-        amount:
-          type: integer
-        reason:
-          type: string
-          nullable: true
-        status:
-          type: string
-        audio_story_id:
-          type: integer
-          nullable: true
-        story_id:
-          type: integer
-          nullable: true
-        metadata:
-          type: object
-          additionalProperties: true
-        created_at:
-          type: string
-          format: date-time
-        updated_at:
-          type: string
-          format: date-time
-          nullable: true
+        id: { type: integer }
+        type: { type: string, enum: [credit, debit, refund, expire] }
+        amount: { type: integer }
+        reason: { type: string, nullable: true }
+        status: { type: string }
+        audio_story_id: { type: integer, nullable: true }
+        story_id: { type: integer, nullable: true }
+        metadata: { type: object, additionalProperties: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time, nullable: true }
+
     CreditHistory:
       type: object
       properties:
         items:
           type: array
-          items:
-            $ref: '#/components/schemas/CreditTransactionEntry'
-        total:
-          type: integer
-        limit:
-          type: integer
-        offset:
-          type: integer
-        next_offset:
-          type: integer
-          nullable: true
+          items: { $ref: '#/components/schemas/CreditTransaction' }
+        total: { type: integer }
+        limit: { type: integer }
+        offset: { type: integer }
+        next_offset: { type: integer, nullable: true }
         applied_types:
           type: array
-          items:
-            type: string
-            enum: [credit, debit, refund, expire]
-    CreditSummaryResponse:
+          items: { type: string, enum: [credit, debit, refund, expire] }
+
+    CreditSummary:
       type: object
       properties:
-        balance:
-          type: integer
-        unit_label:
-          type: string
-        unit_size:
-          type: integer
+        balance: { type: integer }
+        unit_label: { type: string }
+        unit_size: { type: integer }
         lots:
           type: array
-          items:
-            $ref: '#/components/schemas/CreditLot'
-        history:
-          $ref: '#/components/schemas/CreditHistory'
+          items: { $ref: '#/components/schemas/CreditLot' }
+        history: { $ref: '#/components/schemas/CreditHistory' }
         recent_transactions:
           type: array
-          items:
-            $ref: '#/components/schemas/CreditTransactionEntry'
-    CreditHistoryResponse:
-      $ref: '#/components/schemas/CreditHistory'
-    DeleteAccountRequest:
+          items: { $ref: '#/components/schemas/CreditTransaction' }
+
+    GrantCreditsRequest:
       type: object
-      additionalProperties: false
+      required: [amount]
       properties:
-        current_password:
-          type: string
-          description: Existing password required to confirm account deletion.
-        reason:
-          type: string
-          description: Optional free-form reason provided by the user.
-      required:
-        - current_password
-
-    DeleteAccountResponse:
-      type: object
-      properties:
-        message:
-          type: string
-          example: Your account has been deleted.
-        warnings:
-          type: array
-          items:
-            type: object
-            additionalProperties: true
-          description: Optional warnings if ancillary cleanup (e.g., S3 deletion) encountered recoverable issues.
-
-    Story:
-      type: object
-      properties:
-        id:
-          type: integer
-          format: int64
-          example: 1
-        title:
-          type: string
-          example: "Hansel and Gretel"
-        author:
-          type: string
-          example: "Brothers Grimm"
-        description:
-          type: string
-          example: "A classic fairy tale about two children who discover a house made of candy..."
-        content:
-          type: string
-          example: "Once upon a time..."
-        required_credits:
-          type: integer
-          example: 3
-        cover_path:
-          type: string
-          example: "/stories/1/cover"
-        created_at:
-          type: string
-          format: date-time
-          example: "2025-01-15T10:30:00Z"
-        updated_at:
-          type: string
-          format: date-time
-          example: "2025-01-15T10:30:00Z"
-
-    StoryList:
-      type: array
-      items:
-        type: object
-        properties:
-          id:
-            type: integer
-            format: int64
-            example: 1
-          title:
-            type: string
-            example: "Hansel and Gretel"
-          author:
-            type: string
-            example: "Brothers Grimm"
-          description:
-            type: string
-            example: "A classic fairy tale about two children who discover a house made of candy..."
-          required_credits:
-            type: integer
-            example: 3
-          cover_path:
-            type: string
-            example: "/stories/1/cover"
-          created_at:
-            type: string
-            format: date-time
-            example: "2025-01-15T10:30:00Z"
-          updated_at:
-            type: string
-            format: date-time
-            example: "2025-01-15T10:30:00Z"
-
-    Voice:
-      type: object
-      properties:
-        id:
-          type: integer
-          format: int64
-          example: 1
-        name:
-          type: string
-          example: "My Voice"
-        status:
-          type: string
-          enum: [pending, processing, recorded, ready, error]
-          example: "recorded"
-        allocation_status:
-          type: string
-          example: "recorded"
-        service_provider:
-          type: string
-          example: "elevenlabs"
-        elevenlabs_voice_id:
-          type: string
-          example: "pNInz6obpgDQGcFmaJgB"
-          nullable: true
-        recording_s3_key:
-          type: string
-          example: "voice_samples/42/voice_7_e2f3.wav"
-        recording_filesize:
-          type: integer
-          example: 2048000
-          nullable: true
-        s3_sample_key:
-          type: string
-          example: "voice_samples/42/voice_7_e2f3.wav"
-          nullable: true
-        sample_filename:
-          type: string
-          example: "sample.wav"
-          nullable: true
-        elevenlabs_allocated_at:
-          type: string
-          format: date-time
-          nullable: true
-        last_used_at:
-          type: string
-          format: date-time
-          nullable: true
-        slot_lock_expires_at:
-          type: string
-          format: date-time
-          nullable: true
-        error_message:
-          type: string
-          nullable: true
-        user_id:
-          type: integer
-          format: int64
-          example: 1
-        created_at:
-          type: string
-          format: date-time
-          example: "2025-03-20T15:45:22Z"
-        updated_at:
-          type: string
-          format: date-time
-          example: "2025-03-20T15:45:22Z"
-
-    VoiceList:
-      type: array
-      items:
-        $ref: '#/components/schemas/Voice'
-
-    Error:
-      type: object
-      required:
-        - error
-      properties:
-        error:
-          type: string
-          example: "Description of the error"
-        details:
-          type: string
-          example: "Detailed error information"
-
-    AudioSynthesisStatus:
-      type: string
-      enum:
-        - ready
-        - processing
-        - allocating_voice
-        - queued_for_slot
-      example: processing
-
-    VoiceSlotMetadata:
-      type: object
-      description: Current slot information returned with audio synthesis responses.
-      properties:
-        voice_id:
-          type: integer
-          example: 17
-        allocation_status:
-          type: string
-          example: allocating
-        service_provider:
-          type: string
-          example: elevenlabs
-        queue_position:
-          type: integer
-          nullable: true
-          example: 2
-        queue_length:
-          type: integer
-          nullable: true
-          example: 5
-        elevenlabs_voice_id:
-          type: string
-          nullable: true
-          example: "pNInz6obpgDQGcFmaJgB"
-        queued:
-          type: boolean
-          nullable: true
-        allocated_at:
-          type: string
-          format: date-time
-          nullable: true
-
-    AudioSynthesisResponse:
-      type: object
-      properties:
-        id:
-          type: integer
-          description: AudioStory identifier
-          example: 301
-        status:
-          $ref: '#/components/schemas/AudioSynthesisStatus'
-        message:
-          type: string
-          example: "Voice allocation is in progress"
-        url:
-          type: string
-          format: uri
-          nullable: true
-          example: "https://s3.amazonaws.com/storyvoice/audio/voice_17/story_42.mp3"
-        voice:
-          $ref: '#/components/schemas/VoiceSlotMetadata'
-
-    VoiceSlotQueueEntry:
-      type: object
-      properties:
-        voice_id:
-          type: integer
-          example: 42
-        score:
-          type: number
-          format: double
-          example: 1.711234521e9
-        attempts:
-          type: integer
-          example: 2
-        user_id:
-          type: integer
-          example: 12
-        s3_key:
-          type: string
-          example: "voice_samples/12/voice_42_a1b2.wav"
-
-    VoiceSlotStatusMetrics:
-      type: object
-      properties:
-        slot_limit:
-          type: integer
-          nullable: true
-          example: 30
-        available_capacity:
-          type: integer
-          nullable: true
-          example: 3
-        ready_count:
-          type: integer
-          example: 24
-        allocating_count:
-          type: integer
-          example: 4
-        queue_depth:
-          type: integer
-          example: 5
-
-    VoiceSlotStatusResponse:
-      type: object
-      properties:
-        metrics:
-          $ref: '#/components/schemas/VoiceSlotStatusMetrics'
-        active_voices:
-          type: array
-          items:
-            $ref: '#/components/schemas/Voice'
-        queued_requests:
-          type: array
-          items:
-            $ref: '#/components/schemas/VoiceSlotQueueEntry'
-        recent_events:
-          type: array
-          items:
-            $ref: '#/components/schemas/VoiceSlotEvent'
-
-    VoiceSlotEvent:
-      type: object
-      properties:
-        id:
-          type: integer
-          example: 512
-        voice_id:
-          type: integer
-          nullable: true
-          example: 42
-        user_id:
-          type: integer
-          nullable: true
-          example: 12
-        event_type:
-          type: string
-          example: allocation_completed
-        reason:
-          type: string
-          nullable: true
-          example: "voice_ready"
-        metadata:
-          type: object
-          additionalProperties: {}
-          example:
-            s3_key: voice_samples/12/voice_42.wav
-        created_at:
-          type: string
-          format: date-time
-          example: "2025-03-30T12:45:10Z"
-
-    LoginRequest:
-      type: object
-      required:
-        - email
-        - password
-      properties:
-        email:
-          type: string
-          format: email
-          example: "user@example.com"
-        password:
-          type: string
-          format: password
-          example: "secure_password"
-
-    LoginResponse:
-      type: object
-      properties:
-        access_token:
-          type: string
-          example: "eyJhbGciOi..."
-        refresh_token:
-          type: string
-          example: "eyJhbGciOi..."
-        user:
-          $ref: '#/components/schemas/User'
-
-    RegisterRequest:
-      type: object
-      required:
-        - email
-        - password
-        - password_confirm
-      properties:
-        email:
-          type: string
-          format: email
-          example: "user@example.com"
-        password:
-          type: string
-          format: password
-          example: "secure_password"
-        password_confirm:
-          type: string
-          format: password
-          example: "secure_password"
-
-    RegisterResponse:
-      type: object
-      properties:
-        message:
-          type: string
-          example: "Registration successful. Please check your email to confirm your account."
-
-    RefreshTokenRequest:
-      type: object
-      required:
-        - refresh_token
-      properties:
-        refresh_token:
-          type: string
-          example: "eyJhbGciOi..."
-
-    RefreshTokenResponse:
-      type: object
-      properties:
-        access_token:
-          type: string
-          example: "eyJhbGciOi..."
-
-    ResetPasswordRequest:
-      type: object
-      properties:
-        email:
-          type: string
-          format: email
-          example: "user@example.com"
-
-    ResetPasswordResponse:
-      type: object
-      properties:
-        message:
-          type: string
-          example: "Password reset link has been sent to your email."
-
-    NewPasswordRequest:
-      type: object
-      required:
-        - new_password
-        - new_password_confirm
-      properties:
-        new_password:
-          type: string
-          format: password
-          example: "new_secure_password"
-        new_password_confirm:
-          type: string
-          format: password
-          example: "new_secure_password"
-
-    NewPasswordResponse:
-      type: object
-      properties:
-        message:
-          type: string
-          example: "Password has been reset successfully. You can now log in with your new password."
-
-    ConfirmEmailResponse:
-      type: object
-      properties:
-        message:
-          type: string
-          example: "Email confirmed successfully. You can now log in."
-
-    VoiceSampleResponse:
-      type: object
-      properties:
-        url:
-          type: string
-          format: uri
-          example: "https://s3.amazonaws.com/storyvoice/samples/..."
-
-    MessageResponse:
-      type: object
-      properties:
-        message:
-          type: string
-          example: "Operation completed successfully"
-
-    AudioStatusResponse:
-      type: object
-      properties:
-        id:
-          type: integer
-          example: 101
-        status:
-          type: string
-          enum: [pending, processing, ready, error]
-        story_id:
-          type: integer
-          example: 42
-        voice_id:
-          type: integer
-          example: 7
-        duration_seconds:
-          type: number
-          format: float
-          nullable: true
-        file_size_bytes:
-          type: integer
-          nullable: true
-        url:
-          type: string
-          format: uri
-          nullable: true
-        error:
-          type: string
-          nullable: true
-        task_status:
-          type: object
-          nullable: true
-          properties:
-            state:
-              type: string
-            ready:
-              type: boolean
-            successful:
-              type: boolean
-              nullable: true
-            info:
-              type: string
-              nullable: true
-    VoiceStatusResponse:
-      type: object
-      properties:
-        id:
-          type: integer
-        name:
-          type: string
-        status:
-          type: string
-          enum: [pending, processing, recorded, ready, error]
-        elevenlabs_voice_id:
-          type: string
-          nullable: true
-        allocation_status:
-          type: string
-          example: "recorded"
-        service_provider:
-          type: string
-          nullable: true
-        recording_s3_key:
-          type: string
-          nullable: true
-        recording_filesize:
-          type: integer
-          nullable: true
-        sample_url:
-          type: string
-          format: uri
-          nullable: true
-        task_status:
-          type: object
-          nullable: true
-          properties:
-            state:
-              type: string
-            ready:
-              type: boolean
-            successful:
-              type: boolean
-              nullable: true
-            info:
-              type: string
-              nullable: true
+        amount: { type: integer, minimum: 1 }
+        reason: { type: string }
+        source: { type: string, example: add_on }
+        expires_at: { type: string, format: date-time, nullable: true }
 
 paths:
   /auth/register:
     post:
-      tags:
-        - Authentication
+      tags: [Auth]
       summary: Register a new user
-      description: Create a new user account
-      operationId: registerUser
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: '#/components/schemas/RegisterRequest'
+            schema: { $ref: '#/components/schemas/RegisterRequest' }
       responses:
         '201':
-          description: User created successfully
+          description: User created
           content:
             application/json:
-              schema:
-                $ref: '#/components/schemas/RegisterResponse'
-        '400':
-          description: Invalid request (missing fields or passwords don't match)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '409':
-          description: Email already registered
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+              schema: { $ref: '#/components/schemas/RegisterResponse' }
+        '400': { description: Bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '409': { description: Email already exists, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /auth/login:
     post:
-      tags:
-        - Authentication
-      summary: Log in a user
-      description: Authenticate a user and receive JWT tokens
-      operationId: loginUser
+      tags: [Auth]
+      summary: Log in
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: '#/components/schemas/LoginRequest'
+            schema: { $ref: '#/components/schemas/LoginRequest' }
       responses:
         '200':
-          description: Successfully authenticated
+          description: Authenticated
           content:
             application/json:
-              schema:
-                $ref: '#/components/schemas/LoginResponse'
-        '400':
-          description: Missing required fields
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '401':
-          description: Invalid credentials
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '403':
-          description: Account inactive or email not confirmed
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+              schema: { $ref: '#/components/schemas/LoginResponse' }
+        '400': { description: Missing fields, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '401': { description: Invalid credentials, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /auth/refresh:
     post:
-      tags:
-        - Authentication
+      tags: [Auth]
       summary: Refresh access token
-      description: Get a new access token using a refresh token
-      operationId: refreshToken
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: '#/components/schemas/RefreshTokenRequest'
+            schema: { $ref: '#/components/schemas/RefreshRequest' }
       responses:
         '200':
-          description: New token generated successfully
+          description: New access token
           content:
             application/json:
-              schema:
-                $ref: '#/components/schemas/RefreshTokenResponse'
-        '400':
-          description: Missing refresh token
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '401':
-          description: Invalid or expired refresh token
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '403':
-          description: Email not confirmed
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+              schema: { $ref: '#/components/schemas/RefreshResponse' }
+        '401': { description: Invalid/expired refresh token, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /auth/me:
     get:
-      tags:
-        - Authentication
+      tags: [Auth]
       summary: Get current user
-      description: Get the profile information of the currently authenticated user
-      operationId: getCurrentUser
-      security:
-        - bearerAuth: []
+      security: [ { bearerAuth: [] } ]
       responses:
-        '200':
-          description: Success
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/User'
-        '401':
-          description: Unauthorized (invalid or missing token)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+        '200': { description: Current user, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
+        '401': { description: Unauthorized, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
     patch:
-      tags:
-        - Authentication
-      summary: Update current user profile
-      description: Update the authenticated user's email and/or password after confirming the current password.
-      operationId: updateCurrentUser
-      security:
-        - bearerAuth: []
+      tags: [Auth]
+      summary: Update profile (email/password)
+      security: [ { bearerAuth: [] } ]
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: '#/components/schemas/UpdateProfileRequest'
+            schema: { $ref: '#/components/schemas/UpdateProfileRequest' }
       responses:
         '200':
-          description: Profile updated successfully
+          description: Updated
           content:
             application/json:
-              schema:
-                $ref: '#/components/schemas/UpdateProfileResponse'
-        '400':
-          description: Invalid request (missing password confirmation, no changes, etc.)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '401':
-          description: Unauthorized (invalid or missing token)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '403':
-          description: Current password incorrect
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '409':
-          description: Email already in use
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+              schema: { $ref: '#/components/schemas/UpdateProfileResponse' }
+        '400': { description: Bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '401': { description: Unauthorized, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '403': { description: Current password invalid, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
     delete:
-      tags:
-        - Authentication
-      summary: Delete current user account
-      description: Deactivate and delete the authenticated user's account after confirming the current password. Cleanup runs asynchronously.
-      operationId: deleteCurrentUser
-      security:
-        - bearerAuth: []
+      tags: [Auth]
+      summary: Delete account
+      security: [ { bearerAuth: [] } ]
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: '#/components/schemas/DeleteAccountRequest'
+            schema: { $ref: '#/components/schemas/DeleteAccountRequest' }
       responses:
-        '202':
-          description: Account deletion enqueued
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Success'
-        '400':
-          description: Missing current password
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '401':
-          description: Unauthorized (invalid or missing token)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '403':
-          description: Current password incorrect
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '500':
-          description: Server error deleting the account
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-
-  /auth/confirm-email/{token}:
-    get:
-      tags:
-        - Authentication
-      summary: Confirm email
-      description: Confirm a user's email address using the token sent via email
-      operationId: confirmEmail
-      parameters:
-        - name: token
-          in: path
-          description: Email confirmation token
-          required: true
-          schema:
-            type: string
-      responses:
-        '200':
-          description: Email confirmed successfully
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ConfirmEmailResponse'
-        '400':
-          description: Invalid or expired token
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+        '202': { description: Deletion scheduled, content: { application/json: { schema: { $ref: '#/components/schemas/DeleteAccountResponse' } } } }
+        '401': { description: Unauthorized, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '403': { description: Current password invalid, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /auth/resend-confirmation:
     post:
-      tags:
-        - Authentication
+      tags: [Auth]
       summary: Resend confirmation email
-      operationId: resendConfirmation
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
+              required: [email]
               properties:
-                email:
-                  type: string
-                  format: email
+                email: { type: string, format: email }
       responses:
-        '200':
-          description: Email sent (if account exists)
-        '400':
-          description: Missing email
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+        '200': { description: Sent, content: { application/json: { schema: { $ref: '#/components/schemas/Message' } } } }
+        '400': { description: Bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /auth/reset-password-request:
     post:
-      tags:
-        - Authentication
+      tags: [Auth]
       summary: Request password reset email
-      operationId: requestPasswordReset
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: '#/components/schemas/ResetPasswordRequest'
+            schema: { $ref: '#/components/schemas/ResetPasswordRequest' }
       responses:
-        '200':
-          description: Request processed
-        '400':
-          description: Missing email
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+        '200': { description: Email sent, content: { application/json: { schema: { $ref: '#/components/schemas/Message' } } } }
+        '400': { description: Bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /auth/reset-password/{token}:
     post:
-      tags:
-        - Authentication
+      tags: [Auth]
       summary: Reset password with token
-      operationId: resetPasswordWithToken
       parameters:
-        - name: token
-          in: path
+        - in: path
+          name: token
           required: true
-          schema:
-            type: string
+          schema: { type: string }
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: '#/components/schemas/NewPasswordRequest'
+            schema: { $ref: '#/components/schemas/ResetPasswordConfirmRequest' }
       responses:
-        '200':
-          description: Password reset successful
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/NewPasswordResponse'
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '401':
-          description: Invalid or expired token
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+        '200': { description: Password reset, content: { application/json: { schema: { $ref: '#/components/schemas/Message' } } } }
+        '400': { description: Bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /stories:
     get:
-      tags:
-        - Stories
-      summary: List available stories
-      operationId: listStories
+      tags: [Stories]
+      summary: List stories
       responses:
         '200':
-          description: List of stories
+          description: Stories
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/StoryList'
-        '400':
-          description: Invalid request
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '500':
-          description: Server error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+                type: array
+                items: { $ref: '#/components/schemas/Story' }
 
   /stories/{story_id}:
     get:
-      tags:
-        - Stories
-      summary: Get story details
-      operationId: getStory
+      tags: [Stories]
+      summary: Get story
       parameters:
-        - name: story_id
-          in: path
+        - in: path
+          name: story_id
           required: true
-          schema:
-            type: integer
+          schema: { type: integer }
       responses:
-        '200':
-          description: Story
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Story'
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+        '200': { description: Story, content: { application/json: { schema: { $ref: '#/components/schemas/Story' } } } }
+        '404': { description: Not found, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /stories/{story_id}/cover:
     get:
-      tags:
-        - Stories
+      tags: [Stories]
       summary: Get story cover (redirect)
-      operationId: getStoryCover
       parameters:
-        - name: story_id
-          in: path
+        - in: path
+          name: story_id
           required: true
-          schema:
-            type: integer
+          schema: { type: integer }
       responses:
-        '302':
-          description: Redirect to presigned image URL
-        '404':
-          description: Not found
+        '302': { description: Redirect to cover URL }
+        '404': { description: Not found, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /stories/{story_id}/credits:
+    get:
+      tags: [Billing]
+      summary: Estimate required credits for a story
+      parameters:
+        - in: path
+          name: story_id
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Required credits
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                type: object
+                properties:
+                  required_credits: { type: integer }
+        '404': { description: Story not found, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /voices:
     get:
-      tags:
-        - Voices
-      summary: List current user's voices
-      security:
-        - bearerAuth: []
+      tags: [Voices]
+      summary: List user voices
+      security: [ { bearerAuth: [] } ]
       responses:
         '200':
-          description: List of voices
+          description: Voices
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/VoiceList'
-        '401': { description: Unauthorized }
+                type: array
+                items: { $ref: '#/components/schemas/Voice' }
+        '401': { description: Unauthorized, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
     post:
-      tags:
-        - Voices
-      summary: Upload a new voice recording
-      security:
-        - bearerAuth: []
+      tags: [Voices]
+      summary: Create a new voice from uploaded audio
+      security: [ { bearerAuth: [] } ]
       requestBody:
         required: true
         content:
           multipart/form-data:
             schema:
               type: object
+              required: [file]
               properties:
                 file:
                   type: string
                   format: binary
                 name:
                   type: string
+                  description: Optional voice name
       responses:
-        '201': { description: Voice recorded }
-        '400': { description: Bad request }
-        '401': { description: Unauthorized }
+        '200': { description: Voice created, content: { application/json: { schema: { $ref: '#/components/schemas/Voice' } } } }
+        '400': { description: Bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '401': { description: Unauthorized, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /voices/{voice_id}:
     get:
-      tags:
-        - Voices
-      summary: Get a voice by ID
-      security:
-        - bearerAuth: []
+      tags: [Voices]
+      summary: Get a voice
+      security: [ { bearerAuth: [] } ]
       parameters:
-        - name: voice_id
-          in: path
+        - in: path
+          name: voice_id
           required: true
-          schema:
-            type: integer
+          schema: { type: integer }
       responses:
-        '200': { description: Success }
-        '403': { description: Forbidden }
-        '404': { description: Not found }
+        '200': { description: Voice, content: { application/json: { schema: { $ref: '#/components/schemas/Voice' } } } }
+        '403': { description: Forbidden, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { description: Not found, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
     delete:
-      tags:
-        - Voices
+      tags: [Voices]
       summary: Delete a voice
-      security:
-        - bearerAuth: []
+      security: [ { bearerAuth: [] } ]
       parameters:
-        - name: voice_id
-          in: path
+        - in: path
+          name: voice_id
           required: true
-          schema:
-            type: integer
+          schema: { type: integer }
       responses:
-        '200': { description: Deleted }
-        '403': { description: Forbidden }
-        '404': { description: Not found }
+        '200': { description: Deleted, content: { application/json: { schema: { $ref: '#/components/schemas/Message' } } } }
+        '403': { description: Forbidden, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { description: Not found, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /voices/{voice_id}/sample:
     get:
-      tags:
-        - Voices
-      summary: Get voice sample URL (or redirect)
-      security:
-        - bearerAuth: []
+      tags: [Voices]
+      summary: Get voice sample URL
+      security: [ { bearerAuth: [] } ]
       parameters:
-        - name: voice_id
-          in: path
+        - in: path
+          name: voice_id
           required: true
-          schema:
-            type: integer
-        - name: redirect
-          in: query
-          required: false
-          schema:
-            type: boolean
+          schema: { type: integer }
+        - in: query
+          name: redirect
+          schema: { type: string }
+          description: If present, performs a 302 redirect to the sample URL.
       responses:
-        '200': { description: Sample URL JSON }
+        '200': { description: URL returned, content: { application/json: { schema: { $ref: '#/components/schemas/Voice' } } } }
         '302': { description: Redirect to sample URL }
-        '403': { description: Forbidden }
-        '404': { description: Not found }
+        '403': { description: Forbidden, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { description: Not found, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
-  /voices/{voice_identifier}/stories/{story_id}/audio:
+  /voices/{voice_id}/stories/{story_id}/audio:
     get:
-      tags:
-        - Audio
+      tags: [Audio]
       summary: Get synthesized audio (stream or redirect)
-      security:
-        - bearerAuth: []
+      security: [ { bearerAuth: [] } ]
       parameters:
-        - name: voice_identifier
-          in: path
-          description: External ElevenLabs voice ID or numeric internal voice ID
+        - in: path
+          name: voice_id
           required: true
-          schema:
-            type: string
-        - name: story_id
-          in: path
+          schema: { type: string }
+        - in: path
+          name: story_id
           required: true
-          schema:
-            type: integer
-        - name: redirect
-          in: query
-          required: false
-          schema:
-            type: boolean
-        - name: Range
-          in: header
-          required: false
-          schema:
-            type: string
-            example: bytes=0-1023
+          schema: { type: integer }
+        - in: query
+          name: redirect
+          schema: { type: string }
+          description: If present, 302 redirect to a presigned URL.
+        - in: query
+          name: expires
+          schema: { type: integer }
+          description: Optional presigned URL TTL seconds when redirecting.
       responses:
         '200':
           description: Audio stream
           content:
-            audio/mpeg:
-              schema:
-                type: string
-                format: binary
-        '206': { description: Partial content }
-        '302': { description: Redirect to presigned URL }
-        '403': { description: Forbidden }
-        '404': { description: Not found }
+            audio/mpeg: {}
+        '302': { description: Redirect to audio URL }
+        '404': { description: Not found, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
     head:
-      tags:
-        - Audio
+      tags: [Audio]
       summary: Check if audio exists
-      security:
-        - bearerAuth: []
+      security: [ { bearerAuth: [] } ]
       parameters:
-        - name: voice_identifier
-          in: path
+        - in: path
+          name: voice_id
           required: true
-          schema:
-            type: string
-        - name: story_id
-          in: path
+          schema: { type: string }
+        - in: path
+          name: story_id
           required: true
-          schema:
-            type: integer
+          schema: { type: integer }
       responses:
         '200': { description: Exists }
         '404': { description: Not found }
     post:
-      tags:
-        - Audio
-      summary: Queue audio synthesis
-      security:
-        - bearerAuth: []
+      tags: [Audio]
+      summary: Request audio synthesis
+      security: [ { bearerAuth: [] } ]
       parameters:
-        - name: voice_identifier
-          in: path
+        - in: path
+          name: voice_id
           required: true
-          schema:
-            type: string
-        - name: story_id
-          in: path
+          schema: { type: string }
+        - in: path
+          name: story_id
           required: true
-          schema:
-            type: integer
+          schema: { type: integer }
       responses:
         '202':
-          description: Accepted, voice allocation or synthesis pending
+          description: Accepted/queued
           content:
             application/json:
-              schema:
-                $ref: '#/components/schemas/AudioSynthesisResponse'
-        '200':
-          description: Audio already ready
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AudioSynthesisResponse'
-        '400': { description: Bad request }
-        '401': { description: Unauthorized }
-        '402': { description: Payment Required (insufficient credits) }
-        '403': { description: Forbidden }
-        '404': { description: Not found }
-        '503': { description: Queue unavailable }
+              schema: { $ref: '#/components/schemas/AudioSynthesisResponse' }
+        '402': { description: Insufficient credits, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '403': { description: Forbidden, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { description: Not found, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /voices/{voice_id}/status:
     get:
-      tags:
-        - Tasks
+      tags: [Tasks]
       summary: Get voice cloning status
-      security:
-        - bearerAuth: []
+      security: [ { bearerAuth: [] } ]
       parameters:
-        - name: voice_id
-          in: path
+        - in: path
+          name: voice_id
           required: true
-          schema:
-            type: integer
-        - name: task_id
-          in: query
-          required: false
-          schema:
-            type: string
+          schema: { type: integer }
+        - in: query
+          name: task_id
+          schema: { type: string }
       responses:
-        '200':
-          description: Status
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/VoiceStatusResponse'
-        '403': { description: Forbidden }
-        '404': { description: Not found }
+        '200': { description: Status, content: { application/json: { schema: { $ref: '#/components/schemas/VoiceStatus' } } } }
+        '403': { description: Forbidden, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { description: Not found, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /audio/{audio_id}/status:
     get:
-      tags:
-        - Tasks
+      tags: [Tasks]
       summary: Get audio synthesis status
-      operationId: getAudioStatus
-      security:
-        - bearerAuth: []
+      security: [ { bearerAuth: [] } ]
       parameters:
-        - name: audio_id
-          in: path
+        - in: path
+          name: audio_id
           required: true
-          schema:
-            type: integer
-        - name: task_id
-          in: query
-          required: false
-          schema:
-            type: string
+          schema: { type: integer }
+        - in: query
+          name: task_id
+          schema: { type: string }
       responses:
-        '200':
-          description: Status
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AudioStatusResponse'
-        '403': { description: Forbidden }
-        '404': { description: Not found }
+        '200': { description: Status, content: { application/json: { schema: { $ref: '#/components/schemas/AudioStatus' } } } }
+        '403': { description: Forbidden, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { description: Not found, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /tasks/{task_id}:
     get:
-      tags:
-        - Tasks
+      tags: [Tasks]
       summary: Get Celery task status
-      operationId: getTaskStatus
-      security:
-        - bearerAuth: []
+      security: [ { bearerAuth: [] } ]
       parameters:
-        - name: task_id
-          in: path
+        - in: path
+          name: task_id
           required: true
-          schema:
-            type: string
+          schema: { type: string }
       responses:
-        '200': { description: Status }
-        '404': { description: Not found }
-        '500': { description: Error checking status }
-
+        '200': { description: Task status, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        '401': { description: Unauthorized, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /me/credits:
     get:
-      tags:
-        - Billing
-      summary: Get current user's credit balance and history
-      operationId: getMyCredits
-      security:
-        - bearerAuth: []
+      tags: [Billing]
+      summary: Get credit summary
+      security: [ { bearerAuth: [] } ]
       parameters:
-        - name: history_limit
-          in: query
-          description: Maximum number of recent transactions to include (default 20, max 100).
-          required: false
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 100
-        - name: history_offset
-          in: query
-          description: Offset into the transaction history for pagination.
-          required: false
-          schema:
-            type: integer
-            minimum: 0
-        - name: type
-          in: query
-          description: Comma-separated list of transaction types (credit, debit, refund, expire) to filter history.
-          required: false
-          schema:
-            type: string
+        - in: query
+          name: history_limit
+          schema: { type: integer, default: 20, maximum: 100 }
+        - in: query
+          name: history_offset
+          schema: { type: integer, default: 0 }
+        - in: query
+          name: types
+          schema: { type: string, description: "Comma-separated transaction types" }
       responses:
-        '200':
-          description: Current balance, lots, and paginated history
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CreditSummaryResponse'
-        '401':
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '403':
-          description: Account inactive or email not confirmed
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+        '200': { description: Credit summary, content: { application/json: { schema: { $ref: '#/components/schemas/CreditSummary' } } } }
+        '401': { description: Unauthorized, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
   /me/credits/history:
     get:
-      tags:
-        - Billing
-      summary: List credit transactions with pagination
-      operationId: getMyCreditHistory
-      security:
-        - bearerAuth: []
+      tags: [Billing]
+      summary: Paginated credit history
+      security: [ { bearerAuth: [] } ]
       parameters:
-        - name: limit
-          in: query
-          description: Maximum number of transactions to return (default 20, max 100).
-          required: false
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 100
-        - name: offset
-          in: query
-          description: Offset into the transaction list.
-          required: false
-          schema:
-            type: integer
-            minimum: 0
-        - name: type
-          in: query
-          description: Comma-separated list of transaction types (credit, debit, refund, expire) to include.
-          required: false
-          schema:
-            type: string
+        - in: query
+          name: limit
+          schema: { type: integer, default: 20, maximum: 100 }
+        - in: query
+          name: offset
+          schema: { type: integer, default: 0 }
+        - in: query
+          name: types
+          schema: { type: string, description: "Comma-separated transaction types" }
       responses:
-        '200':
-          description: Paginated list of credit transactions
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CreditHistoryResponse'
-        '401':
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '403':
-          description: Account inactive or email not confirmed
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+        '200': { description: History, content: { application/json: { schema: { $ref: '#/components/schemas/CreditHistory' } } } }
+        '401': { description: Unauthorized, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
-  /stories/{story_id}/credits:
+  /admin/users:
     get:
-      tags:
-        - Billing
-      summary: Estimate required credits for a story
-      operationId: getStoryCredits
-      parameters:
-        - name: story_id
-          in: path
-          required: true
-          schema:
-            type: integer
+      tags: [Admin]
+      summary: List users
+      security: [ { bearerAuth: [] } ]
       responses:
         '200':
-          description: Required credits for the story
+          description: Users
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  required_credits:
-                    type: integer
-                    example: 3
-        '404':
-          description: Story not found
+                  users:
+                    type: array
+                    items: { $ref: '#/components/schemas/User' }
+        '401': { description: Unauthorized, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '403': { description: Admin required, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /admin/users/pending:
+    get:
+      tags: [Admin]
+      summary: List pending users
+      security: [ { bearerAuth: [] } ]
+      responses:
+        '200':
+          description: Pending users
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                type: object
+                properties:
+                  pending_users:
+                    type: array
+                    items: { $ref: '#/components/schemas/User' }
+
+  /admin/users/{user_id}:
+    get:
+      tags: [Admin]
+      summary: Get user by id
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - in: path
+          name: user_id
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: User, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
+        '404': { description: Not found, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /admin/users/{user_id}/activate:
+    post:
+      tags: [Admin]
+      summary: Activate user
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - in: path
+          name: user_id
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Activated, content: { application/json: { schema: { $ref: '#/components/schemas/Message' } } } }
+        '404': { description: Not found, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /admin/users/{user_id}/deactivate:
+    post:
+      tags: [Admin]
+      summary: Deactivate user
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - in: path
+          name: user_id
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Deactivated, content: { application/json: { schema: { $ref: '#/components/schemas/Message' } } } }
+        '404': { description: Not found, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /admin/users/{user_id}/promote:
+    post:
+      tags: [Admin]
+      summary: Promote user to admin
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - in: path
+          name: user_id
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Promoted, content: { application/json: { schema: { $ref: '#/components/schemas/Message' } } } }
+        '404': { description: Not found, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /admin/users/{user_id}/revoke-admin:
+    post:
+      tags: [Admin]
+      summary: Revoke admin
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - in: path
+          name: user_id
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Revoked, content: { application/json: { schema: { $ref: '#/components/schemas/Message' } } } }
+        '404': { description: Not found, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '403': { description: Cannot revoke self, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /admin/users/{user_id}/credits/grant:
     post:
-      tags:
-        - Admin
+      tags: [Admin]
       summary: Grant credits to a user
-      operationId: adminGrantCredits
-      security:
-        - bearerAuth: []
+      security: [ { bearerAuth: [] } ]
       parameters:
-        - name: user_id
-          in: path
+        - in: path
+          name: user_id
           required: true
-          schema:
-            type: integer
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GrantCreditsRequest' }
+      responses:
+        '200': { description: Granted, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        '400': { description: Bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { description: Not found, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /admin/stories/upload:
+    post:
+      tags: [Admin]
+      summary: Upload a story (API key required in production)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '200': { description: Uploaded, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        '400': { description: Bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /admin/stories/bulk-upload:
+    post:
+      tags: [Admin]
+      summary: Bulk upload stories (API key required in production)
+      security: []
       requestBody:
         required: true
         content:
@@ -1575,136 +877,77 @@ paths:
             schema:
               type: object
               properties:
-                amount:
-                  type: integer
-                  example: 100
-                reason:
-                  type: string
-                  example: support_compensation
-                source:
-                  type: string
-                  example: add_on
-                expires_at:
-                  type: string
-                  format: date-time
-                  example: "2025-09-01T00:00:00Z"
+                stories:
+                  type: array
+                  items: { type: object, additionalProperties: true }
       responses:
-        '200':
-          description: Credits granted
-        '400':
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '401':
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '403':
-          description: Forbidden (not admin)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '404':
-          description: User not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+        '200': { description: Uploaded, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        '400': { description: Bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /admin/stories/upload-with-image:
+    post:
+      tags: [Admin]
+      summary: Upload story with image (API key required in production)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                story: { type: object, additionalProperties: true }
+                image_url: { type: string, format: uri, nullable: true }
+      responses:
+        '200': { description: Uploaded, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+        '400': { description: Bad request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /admin/stories/stats:
+    get:
+      tags: [Admin]
+      summary: Story statistics
+      security: [ { bearerAuth: [] } ]
+      responses:
+        '200': { description: Stats, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
 
   /admin/voice-slots/status:
     get:
-      tags:
-        - Admin
-      summary: Inspect current voice slot utilisation and queue
-      security:
-        - bearerAuth: []
+      tags: [Admin]
+      summary: Voice slot snapshot
+      security: [ { bearerAuth: [] } ]
       parameters:
-        - name: limit_active
-          in: query
-          required: false
-          schema:
-            type: integer
-            example: 100
-        - name: limit_queue
-          in: query
-          required: false
-          schema:
-            type: integer
-            example: 50
-        - name: limit_events
-          in: query
-          required: false
-          schema:
-            type: integer
-            example: 50
+        - in: query
+          name: limit_active
+          schema: { type: integer, default: 100 }
+        - in: query
+          name: limit_queue
+          schema: { type: integer, default: 50 }
+        - in: query
+          name: limit_events
+          schema: { type: integer, default: 50 }
       responses:
-        '200':
-          description: Snapshot of slot usage and queue depth
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/VoiceSlotStatusResponse'
-        '401':
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '500':
-          description: Server error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+        '200': { description: Snapshot, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
 
   /admin/voice-slots/process-queue:
     post:
-      tags:
-        - Admin
-      summary: Trigger processing of queued voice allocations
-      security:
-        - bearerAuth: []
+      tags: [Admin]
+      summary: Trigger voice queue processing
+      security: [ { bearerAuth: [] } ]
       responses:
-        '202':
-          description: Queue processing scheduled
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                    example: Voice allocation queue processing triggered
-                  task_id:
-                    type: string
-                    nullable: true
-                    example: "ce3f6f9a-6f8c-4e2c-8d91-1b0f5a99a8f4"
-        '401':
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '403':
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '500':
-          description: Server error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+        '200': { description: Triggered, content: { application/json: { schema: { $ref: '#/components/schemas/Message' } } } }
+
+  /admin/auth/generate-token:
+    post:
+      tags: [Admin]
+      summary: Generate admin token
+      security: [ { bearerAuth: [] } ]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                expires_in: { type: integer, default: 3600 }
+      responses:
+        '200': { description: Token issued, content: { application/json: { schema: { type: object, properties: { admin_token: { type: string }, expires_in: { type: integer }, token_type: { type: string } } } } } }
