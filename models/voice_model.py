@@ -685,8 +685,17 @@ class VoiceModel:
 
     @staticmethod
     def count_ready_slots(service_provider: Optional[str] = None) -> int:
-        """Count READY voices currently holding remote slots."""
-        query = Voice.query.filter(Voice.allocation_status == VoiceAllocationStatus.READY)
+        """Count voices holding or acquiring remote slots (READY + ALLOCATING).
+
+        Includes ALLOCATING voices to prevent over-subscription when
+        multiple allocations are in flight concurrently.
+        """
+        query = Voice.query.filter(
+            Voice.allocation_status.in_([
+                VoiceAllocationStatus.READY,
+                VoiceAllocationStatus.ALLOCATING,
+            ])
+        )
         if service_provider:
             query = query.filter(Voice.service_provider == service_provider)
         return query.count()

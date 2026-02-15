@@ -56,6 +56,22 @@ def _make_voice(**overrides):
     return SimpleNamespace(**defaults)
 
 
+def _make_voice_query(voice):
+    """Create a mock Voice.query supporting both .get() and .filter_by().with_for_update().first()."""
+    class ForUpdateChain:
+        def first(self_inner):
+            return voice
+
+    class FilterByChain:
+        def with_for_update(self_inner):
+            return ForUpdateChain()
+
+    return SimpleNamespace(
+        get=lambda _id: voice,
+        filter_by=lambda **kw: FilterByChain(),
+    )
+
+
 class DummySession:
     def __init__(self):
         self.commit_calls = 0
@@ -268,7 +284,7 @@ class TestAllocateVoiceSlot:
         voice = _make_voice()
         monkeypatch.setattr(
             "models.voice_model.Voice.query",
-            SimpleNamespace(get=lambda _id: voice),
+            _make_voice_query(voice),
         )
         monkeypatch.setattr(
             "models.voice_model.VoiceModel.available_slot_capacity",
@@ -311,7 +327,7 @@ class TestAllocateVoiceSlot:
         )
         monkeypatch.setattr(
             "models.voice_model.Voice.query",
-            SimpleNamespace(get=lambda _id: voice),
+            _make_voice_query(voice),
         )
         monkeypatch.setattr(
             "utils.voice_slot_manager.VoiceSlotManager._release_voice_lock",
@@ -330,7 +346,7 @@ class TestAllocateVoiceSlot:
         voice = _make_voice()
         monkeypatch.setattr(
             "models.voice_model.Voice.query",
-            SimpleNamespace(get=lambda _id: voice),
+            _make_voice_query(voice),
         )
         monkeypatch.setattr(
             "models.voice_model.VoiceModel.available_slot_capacity",
@@ -354,7 +370,7 @@ class TestAllocateVoiceSlot:
         voice = _make_voice()
         monkeypatch.setattr(
             "models.voice_model.Voice.query",
-            SimpleNamespace(get=lambda _id: voice),
+            _make_voice_query(voice),
         )
         monkeypatch.setattr(
             "models.voice_model.VoiceModel.available_slot_capacity",
@@ -382,7 +398,7 @@ class TestAllocateVoiceSlot:
         voice = _make_voice()
         monkeypatch.setattr(
             "models.voice_model.Voice.query",
-            SimpleNamespace(get=lambda _id: voice),
+            _make_voice_query(voice),
         )
         monkeypatch.setattr(
             "models.voice_model.VoiceModel.available_slot_capacity",
@@ -414,7 +430,7 @@ class TestAllocateVoiceSlot:
         voice = _make_voice()
         monkeypatch.setattr(
             "models.voice_model.Voice.query",
-            SimpleNamespace(get=lambda _id: voice),
+            _make_voice_query(voice),
         )
         monkeypatch.setattr(
             "models.voice_model.VoiceModel.available_slot_capacity",
@@ -442,7 +458,7 @@ class TestAllocateVoiceSlot:
     def test_voice_not_found_releases_lock(self, monkeypatch, stub_db):
         monkeypatch.setattr(
             "models.voice_model.Voice.query",
-            SimpleNamespace(get=lambda _id: None),
+            _make_voice_query(None),
         )
         released = []
         monkeypatch.setattr(
@@ -891,3 +907,173 @@ class TestDistributedLock:
         assert state2.status == VoiceSlotManager.STATUS_ALLOCATING
         # Task should only be dispatched once
         assert task_stub.delay.call_count == 1
+
+
+# ===================================================================
+# SELECT FOR UPDATE in allocate_voice_slot
+# ===================================================================
+
+class TestSelectForUpdate:
+    """Verify that allocate_voice_slot uses SELECT FOR UPDATE row locking."""
+
+    def test_allocate_voice_slot_uses_for_update(
+        self, monkeypatch, stub_db, stub_events, stub_queue,
+    ):
+        """The task must acquire a row lock via with_for_update() to prevent
+        concurrent workers from double-cloning the same voice."""
+        voice = _make_voice()
+
+        for_update_called = []
+
+        class FakeForUpdate:
+            def first(self_inner):
+                for_update_called.append(True)
+                return voice
+
+        class FakeFilterBy:
+            def __init__(self_inner, **kwargs):
+                pass
+
+            def with_for_update(self_inner):
+                return FakeForUpdate()
+
+        monkeypatch.setattr(
+            "models.voice_model.Voice.query",
+            SimpleNamespace(filter_by=lambda **kw: FakeFilterBy(**kw)),
+        )
+        monkeypatch.setattr(
+            "models.voice_model.VoiceModel.available_slot_capacity",
+            staticmethod(lambda provider=None: 5),
+        )
+        monkeypatch.setattr(
+            "utils.s3_client.S3Client.download_fileobj",
+            lambda key: BytesIO(b"audio-bytes"),
+        )
+        monkeypatch.setattr(
+            "models.voice_model.VoiceModel._clone_voice_api",
+            staticmethod(lambda *a, **kw: (True, {"voice_id": "ext-voice-456"})),
+        )
+        monkeypatch.setattr(
+            "tasks.voice_tasks.process_voice_queue.delay", lambda: None,
+        )
+        monkeypatch.setattr(
+            "utils.voice_slot_manager.VoiceSlotManager._release_voice_lock",
+            classmethod(lambda cls, vid: None),
+        )
+
+        result = allocate_voice_slot.run(
+            voice_id=1, s3_key="k", filename="f.wav",
+            user_id=10, voice_name="V",
+        )
+
+        assert result is True
+        assert len(for_update_called) == 1, (
+            "allocate_voice_slot must use .with_for_update() for row-level locking"
+        )
+
+
+# ===================================================================
+# count_ready_slots includes ALLOCATING
+# ===================================================================
+
+class TestCountReadySlotsIncludesAllocating:
+    """Verify that count_ready_slots counts both READY and ALLOCATING voices."""
+
+    def test_count_ready_slots_includes_allocating(self, app):
+        from models.voice_model import Voice, VoiceModel, VoiceAllocationStatus
+        from models.user_model import User
+        from database import db
+
+        with app.app_context():
+            existing = User.query.filter_by(email="count_ready@test.com").first()
+            if existing:
+                Voice.query.filter_by(user_id=existing.id).delete()
+                db.session.delete(existing)
+                db.session.commit()
+
+            user = User(email="count_ready@test.com", is_active=True, email_confirmed=True)
+            user.set_password("Password123!")
+            db.session.add(user)
+            db.session.commit()
+
+            # Create 3 READY + 2 ALLOCATING voices
+            for i in range(3):
+                v = Voice(
+                    name=f"ready_{i}", user_id=user.id,
+                    recording_s3_key=f"key_{i}",
+                    status=VoiceStatus.READY,
+                    allocation_status=VoiceAllocationStatus.READY,
+                    elevenlabs_voice_id=f"ext_ready_{i}",
+                    service_provider="elevenlabs",
+                )
+                db.session.add(v)
+
+            for i in range(2):
+                v = Voice(
+                    name=f"allocating_{i}", user_id=user.id,
+                    recording_s3_key=f"alloc_key_{i}",
+                    status=VoiceStatus.PROCESSING,
+                    allocation_status=VoiceAllocationStatus.ALLOCATING,
+                    service_provider="elevenlabs",
+                )
+                db.session.add(v)
+
+            db.session.commit()
+
+            count = VoiceModel.count_ready_slots("elevenlabs")
+            assert count >= 5, (
+                f"count_ready_slots must include ALLOCATING voices; expected >= 5, got {count}"
+            )
+
+            # Clean up
+            Voice.query.filter_by(user_id=user.id).delete()
+            db.session.delete(user)
+            db.session.commit()
+
+
+# ===================================================================
+# No eager allocation in process_voice_recording
+# ===================================================================
+
+class TestNoEagerAllocation:
+    """Verify process_voice_recording does NOT trigger allocate_voice_slot."""
+
+    def test_process_voice_recording_does_not_dispatch_allocation(
+        self, monkeypatch, stub_db, stub_events, stub_metrics,
+    ):
+        voice = _make_voice()
+
+        monkeypatch.setattr(
+            "models.voice_model.Voice.query",
+            SimpleNamespace(get=lambda _id: voice),
+        )
+
+        head_response = {
+            "ContentLength": 5000,
+            "ServerSideEncryption": "AES256",
+            "StorageClass": "STANDARD",
+            "ContentType": "audio/wav",
+        }
+        mock_s3_client = MagicMock()
+        mock_s3_client.head_object.return_value = head_response
+        monkeypatch.setattr("utils.s3_client.S3Client.get_client", lambda: mock_s3_client)
+        monkeypatch.setattr("utils.s3_client.S3Client.get_bucket_name", lambda: "bucket")
+
+        # If allocate_voice_slot.delay is called, fail the test
+        alloc_mock = MagicMock(side_effect=AssertionError(
+            "process_voice_recording must NOT call allocate_voice_slot.delay"
+        ))
+        monkeypatch.setattr(
+            "tasks.voice_tasks.allocate_voice_slot.delay", alloc_mock,
+        )
+
+        result = process_voice_recording.run(
+            voice_id=1,
+            s3_key="voice_samples/10/voice_1.wav",
+            filename="voice_1.wav",
+            user_id=10,
+        )
+
+        assert result is True
+        assert voice.status == VoiceStatus.RECORDED
+        alloc_mock.assert_not_called()
