@@ -449,7 +449,11 @@ def allocate_voice_slot(self, voice_id, s3_key, filename, user_id, voice_name=No
         from utils.s3_client import S3Client
         from utils.voice_slot_manager import VoiceSlotManager
 
-        voice = Voice.query.get(voice_id)
+        voice = (
+            Voice.query.filter_by(id=voice_id)
+            .with_for_update()
+            .first()
+        )
         if not voice:
             logger.error("Voice record %s not found during allocation", voice_id)
             VoiceSlotManager._release_voice_lock(voice_id)
