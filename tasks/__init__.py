@@ -55,14 +55,14 @@ class FlaskTask(Task):
     _flask_app = None
 
     @property
-    def _app(self):
+    def flask_app(self):
         if self._flask_app is None:
             from tasks import flask_app as _fa
             self._flask_app = _fa
         return self._flask_app
 
     def __call__(self, *args, **kwargs):
-        with self._app.app_context():
+        with self.flask_app.app_context():
             return self.run(*args, **kwargs)
 
 def init_app(app):
