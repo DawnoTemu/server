@@ -393,37 +393,37 @@ class UserModel:
                 add_warning("s3", str(exc))
 
         try:
-            with db.session.begin():
-                # Preserve audit history but drop PII
-                VoiceSlotEvent.query.filter(VoiceSlotEvent.user_id == user_id).update(
-                    {"user_id": None, "voice_id": None}, synchronize_session=False
+            # Preserve audit history but drop PII
+            VoiceSlotEvent.query.filter(VoiceSlotEvent.user_id == user_id).update(
+                {"user_id": None, "voice_id": None}, synchronize_session=False
+            )
+
+            # Audio cleanup (must happen before voice deletion due to FK constraint)
+            db.session.execute(sa_delete(AudioStory).where(AudioStory.user_id == user_id))
+
+            voice_ids = [v.id for v in voices]
+            if voice_ids:
+                db.session.execute(sa_delete(Voice).where(Voice.id.in_(voice_ids)))
+
+            # Credit ledger cleanup
+            tx_ids = [tx.id for tx in CreditTransaction.query.filter(CreditTransaction.user_id == user_id).all()]
+            lot_ids = [lot.id for lot in CreditLot.query.filter(CreditLot.user_id == user_id).all()]
+            if tx_ids:
+                db.session.execute(
+                    sa_delete(CreditTransactionAllocation).where(
+                        CreditTransactionAllocation.transaction_id.in_(tx_ids)
+                    )
                 )
+                db.session.execute(sa_delete(CreditTransaction).where(CreditTransaction.id.in_(tx_ids)))
+            if lot_ids:
+                db.session.execute(
+                    sa_delete(CreditTransactionAllocation).where(CreditTransactionAllocation.lot_id.in_(lot_ids))
+                )
+                db.session.execute(sa_delete(CreditLot).where(CreditLot.id.in_(lot_ids)))
 
-                voice_ids = [v.id for v in voices]
-                if voice_ids:
-                    db.session.execute(sa_delete(Voice).where(Voice.id.in_(voice_ids)))
-
-                # Credit ledger cleanup
-                tx_ids = [tx.id for tx in CreditTransaction.query.filter(CreditTransaction.user_id == user_id).all()]
-                lot_ids = [lot.id for lot in CreditLot.query.filter(CreditLot.user_id == user_id).all()]
-                if tx_ids:
-                    db.session.execute(
-                        sa_delete(CreditTransactionAllocation).where(
-                            CreditTransactionAllocation.transaction_id.in_(tx_ids)
-                        )
-                    )
-                    db.session.execute(sa_delete(CreditTransaction).where(CreditTransaction.id.in_(tx_ids)))
-                if lot_ids:
-                    db.session.execute(
-                        sa_delete(CreditTransactionAllocation).where(CreditTransactionAllocation.lot_id.in_(lot_ids))
-                    )
-                    db.session.execute(sa_delete(CreditLot).where(CreditLot.id.in_(lot_ids)))
-
-                # Audio cleanup
-                db.session.execute(sa_delete(AudioStory).where(AudioStory.user_id == user_id))
-
-                # Final user delete
-                db.session.execute(sa_delete(User).where(User.id == user_id))
+            # Final user delete
+            db.session.execute(sa_delete(User).where(User.id == user_id))
+            db.session.commit()
         except Exception as exc:
             db.session.rollback()
             logging.getLogger(__name__).exception("Error deleting user %s", user_id)

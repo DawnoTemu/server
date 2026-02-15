@@ -24,13 +24,10 @@ def test_credit_summary_includes_cache_and_computed(app):
         db.session.commit()
 
         summary = get_user_credit_summary(user.id)
-        assert summary["balance_cached"] == 99
+        # After reconciliation, cached balance is updated to match computed
+        assert summary["balance_cached"] == 10
         assert summary["balance_computed"] == 10
         assert summary["balance"] == 10
-
-        db.session.delete(lot)
-        db.session.delete(user)
-        db.session.commit()
 
 
 def test_credit_summary_excludes_expired_and_reconciles_cache(app):

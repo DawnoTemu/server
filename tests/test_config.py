@@ -38,30 +38,19 @@ class TestConfig:
         assert Config.S3_BUCKET == "test-bucket"
         assert Config.ELEVENLABS_API_KEY == "test_api_key"
     
-    @patch('boto3.client')
-    def test_get_s3_client(self, mock_boto3_client):
-        """Test S3 client creation with correct parameters"""
-        # Arrange
-        mock_s3_client = MagicMock()
-        mock_boto3_client.return_value = mock_s3_client
-        
-        # Act
-        client = Config.get_s3_client()
-        
-        # Assert
-        assert client == mock_s3_client
-        mock_boto3_client.assert_called_once_with(
-            's3',
-            aws_access_key_id=Config.AWS_ACCESS_KEY_ID,
-            aws_secret_access_key=Config.AWS_SECRET_ACCESS_KEY,
-            region_name=Config.AWS_REGION
-        )
-    
+    def test_get_s3_client(self):
+        """Test S3 client creation delegates to S3Client"""
+        mock_client = MagicMock()
+        with patch('utils.s3_client.S3Client.get_client', return_value=mock_client):
+            client = Config.get_s3_client()
+            assert client == mock_client
+
     def test_allowed_extensions(self):
         """Test allowed extensions are correctly configured"""
         assert "wav" in Config.ALLOWED_EXTENSIONS
         assert "mp3" in Config.ALLOWED_EXTENSIONS
-        assert len(Config.ALLOWED_EXTENSIONS) == 2  # Only wav and mp3 should be allowed
+        assert "m4a" in Config.ALLOWED_EXTENSIONS
+        assert len(Config.ALLOWED_EXTENSIONS) == 3
     
     def test_directories_creation(self):
         """Test that required directories are created"""

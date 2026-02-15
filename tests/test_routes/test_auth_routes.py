@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -273,10 +273,12 @@ def test_delete_profile_backend_failure(client, app, mocker):
 def test_token_invalid_after_profile_update(client, app):
     user_id, token = _create_active_user(app)
 
-    # Force an updated_at bump to simulate profile change
+    # Force an updated_at bump far enough in the future so the second-precision
+    # iat comparison detects that the token predates the profile change.
     with app.app_context():
         user = UserModel.get_by_id(user_id)
         user.email = "updated@example.com"
+        user.updated_at = datetime.utcnow() + timedelta(seconds=2)
         db.session.commit()
 
     response = client.get(

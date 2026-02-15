@@ -103,7 +103,7 @@ def test_get_credit_summary_with_history(client, app):
     assert response.status_code == 200
     data = response.get_json()
 
-    assert data["balance"] == 27
+    assert data["balance"] == 12  # Computed from active lot (amount_remaining=12), not cached value
     assert data["unit_label"]
     assert data["unit_size"]
     assert len(data["lots"]) == 2

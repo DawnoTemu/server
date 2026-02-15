@@ -241,8 +241,8 @@ class TestVoiceModel:
 
         assert VoiceModel.get_voice_by_identifier("missing-external") is None
 
-    def test_process_voice_recording_enqueues_allocation(self, monkeypatch):
-        """Recorded voices queue allocation after processing completes."""
+    def test_process_voice_recording_updates_metadata(self, monkeypatch):
+        """process_voice_recording captures S3 metadata and logs RECORDING_PROCESSED event."""
         from tasks.voice_tasks import process_voice_recording
 
         fake_voice = SimpleNamespace(
@@ -252,6 +252,7 @@ class TestVoiceModel:
             recording_s3_key="voice_samples/42/voice_1.wav",
             recording_filesize=None,
             updated_at=None,
+            service_provider=VoiceServiceProvider.ELEVENLABS,
         )
 
         events = []
@@ -284,16 +285,6 @@ class TestVoiceModel:
             events.append(event)
             return event
 
-        allocation_calls = {}
-
-        def fake_allocate_delay(*args, **kwargs):
-            if args:
-                allocation_calls["args"] = args
-            else:
-                allocation_calls["args"] = ()
-            allocation_calls["kwargs"] = kwargs
-            return SimpleNamespace(id="alloc-task-id")
-
         class FakeS3Client:
             @staticmethod
             def head_object(Bucket, Key):
@@ -310,7 +301,7 @@ class TestVoiceModel:
         monkeypatch.setattr('models.voice_model.VoiceSlotEvent.log_event', staticmethod(fake_log_event), raising=False)
         monkeypatch.setattr('utils.s3_client.S3Client.get_client', classmethod(lambda cls: FakeS3Client()), raising=False)
         monkeypatch.setattr('utils.s3_client.S3Client.get_bucket_name', classmethod(lambda cls: 'test-bucket'), raising=False)
-        monkeypatch.setattr('tasks.voice_tasks.allocate_voice_slot', SimpleNamespace(delay=fake_allocate_delay), raising=False)
+        monkeypatch.setattr('tasks.voice_tasks.emit_metric', lambda *a, **kw: None, raising=False)
 
         success = process_voice_recording(
             voice_id=1,
@@ -321,8 +312,8 @@ class TestVoiceModel:
         )
 
         assert success is True
-        assert allocation_calls["kwargs"]["voice_id"] == 1
-        assert allocation_calls["kwargs"]["s3_key"] == "voice_samples/42/voice_1.wav"
+        assert fake_voice.recording_filesize == 1024
+        assert fake_voice.status == VoiceStatus.RECORDED
 
         event_types = [event.event_type for event in events]
         assert VoiceSlotEventType.RECORDING_PROCESSED in event_types
