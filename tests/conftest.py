@@ -11,7 +11,6 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 # Exclude standalone integration scripts that use argparse / requests
 collect_ignore = [
-    os.path.join(os.path.dirname(__file__), "test_endpoints.py"),
     os.path.join(os.path.dirname(__file__), "test_voice_quality_comparison.py"),
 ]
 
