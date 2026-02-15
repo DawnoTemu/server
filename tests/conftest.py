@@ -22,6 +22,7 @@ from database import db
 def setup_test_environment():
     """Set up test environment variables and directories"""
     # Set environment variables for testing
+    os.environ["SENTRY_DSN"] = ""
     os.environ["ELEVENLABS_API_KEY"] = "test_api_key"
     os.environ["CARTESIA_API_KEY"] = "test_cartesia_api_key"
     os.environ["AWS_ACCESS_KEY_ID"] = "test_aws_key"
