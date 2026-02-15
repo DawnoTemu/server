@@ -288,15 +288,8 @@ class VoiceSlotDashboardView(SecureBaseView):
             .order_by(Voice.updated_at.desc())
             .all()
         )
-        cooling_voices = (
-            Voice.query.filter(Voice.allocation_status == VoiceAllocationStatus.COOLING)
-            .order_by(Voice.updated_at.desc())
-            .all()
-        )
-
         ready_rows = [self._voice_row(v) for v in ready_voices]
         allocating_rows = [self._voice_row(v) for v in allocating_voices]
-        cooling_rows = [self._voice_row(v) for v in cooling_voices]
 
         snapshot = VoiceSlotQueue.snapshot(limit=None)
         now_ts = time.time()
@@ -326,7 +319,7 @@ class VoiceSlotDashboardView(SecureBaseView):
             available_capacity = "—"
 
         stats = {
-            "active_count": len(ready_rows) + len(allocating_rows) + len(cooling_rows),
+            "active_count": len(ready_rows) + len(allocating_rows),
             "slot_limit": slot_limit,
             "queue_length": VoiceSlotQueue.length(),
             "available_capacity": available_capacity,
@@ -340,7 +333,6 @@ class VoiceSlotDashboardView(SecureBaseView):
             stats=stats,
             ready=ready_rows,
             allocating=allocating_rows,
-            cooling=cooling_rows,
             queue_entries=queue_entries,
             events=events,
         )
@@ -745,34 +737,6 @@ def create_voice_slots_template(app):
         </tr>
         {% else %}
         <tr><td colspan="8" class="text-center text-muted">No voices allocating</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-
-  <h4 class="mt-4">Cooling Voices</h4>
-  <div class="table-responsive">
-    <table class="table table-sm table-striped align-middle">
-      <thead>
-        <tr>
-          <th>ID</th>
-          <th>User</th>
-          <th>Name</th>
-          <th>Last Used</th>
-          <th>Hold Expires</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for row in cooling %}
-        <tr>
-          <td>{{ row.voice.id }}</td>
-          <td>{{ row.user_email }}</td>
-          <td>{{ row.voice.name }}</td>
-          <td>{{ row.voice.last_used_at or '—' }}</td>
-          <td>{{ row.hold_expires or '—' }}</td>
-        </tr>
-        {% else %}
-        <tr><td colspan="5" class="text-center text-muted">No voices in cooling window</td></tr>
         {% endfor %}
       </tbody>
     </table>

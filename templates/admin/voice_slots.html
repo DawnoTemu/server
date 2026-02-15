@@ -215,51 +215,6 @@
     {% endif %}
 </div>
 
-<!-- Cooling Voices Section -->
-{% if cooling %}
-<div class="card mb-8">
-    <div class="card-header flex items-center justify-between">
-        <div class="flex items-center gap-2">
-            <i data-feather="wind" class="w-5 h-5 text-purple-600"></i>
-            <span>Cooling Voices</span>
-            <span class="badge badge-secondary">{{ cooling|length }}</span>
-        </div>
-    </div>
-
-    <div class="overflow-x-auto">
-        <table class="table">
-            <thead>
-                <tr>
-                    <th>ID</th>
-                    <th>User</th>
-                    <th>Voice Name</th>
-                    <th>Last Used</th>
-                    <th>Hold Expires</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for row in cooling %}
-                <tr>
-                    <td class="font-mono text-sm">{{ row.voice.id }}</td>
-                    <td>
-                        <div class="flex items-center gap-2">
-                            <div class="w-8 h-8 rounded-full bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center text-white text-xs font-semibold">
-                                {{ row.user_email[0].upper() if row.user_email else '?' }}
-                            </div>
-                            <span class="text-sm">{{ row.user_email }}</span>
-                        </div>
-                    </td>
-                    <td class="font-medium">{{ row.voice.name }}</td>
-                    <td class="text-sm">{{ row.voice.last_used_at.strftime('%Y-%m-%d %H:%M') if row.voice.last_used_at else '—' }}</td>
-                    <td class="text-sm">{{ row.hold_expires.strftime('%Y-%m-%d %H:%M') if row.hold_expires else '—' }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-</div>
-{% endif %}
-
 <!-- Queued Requests Section -->
 <div class="card mb-8">
     <div class="card-header flex items-center justify-between">

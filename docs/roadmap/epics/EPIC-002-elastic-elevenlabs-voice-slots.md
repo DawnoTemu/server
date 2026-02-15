@@ -24,7 +24,7 @@ Elastic Voice Slots for ElevenLabs: decouple voice recording from remote voice a
 - **Queueing & eviction**
   - Maintain a Redis-backed queue (list or sorted set) that tracks waiting allocation requests without introducing new relational tables.
   - Add Celery tasks: `allocate_voice_slot_task`, `process_voice_queue_task`, and `reclaim_idle_voices_task` to serialise allocations, handle backlog, and recycle stale voices after the warm-hold window (15 minutes by default).
-  - Implement `select_voice_for_eviction()` to choose candidates with zero credits, long inactivity, or stale cooling status while never interrupting active synthesis.
+  - Implement `select_voice_for_eviction()` to choose candidates with zero credits or long inactivity while never interrupting active synthesis.
 - **Audio generation updates**
   - Update `AudioController.synthesize_audio` to invoke `VoiceSlotManager.ensure_active_voice` before debiting credits. Return enriched payloads (`status: allocating_voice | queued_for_slot | processing | ready`) so the frontend can mirror queue/allocate/generate states.
   - Adjust `tasks/audio_tasks.synthesize_audio_task` to poll/wait for allocation completion, refresh `Voice.last_used_at`, and record slot events.

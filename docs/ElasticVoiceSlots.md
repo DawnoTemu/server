@@ -17,8 +17,6 @@ recorded -> allocating -> ready -> recorded (on eviction)
 
 **Warm-Hold Mechanism:** The `VOICE_WARM_HOLD_SECONDS` config (default 900s/15min) is enforced via the `Voice.slot_lock_expires_at` field, not a separate state. Voices in `ready` state are protected from eviction while their lock hasn't expired.
 
-**Note:** `cooling` and `evicted` states are defined in code but not currently used. Evicted voices transition directly back to `recorded` with `elevenlabs_voice_id` cleared.
-
 Slot events are recorded in `voice_slot_events` with types such as `allocation_queued`, `allocation_started`, `allocation_completed`, `slot_evicted`, and `slot_lock_released`.
 
 ## 2. Audio Request Flow
