@@ -1,51 +1,49 @@
-# Task & Context
-- Extend the authenticated self-service API so users can update their profile (email/password), delete their account, and retrieve a richer credit overview including slot details and transaction history.
+# Goal
+Introduce paid subscriptions using Stripe while reusing the existing credit ledger. Keep mobile integration simple and low-cost by using Stripe-hosted Checkout and Customer Portal, opened in the system browser with deep links back into the app.
 
-## Current State (codebase scan)
-- `routes/auth_routes.py` exposes auth endpoints (register/login/reset) plus `GET /auth/me`, delegating to `controllers/auth_controller.AuthController`.
-- `controllers/auth_controller.py` manages registration/login/token/password reset logic but no profile update or deletion functions.
-- `models/user_model.py` defines the `User` ORM and `UserModel` helpers (create, confirm, update password, activate/deactivate/admin) yet lacks email-update or delete methods.
-- `routes/billing_routes.py` provides `GET /me/credits`, querying `CreditLot` and `CreditTransaction` directly to return balance, active lots, and last 20 transactions.
-- `models/credit_model.py` implements credit persistence (lots, transactions, grants/debits/refunds) but has no reusable read-side helpers for summaries/history.
-- User-owned resources span `models/voice_model.py` (voices & slot events) and `models/audio_model.py` (audio stories) referencing `users.id` without a centralized cleanup path.
-- Tests cover auth flow basics, utility functions, and various route/controller behaviors, but nothing exercises profile edits, account deletion, or detailed credit history.
+## Architecture Decision
+- Credits remain the billing currency; subscriptions grant monthly credit lots (`source="monthly"`, `expires_at=current_period_end`).
+- Use Stripe Checkout (mode=subscription) and Stripe Customer Portal; no custom card UI or in-app PCI scope.
+- Webhooks drive state: invoice success → grant credits + mark active; subscription update/cancel → update status; invoice failure → mark past_due.
+- Limit code surface to server-side: new subscription fields on `User`, new billing endpoints, webhook handler, and lightweight mobile redirects.
 
-## Proposed Changes (files & functions)
-- `controllers/user_controller.py` (new) to encapsulate profile update & account deletion workflows, validating input/current password and coordinating downstream model operations.
-- `controllers/auth_controller.py` to delegate new `/auth/me` operations to `UserController` and refresh returned user payloads/tokens when email changes.
-- `models/user_model.py` to add `update_email`, refine `update_password` (optionally returning the updated user), and implement `delete_user` that clears dependent data safely.
-- `models/voice_model.py` & `models/audio_model.py` to expose utilities for purging a user's voices/audio (reusing existing deletion logic without redundant external calls).
-- `models/credit_model.py` to add read helpers (e.g., `get_user_credit_summary`, `get_user_transactions`) supporting pagination and exposing lot metadata (source/type, granted, remaining, expiry).
-- `routes/auth_routes.py` to register `PATCH /auth/me` (profile updates) and `DELETE /auth/me` (account removal) under `token_required`.
-- `routes/billing_routes.py` to extend `/me/credits` response or introduce `/me/credits/history` with configurable limits, leveraging the new credit helpers for consistent payloads.
-- `docs/openapi.yaml` & `docs/api.doc.md` to document new endpoints, payload schemas, and enriched credit responses.
-- `tests/test_routes/test_auth_routes.py` (new) plus updates in billing route/model tests to cover success/error cases for profile update, account deletion, and credit history retrieval.
+## Backend Implementation Plan
+1) Data model: add `stripe_customer_id`, `stripe_subscription_id`, `subscription_status`, `subscription_started_at`, `subscription_current_period_end`, `plan_id`, `plan_credits_per_period` on `User` (or a small `subscriptions` table). Migration + Config defaults.  
+2) Config/env: add `STRIPE_API_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_BASIC` (and any other prices), `STRIPE_SUCCESS_URL`, `STRIPE_CANCEL_URL`, optional `STRIPE_PORTAL_RETURN_URL`; fail fast if missing.  
+3) Endpoints (billing blueprint):  
+   - `POST /billing/checkout-session` (Bearer): create/reuse Stripe customer, create subscription Checkout session for configured price, include `metadata.user_id` and `client_reference_id`, return `checkout_url`.  
+   - `POST /billing/portal-session` (Bearer): create Customer Portal session for current user; return `portal_url`.  
+   - `POST /billing/stripe/webhook` (unauth): verify signature, handle events below.  
+4) Webhook handling:  
+   - `checkout.session.completed`: persist `stripe_customer_id`/`stripe_subscription_id`, set status=active, store period end.  
+   - `invoice.payment_succeeded`: grant credits via `credit_model.grant(user_id, amount=plan_credits_per_period, source="monthly", reason="subscription_invoice", expires_at=current_period_end)`; update period end/status.  
+   - `customer.subscription.updated/deleted` + `invoice.payment_failed`: update status to past_due/canceled and stop grants.  
+5) Scheduler alignment: disable or guard `tasks/billing_tasks.grant_monthly_credits` (only run when `MONTHLY_CREDITS_DEFAULT>0` and no Stripe sub). Keep `expire_credit_lots` for period expirations.  
+6) Docs/OpenAPI: document new User fields, endpoints, webhook contract, and mobile redirect flow.  
+7) Tests: mock Stripe to cover checkout creation, portal creation, and webhook flows (invoice success, payment failed, cancel). Assert credit grants and subscription flags change; ensure debit/refund paths unchanged.
 
-## Step-by-Step Plan
-1. Finalize request/response schema & security expectations (current password requirement, email change confirmation behavior, credit history pagination defaults).
-2. Implement model-level helpers for email/password updates, credit summary queries, and user cleanup, with targeted unit tests where practical.
-3. Build `UserController` (or extend existing controller) to orchestrate validation, invoke model helpers, and shape API responses/errors.
-4. Wire new `/auth/me` PATCH/DELETE and enhanced credit endpoints through the Flask routes, ensuring authentication decorators and consistent responses.
-5. Update OpenAPI + markdown docs to reflect the new contract, keeping schemas in sync with implementation.
-6. Add pytest coverage for new behaviors (route/controller/model layers), mocking external services (email, S3, voice deletion) to keep tests deterministic.
-7. Run focused pytest targets (`tests/test_routes/test_auth_routes.py`, billing-related suites) and resolve regressions.
+## Mobile Frontend Changes (minimal)
+- “Subscribe” CTA → call `POST /billing/checkout-session`, open `checkout_url` in system browser/SFSafari/Custom Tab.  
+- Configure universal link/custom scheme for `STRIPE_SUCCESS_URL` and `STRIPE_CANCEL_URL` so Stripe redirect returns to the app; on return, show “processing” and poll `/me/credits` or `/auth/me` until `subscription_status` is `active` and credits appear.  
+- “Manage subscription” → call `POST /billing/portal-session`, open `portal_url`.  
+- Handle cancel/error redirects gracefully with a retry CTA; no embedded card UI or Stripe SDK required.  
+- Optional: add a lightweight “Refresh status” button if deep link fails and user returns manually.
 
-## Risks & Assumptions
-- Assume profile changes require the current password; unclear if email updates must trigger re-verification and token refresh.
-- Cascading deletions must handle voices, audio stories, slot events, and credits to avoid FK conflicts; missing cleanup paths may break account deletion.
-- Credit histories could be large; need sensible limits/pagination to prevent heavy responses while satisfying requirements.
-- Token/session handling post-email change is unspecified; may need to invalidate/refresh tokens or document expectations.
+## Stripe Account Setup Guide
+1) Create Stripe account (start in test mode).  
+2) Products/Prices: create recurring Product; copy Price ID to `STRIPE_PRICE_BASIC` (and any other tiers). Set interval/amount.  
+3) API keys: set secret key as `STRIPE_API_KEY` (server-side only).  
+4) Webhooks: add endpoint to `/billing/stripe/webhook`; subscribe to `checkout.session.completed`, `invoice.payment_succeeded`, `invoice.payment_failed`, `customer.subscription.updated`, `customer.subscription.deleted`. Store signing secret as `STRIPE_WEBHOOK_SECRET`.  
+5) Success/Cancel URLs: set `STRIPE_SUCCESS_URL`/`STRIPE_CANCEL_URL` to universal links or HTTPS pages that hand control back to the app.  
+6) Customer Portal: enable in Dashboard; allow cancel/plan-change/payment-method updates; set return URL → `STRIPE_PORTAL_RETURN_URL`.  
+7) Go-live: swap to live keys and live price IDs, add live webhook endpoint, rotate env vars, and verify live webhooks before enabling in the mobile app.
 
-## Validation & Done Criteria
-- New and existing pytest suites covering auth/billing routes and model helpers pass locally (`pytest tests/test_routes/test_auth_routes.py tests/test_routes/test_billing_routes.py` plus impacted modules).
-- Manual or scripted Flask client checks confirm profile update, account deletion, and credit history responses match documented schema.
-- OpenAPI spec and docs build cleanly with updated endpoints/fields matching implementation.
-- No regressions in existing authentication or credit flows; code adheres to project style guidelines.
+## Risks & Mitigations
+- Store policy risk (App Store/Play Store may require native IAP); confirm distribution and compliance early.  
+- Webhook delivery drift; keep handlers idempotent (keyed by invoice/sub IDs) and log failures.  
+- Period alignment; always use Stripe `current_period_end` for lot `expires_at` to match billing cycles.  
+- Redirect failures; ensure success/cancel URLs resolve and provide manual “refresh status” in UI.
 
-## Open Questions
-- Should changing the email require re-confirmation before it becomes active (and how to handle interim login state)?
-Yes, after changing email we should logout user and ait for email confirmation 
-- Is a soft-delete (mark inactive + anonymize) acceptable, or must we fully purge user data and S3 assets?
-Fully purger for GDPR is must have. But user should be art that he./she will lost all the stories
-- What pagination/limit expectations exist for the credit transaction history (default size, max cap, filtering by type/source)?
-make something rationale
+## Validation
+- Automated: tests for checkout/portal creation and webhook flows (mocked Stripe); regression on credit debit/refund paths.  
+- Manual: run test-mode checkout, observe webhook grant updating `/me/credits`; cancel in portal and see status change; verify mobile redirect back to app via universal link.***

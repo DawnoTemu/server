@@ -1,4 +1,5 @@
 import os
+import secrets
 import uuid
 import mimetypes
 import time
@@ -51,6 +52,25 @@ ADMIN_PASSWORD_HASH = os.getenv('ADMIN_PASSWORD_HASH')
 
 # Store login attempts
 login_attempts = {}
+
+def _get_admin_csrf_token():
+    """Issue or reuse a CSRF token for admin forms."""
+    token = session.get('admin_csrf_token')
+    if not token:
+        token = secrets.token_urlsafe(32)
+        session['admin_csrf_token'] = token
+    return token
+
+
+def _validate_admin_csrf(submitted_token: str) -> bool:
+    """Constant-time check of admin CSRF token."""
+    expected = session.get('admin_csrf_token')
+    if not expected or not submitted_token:
+        return False
+    try:
+        return secrets.compare_digest(expected, submitted_token)
+    except Exception:
+        return False
 
 
 def is_authenticated():
@@ -467,11 +487,17 @@ class CustomAdminIndexView(AdminIndexView):
     @expose('/login', methods=['GET', 'POST'])
     def login_view(self):
         """Handle admin login with rate limiting."""
+        csrf_token = _get_admin_csrf_token()
         if request.method == 'POST':
+            submitted = request.form.get('csrf_token', '')
+            if not _validate_admin_csrf(submitted):
+                flash('Session expired, please try again.', 'error')
+                csrf_token = _get_admin_csrf_token()
+                return self.render('admin/login.html', csrf_token=csrf_token)
             # Check rate limiting
             if not check_rate_limit(request.remote_addr):
                 flash('Too many login attempts. Please try again later.', 'error')
-                return self.render('admin/login.html')
+                return self.render('admin/login.html', csrf_token=csrf_token)
             
             # Verify password
             password = request.form.get('password', '')
@@ -492,7 +518,7 @@ class CustomAdminIndexView(AdminIndexView):
             
             flash('Invalid password', 'error')
         
-        return self.render('admin/login.html')
+        return self.render('admin/login.html', csrf_token=csrf_token)
 
     @expose('/logout')
     def logout_view(self):
@@ -530,6 +556,7 @@ def create_login_template(app):
             {% endif %}
           {% endwith %}
           <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <div class="form-group">
               <label for="password">Password</label>
               <input type="password" class="form-control" id="password" name="password" required>

@@ -5,6 +5,9 @@ import logging
 import os
 import tempfile
 from pathlib import Path
+import ipaddress
+import socket
+from urllib.parse import urlparse
 
 import requests
 
@@ -15,6 +18,46 @@ from utils.s3_client import S3Client
 from utils.voice_slot_queue import VoiceSlotQueue
 
 logger = logging.getLogger("admin_controller")
+
+MAX_IMAGE_BYTES = int(os.getenv("ADMIN_IMAGE_MAX_BYTES", 5 * 1024 * 1024))
+ALLOWED_IMAGE_SCHEMES = {"http", "https"}
+
+
+def _is_public_http_url(candidate: str) -> bool:
+    """Best-effort SSRF guard for admin-provided URLs."""
+    try:
+        parsed = urlparse(candidate)
+    except Exception:
+        return False
+    if parsed.scheme.lower() not in ALLOWED_IMAGE_SCHEMES or not parsed.netloc:
+        return False
+
+    hostname = parsed.hostname
+    if not hostname:
+        return False
+
+    try:
+        addrinfo = socket.getaddrinfo(hostname, None)
+    except Exception:
+        return False
+
+    for _, _, _, _, sockaddr in addrinfo:
+        ip_str = sockaddr[0]
+        try:
+            ip_obj = ipaddress.ip_address(ip_str)
+        except Exception:
+            return False
+        if any(
+            [
+                ip_obj.is_private,
+                ip_obj.is_loopback,
+                ip_obj.is_reserved,
+                ip_obj.is_link_local,
+                ip_obj.is_multicast,
+            ]
+        ):
+            return False
+    return True
 
 class AdminController:
     """Controller for administrative operations"""
@@ -255,9 +298,25 @@ class AdminController:
             Tuple[bool, str]: (success, s3_key_or_error_message)
         """
         try:
+            if not _is_public_http_url(image_url):
+                return False, "Image URL must be http/https and resolve to a public address"
+
             # Download image
-            response = requests.get(image_url, timeout=30)
+            response = requests.get(
+                image_url,
+                timeout=10,
+                stream=True,
+                allow_redirects=False,
+            )
             response.raise_for_status()
+
+            content_length = response.headers.get("content-length")
+            if content_length:
+                try:
+                    if int(content_length) > MAX_IMAGE_BYTES:
+                        return False, "Image too large"
+                except Exception:
+                    pass
             
             # Determine file extension
             content_type = response.headers.get('content-type', '').lower()
@@ -274,7 +333,14 @@ class AdminController:
             
             # Create temporary file
             with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as temp_file:
-                temp_file.write(response.content)
+                bytes_read = 0
+                for chunk in response.iter_content(chunk_size=8192):
+                    if not chunk:
+                        continue
+                    bytes_read += len(chunk)
+                    if bytes_read > MAX_IMAGE_BYTES:
+                        raise ValueError("Image exceeded allowed size")
+                    temp_file.write(chunk)
                 temp_path = temp_file.name
             
             try:
