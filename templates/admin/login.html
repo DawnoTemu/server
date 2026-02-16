@@ -109,6 +109,7 @@
 
             <!-- Login Form -->
             <form method="POST" action="{{ url_for('admin.login_view') }}" class="space-y-6">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <!-- Password Field -->
                 <div class="input-group">
                     <label for="password" class="block text-sm font-semibold text-gray-700 mb-2 transition-colors">
