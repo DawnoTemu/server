@@ -119,8 +119,17 @@
 
     <!-- Pagination -->
     {% if num_pages > 1 %}
-    <div class="p-4 border-t border-gray-200">
-        {{ model_layout.render_pagination(admin_view, page, num_pages) }}
+    <div class="p-4 border-t border-gray-200 flex justify-center gap-2">
+        {% if page > 0 %}
+        <a href="{{ admin_view.get_url('.index_view', page=page-1) }}" class="px-3 py-1 rounded bg-gray-200 hover:bg-gray-300 text-sm">&laquo; Prev</a>
+        {% endif %}
+        {% for p in range(num_pages) %}
+        <a href="{{ admin_view.get_url('.index_view', page=p) }}"
+           class="px-3 py-1 rounded text-sm {{ 'bg-primary text-white' if p == page else 'bg-gray-200 hover:bg-gray-300' }}">{{ p + 1 }}</a>
+        {% endfor %}
+        {% if page < num_pages - 1 %}
+        <a href="{{ admin_view.get_url('.index_view', page=page+1) }}" class="px-3 py-1 rounded bg-gray-200 hover:bg-gray-300 text-sm">Next &raquo;</a>
+        {% endif %}
     </div>
     {% endif %}
 
