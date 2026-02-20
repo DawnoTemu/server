@@ -38,6 +38,25 @@ logger = logging.getLogger(__name__)
 is_development = os.getenv('FLASK_ENV', 'production').lower() == 'development' or \
                  os.getenv('FLASK_DEBUG', 'False').lower() == 'true'
 
+
+def _get_positive_int_env(var_name: str, default: int) -> int:
+    """Return a positive integer env var value or a safe default."""
+    value = os.getenv(var_name)
+    if value is None:
+        return default
+
+    try:
+        parsed_value = int(value)
+    except ValueError:
+        logger.warning("Invalid %s=%r. Falling back to %s.", var_name, value, default)
+        return default
+
+    if parsed_value <= 0:
+        logger.warning("%s must be > 0 (got %s). Falling back to %s.", var_name, parsed_value, default)
+        return default
+
+    return parsed_value
+
 def create_app(testing=False):
     """Create and configure the Flask application"""
     # Initialize Flask app
@@ -71,11 +90,27 @@ def create_app(testing=False):
     # Use Redis-backed beat scheduler by default to avoid ephemeral local files
     redbeat_url = redis_url
     app.config['beat_scheduler'] = os.getenv('CELERY_BEAT_SCHEDULER', 'redbeat.RedBeatScheduler')
+    app.config['beat_max_loop_interval'] = _get_positive_int_env('CELERY_BEAT_MAX_LOOP_INTERVAL', 60)
     app.config['redbeat_redis_url'] = redbeat_url
-    try:
-        app.config['redbeat_lock_timeout'] = int(os.getenv('REDBEAT_LOCK_TIMEOUT', '120'))
-    except ValueError:
-        app.config['redbeat_lock_timeout'] = 120
+    app.config['redbeat_lock_timeout'] = _get_positive_int_env('REDBEAT_LOCK_TIMEOUT', 600)
+
+    beat_max_loop_interval = app.config['beat_max_loop_interval']
+    redbeat_lock_timeout = app.config['redbeat_lock_timeout']
+    if redbeat_lock_timeout <= beat_max_loop_interval:
+        logger.warning(
+            "REDBEAT_LOCK_TIMEOUT (%ss) must be greater than CELERY_BEAT_MAX_LOOP_INTERVAL (%ss) "
+            "to avoid lock ownership issues in RedBeat.",
+            redbeat_lock_timeout,
+            beat_max_loop_interval,
+        )
+    elif redbeat_lock_timeout < (beat_max_loop_interval * 2):
+        logger.warning(
+            "REDBEAT_LOCK_TIMEOUT (%ss) is low compared to CELERY_BEAT_MAX_LOOP_INTERVAL (%ss). "
+            "Recommended: REDBEAT_LOCK_TIMEOUT >= 2x beat_max_loop_interval.",
+            redbeat_lock_timeout,
+            beat_max_loop_interval,
+        )
+
     key_prefix = os.getenv('REDBEAT_KEY_PREFIX')
     if key_prefix:
         app.config['redbeat_key_prefix'] = key_prefix

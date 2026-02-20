@@ -179,10 +179,15 @@ CREDIT_SOURCES_PRIORITY=event,monthly,referral,add_on,free
 
 # Celery Configuration
 REDIS_URL=redis://localhost:6379/0
+CELERY_BEAT_MAX_LOOP_INTERVAL=60
+# Must be greater than beat_max_loop_interval (recommend at least 2x)
+REDBEAT_LOCK_TIMEOUT=600
 
 # Voice Service Configuration
 PREFERRED_VOICE_SERVICE=cartesia  # or "elevenlabs"
 ```
+
+Important: `REDBEAT_LOCK_TIMEOUT` must be greater than `CELERY_BEAT_MAX_LOOP_INTERVAL` (`beat_max_loop_interval`) to prevent RedBeat lock extension failures.
 
 # Voice Slot Allocation Workflow
 - Voice recordings are stored encrypted in S3 immediately after upload; remote ElevenLabs voices are allocated just-in-time during the first synthesis request.
