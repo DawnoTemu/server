@@ -40,6 +40,33 @@ celery_app.conf.update(
     task_acks_late=True,  # Acknowledge tasks after execution
 )
 
+# Beat/RedBeat hardening (must be set on celery_app.conf for Celery Beat)
+# Defaults chosen to avoid RedBeat lock extension crash when beat loop interval > lock TTL.
+try:
+    celery_app.conf.beat_max_loop_interval = int(os.getenv('CELERY_BEAT_MAX_LOOP_INTERVAL', '60'))
+except ValueError:
+    celery_app.conf.beat_max_loop_interval = 60
+    logger.warning("Invalid CELERY_BEAT_MAX_LOOP_INTERVAL. Falling back to 60.")
+
+try:
+    celery_app.conf.redbeat_lock_timeout = int(os.getenv('REDBEAT_LOCK_TIMEOUT', '600'))
+except ValueError:
+    celery_app.conf.redbeat_lock_timeout = 600
+    logger.warning("Invalid REDBEAT_LOCK_TIMEOUT. Falling back to 600.")
+
+if celery_app.conf.redbeat_lock_timeout <= celery_app.conf.beat_max_loop_interval:
+    logger.warning(
+        "REDBEAT_LOCK_TIMEOUT (%ss) must be > CELERY_BEAT_MAX_LOOP_INTERVAL (%ss) to avoid RedBeat lock crashes.",
+        celery_app.conf.redbeat_lock_timeout,
+        celery_app.conf.beat_max_loop_interval,
+    )
+
+logger.info(
+    "Celery Beat config: beat_max_loop_interval=%ss redbeat_lock_timeout=%ss",
+    celery_app.conf.beat_max_loop_interval,
+    celery_app.conf.redbeat_lock_timeout,
+)
+
 # This will be set in app.py
 flask_app = None
 
