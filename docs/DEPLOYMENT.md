@@ -81,7 +81,10 @@ Heroku provides an excellent platform for DawnoTemu with built-in scaling:
    # Application Configuration
    heroku config:set SECRET_KEY=your_production_secret_key
    heroku config:set PREFERRED_VOICE_SERVICE=cartesia
+   heroku config:set CELERY_BEAT_MAX_LOOP_INTERVAL=60
+   heroku config:set REDBEAT_LOCK_TIMEOUT=600
    ```
+   Keep `REDBEAT_LOCK_TIMEOUT` greater than `CELERY_BEAT_MAX_LOOP_INTERVAL` (`beat_max_loop_interval`) to avoid RedBeat lock extension crashes.
 
 4. **Deploy Application**
    ```bash
