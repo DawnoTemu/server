@@ -113,3 +113,4 @@ docker-compose.local.yml
 docker-compose.override.yaml
 docker-compose.local.yaml
 .docker-compose-env.yml
+.serena/
