@@ -148,7 +148,7 @@ class ElevenLabsService:
                         "similarity_boost": 0.9,
                         "style": 0.1,
                         "use_speaker_boost": True,
-                        "speed": 1.0
+                        "speed": 0.9
                     }
                 },
                 headers={"Accept": "audio/mpeg"}
