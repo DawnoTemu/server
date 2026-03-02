@@ -18,7 +18,7 @@ def upgrade():
     op.add_column('stories', sa.Column('position', sa.Integer(), nullable=True))
     # Default: position = id (preserves existing order)
     op.execute("UPDATE stories SET position = id")
-    op.alter_column('stories', 'position', nullable=False, server_default='9999')
+    op.alter_column('stories', 'position', nullable=False, server_default=sa.text('9999'))
 
 
 def downgrade():

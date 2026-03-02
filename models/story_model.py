@@ -51,7 +51,7 @@ class StoryModel:
             list: List of story dictionaries
         """
         try:
-            stories = Story.query.order_by(Story.position.asc()).all()
+            stories = Story.query.order_by(Story.position.asc(), Story.id.asc()).all()
             return [story.to_dict() for story in stories]
         except Exception as e:
             raise Exception(f"Error loading stories: {str(e)}")
