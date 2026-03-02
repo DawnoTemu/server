@@ -142,7 +142,7 @@ class ElevenLabsService:
                 f"{ElevenLabsService.API_BASE_URL}/text-to-speech/{elevenlabs_voice_id}/stream",
                 json={
                     "text": text,
-                    "model_id": "eleven_multilingual_v2",
+                    "model_id": Config.ELEVENLABS_MODEL_ID,
                     "voice_settings": {
                         "stability": 0.65,
                         "similarity_boost": 0.9,
