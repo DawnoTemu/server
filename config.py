@@ -84,6 +84,7 @@ class Config:
     # Voice configuration
     ALLOWED_EXTENSIONS = {"wav", "mp3", "m4a"}
     VOICE_NAME = "MyClonedVoice"
+    ELEVENLABS_MODEL_ID = os.getenv("ELEVENLABS_MODEL_ID", "eleven_turbo_v2_5")
     ELEVENLABS_SLOT_LIMIT = int(os.getenv("ELEVENLABS_SLOT_LIMIT", "30") or 0)
     # Concurrent synthesis API calls (separate from slot limit - ElevenLabs typically allows 5)
     ELEVENLABS_SYNTHESIS_CONCURRENCY = int(os.getenv("ELEVENLABS_SYNTHESIS_CONCURRENCY", "5") or 5)
