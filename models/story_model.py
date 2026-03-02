@@ -16,6 +16,7 @@ class Story(db.Model):
     content = db.Column(db.Text, nullable=False)
     cover_filename = db.Column(db.String(255), nullable=True)
     s3_cover_key = db.Column(db.String(512), nullable=True)
+    position = db.Column(db.Integer, nullable=False, default=9999)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -50,7 +51,7 @@ class StoryModel:
             list: List of story dictionaries
         """
         try:
-            stories = Story.query.all()
+            stories = Story.query.order_by(Story.position.asc()).all()
             return [story.to_dict() for story in stories]
         except Exception as e:
             raise Exception(f"Error loading stories: {str(e)}")
