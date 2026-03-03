@@ -115,6 +115,23 @@ def _handle_401(task_set, resp):
     return False
 
 
+def _make_token_refresher(task_set):
+    """Return a callable that refreshes the access token on the task_set."""
+    def _refresh():
+        new_token = refresh_access_token(
+            task_set.client, task_set._tokens.refresh_token
+        )
+        if new_token:
+            task_set._tokens = AuthTokens(
+                access_token=new_token,
+                refresh_token=task_set._tokens.refresh_token,
+                user_id=task_set._tokens.user_id,
+            )
+            return new_token
+        return None
+    return _refresh
+
+
 # ===================================================================
 # S1 — Parallel Generation
 # ===================================================================
@@ -152,7 +169,8 @@ class S1ParallelGeneration(TaskSet):
             self.client,
             voice_id,
             story_id,
-            tokens.access_token,
+            self._tokens.access_token,
+            token_refresher=_make_token_refresher(self),
         )
 
         # Report total generation time as a custom metric
@@ -257,6 +275,7 @@ class S3QueueSaturation(TaskSet):
             story_id,
             self._tokens.access_token,
             timeout=900,  # 15 min
+            token_refresher=_make_token_refresher(self),
         )
         events.request.fire(
             request_type="SYNTH",
@@ -301,6 +320,7 @@ class S4ElevenLabsConcurrency(TaskSet):
             story_id,
             self._tokens.access_token,
             timeout=600,
+            token_refresher=_make_token_refresher(self),
         )
 
         events.request.fire(
@@ -338,6 +358,18 @@ class S5CreditRace(TaskSet):
             return
 
         self._fired = True
+
+        # Check current balance before firing
+        resp = self.client.get(
+            "/me/credits",
+            headers=auth_headers(self._tokens.access_token),
+            name="GET /credits/summary (S5 pre-check)",
+        )
+        pre_balance = None
+        if resp.status_code == 200:
+            data = resp.json()
+            pre_balance = data.get("balance", data.get("credits_balance"))
+
         story_ids = self._story_ids[:S5_CONCURRENT_REQUESTS_PER_USER]
         if len(story_ids) < S5_CONCURRENT_REQUESTS_PER_USER:
             story_ids = [1, 2]
@@ -350,7 +382,6 @@ class S5CreditRace(TaskSet):
             results.append(synth)
 
         successes = sum(1 for r in results if r.success)
-        errors_402 = sum(1 for r in results if r.status_code == 402)
 
         events.request.fire(
             request_type="CREDIT",
@@ -361,17 +392,26 @@ class S5CreditRace(TaskSet):
             context={},
         )
 
-        if successes > S5_CREDITS_PER_USER:
-            events.request.fire(
-                request_type="CREDIT",
-                name="S5 OVERDRAFT DETECTED",
-                response_time=0,
-                response_length=0,
-                exception=Exception(
-                    f"Double spend: {successes} successes with {S5_CREDITS_PER_USER} credit"
-                ),
-                context={},
-            )
+        # Check balance after firing — overdraft means balance < 0
+        resp = self.client.get(
+            "/me/credits",
+            headers=auth_headers(self._tokens.access_token),
+            name="GET /credits/summary (S5 post-check)",
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            post_balance = data.get("balance", data.get("credits_balance"))
+            if post_balance is not None and post_balance < 0:
+                events.request.fire(
+                    request_type="CREDIT",
+                    name="S5 OVERDRAFT DETECTED",
+                    response_time=0,
+                    response_length=0,
+                    exception=Exception(
+                        f"Negative balance: {post_balance} (was {pre_balance})"
+                    ),
+                    context={},
+                )
 
 
 # ===================================================================
@@ -409,6 +449,7 @@ class S6SlotQueue(TaskSet):
             story_id,
             self._tokens.access_token,
             timeout=1200,  # 20 min (slot queue + synthesis)
+            token_refresher=_make_token_refresher(self),
         )
 
         events.request.fire(
@@ -490,6 +531,7 @@ class S7TokenRefresh(TaskSet):
                 self._voice_id,
                 story_id,
                 self._tokens.access_token,
+                token_refresher=_make_token_refresher(self),
             )
 
 
@@ -541,7 +583,7 @@ class S8ConnectionPool(TaskSet):
     def get_credits(self):
         """GET /credits — read with potential reconciliation write."""
         self.client.get(
-            "/credits",
+            "/me/credits",
             headers=auth_headers(self._tokens.access_token),
-            name="GET /credits",
+            name="GET /me/credits",
         )

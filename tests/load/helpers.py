@@ -100,14 +100,20 @@ def poll_audio_ready(
     access_token: str,
     interval: float = S2_POLL_INTERVAL_SEC,
     timeout: float = S2_POLL_TIMEOUT_SEC,
+    token_refresher=None,
 ) -> PollResult:
     """
     Poll HEAD /voices/{voice_id}/stories/{story_id}/audio until 200 (ready)
-    or timeout. Reports total generation time as a Locust request metric.
+    or timeout.
+
+    Args:
+        token_refresher: Optional callable() -> str|None that returns a fresh
+            access token. Called on 401 responses to recover from expiry.
     """
     start = time.monotonic()
     polls = 0
     url = f"/voices/{voice_id}/stories/{story_id}/audio"
+    current_token = access_token
 
     while True:
         elapsed = time.monotonic() - start
@@ -122,7 +128,7 @@ def poll_audio_ready(
 
         resp = client.head(
             url,
-            headers=auth_headers(access_token),
+            headers=auth_headers(current_token),
             name="HEAD /voices/[id]/stories/[id]/audio",
         )
         polls += 1
@@ -136,8 +142,13 @@ def poll_audio_ready(
                 polls=polls,
             )
 
+        if resp.status_code == 401 and token_refresher is not None:
+            new_token = token_refresher()
+            if new_token:
+                current_token = new_token
+                continue  # Retry immediately with new token
+
         if resp.status_code not in (404, 202):
-            # Unexpected status — keep polling but log it
             logger.warning("Unexpected HEAD status %s for %s", resp.status_code, url)
 
         time.sleep(interval)
