@@ -33,7 +33,7 @@ class TestStoryModel:
         """Test error handling when loading stories fails"""
         with app.app_context():
             with patch('models.story_model.Story.query') as mock_query:
-                mock_query.all.side_effect = Exception("Database error")
+                mock_query.order_by.return_value.all.side_effect = Exception("Database error")
                 with pytest.raises(Exception) as excinfo:
                     StoryModel.get_all_stories()
                 assert "Error loading stories" in str(excinfo.value)
