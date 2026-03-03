@@ -56,10 +56,11 @@ class ElevenLabsService:
             form_files.append(("description", (None, voice_description)))
             form_files.append(("remove_background_noise", (None, str(remove_background_noise).lower())))
             
-            # Make API request
+            # Make API request (60s connect, 120s read — cloning can be slow)
             response = session.post(
                 f"{ElevenLabsService.API_BASE_URL}/voices/add",
-                files=form_files
+                files=form_files,
+                timeout=(60, 120),
             )
             
             if response.status_code == 200:
@@ -105,7 +106,8 @@ class ElevenLabsService:
             
             # Make API request
             response = session.delete(
-                f"{ElevenLabsService.API_BASE_URL}/voices/{elevenlabs_voice_id}"
+                f"{ElevenLabsService.API_BASE_URL}/voices/{elevenlabs_voice_id}",
+                timeout=(10, 30),
             )
             
             if response.status_code == 200:
@@ -139,6 +141,7 @@ class ElevenLabsService:
             session = ElevenLabsService.create_session()
             
             # Use a session with keep-alive for better performance
+            # Timeout: 30s connect, 180s read (long stories can take 60s+)
             response = session.post(
                 f"{ElevenLabsService.API_BASE_URL}/text-to-speech/{elevenlabs_voice_id}/stream",
                 json={
@@ -152,7 +155,8 @@ class ElevenLabsService:
                         "speed": 0.9
                     }
                 },
-                headers={"Accept": "audio/mpeg"}
+                headers={"Accept": "audio/mpeg"},
+                timeout=(30, 180),
             )
 
             if response.status_code == 429:
