@@ -1,0 +1,117 @@
+##
+## Load testing Docker Compose overlay.
+##
+## Usage:
+##   cd server
+##   docker compose -f docker-compose.yml -f tests/load/docker-compose.loadtest.yml up
+##
+## This extends the main docker-compose.yml with:
+##   - mock-elevenlabs: Simulated ElevenLabs API (configurable latency/errors)
+##   - locust-master:   Locust web UI (port 8089)
+##   - locust-worker:   Locust distributed workers
+##
+## The web/worker services are overridden to point ELEVENLABS_API_URL at the mock.
+##
+
+services:
+  # ---------------------------------------------------------------
+  # Override: point app at mock ElevenLabs
+  # ---------------------------------------------------------------
+  web:
+    environment:
+      ELEVENLABS_API_URL: "http://mock-elevenlabs:11411"
+      RATELIMIT_ENABLED: "false"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      mock-elevenlabs:
+        condition: service_healthy
+
+  worker:
+    environment:
+      ELEVENLABS_API_URL: "http://mock-elevenlabs:11411"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      mock-elevenlabs:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------
+  # Mock ElevenLabs API server
+  # ---------------------------------------------------------------
+  mock-elevenlabs:
+    build:
+      context: ../..
+      args:
+        PYTHON_VERSION: "3.13"
+    command:
+      - python
+      - -m
+      - tests.load.mock_elevenlabs_server
+    environment:
+      MOCK_EL_LATENCY_MIN: "${MOCK_EL_LATENCY_MIN:-2}"
+      MOCK_EL_LATENCY_MAX: "${MOCK_EL_LATENCY_MAX:-5}"
+      MOCK_EL_ERROR_RATE: "${MOCK_EL_ERROR_RATE:-0.05}"
+      MOCK_EL_RATE_LIMIT_AFTER: "${MOCK_EL_RATE_LIMIT_AFTER:-5}"
+      MOCK_EL_PORT: "11411"
+    ports:
+      - "11411:11411"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:11411/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------
+  # Locust master (web UI on port 8089)
+  # ---------------------------------------------------------------
+  locust-master:
+    image: locustio/locust:2.31.8
+    command:
+      - -f
+      - /app/tests/load/locustfile.py
+      - --master
+      - --host=http://web:8000
+    volumes:
+      - ../..:/app
+    ports:
+      - "8089:8089"
+    environment:
+      LOADTEST_HOST: "http://web:8000"
+      LOADTEST_VOICE_ID: "${LOADTEST_VOICE_ID:-1}"
+      LOADTEST_STORY_IDS: "${LOADTEST_STORY_IDS:-1,2,3}"
+    depends_on:
+      web:
+        condition: service_started
+
+  # ---------------------------------------------------------------
+  # Locust worker(s) — scale with --scale locust-worker=N
+  # ---------------------------------------------------------------
+  locust-worker:
+    image: locustio/locust:2.31.8
+    command:
+      - -f
+      - /app/tests/load/locustfile.py
+      - --worker
+      - --master-host=locust-master
+    volumes:
+      - ../..:/app
+    environment:
+      LOADTEST_HOST: "http://web:8000"
+      LOADTEST_VOICE_ID: "${LOADTEST_VOICE_ID:-1}"
+      LOADTEST_STORY_IDS: "${LOADTEST_STORY_IDS:-1,2,3}"
+    depends_on:
+      - locust-master
