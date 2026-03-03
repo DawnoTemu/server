@@ -147,18 +147,38 @@ def cleanup_test_data():
     from app import app
     from database import db
     from models.user_model import User
+    from models.voice_model import Voice
+    from models.audio_model import AudioStory
+    from models.credit_model import CreditTransaction, CreditLot
+    from models.voice_model import VoiceSlotEvent
     from tests.load.config import TEST_USER_COUNT, TEST_USER_EMAIL_TEMPLATE
 
     with app.app_context():
-        deleted = 0
+        user_ids = []
         for n in range(1, TEST_USER_COUNT + 1):
             email = TEST_USER_EMAIL_TEMPLATE.format(n=n)
             user = User.query.filter_by(email=email).first()
             if user:
-                db.session.delete(user)
-                deleted += 1
+                user_ids.append(user.id)
+
+        if not user_ids:
+            logger.info("No test users found to clean up")
+            return
+
+        # Delete in dependency order to avoid FK violations
+        voice_ids = [v.id for v in Voice.query.filter(Voice.user_id.in_(user_ids)).all()]
+        if voice_ids:
+            VoiceSlotEvent.query.filter(VoiceSlotEvent.voice_id.in_(voice_ids)).delete(synchronize_session=False)
+            AudioStory.query.filter(AudioStory.voice_id.in_(voice_ids)).delete(synchronize_session=False)
+        VoiceSlotEvent.query.filter(VoiceSlotEvent.user_id.in_(user_ids)).delete(synchronize_session=False)
+        AudioStory.query.filter(AudioStory.user_id.in_(user_ids)).delete(synchronize_session=False)
+        CreditTransaction.query.filter(CreditTransaction.user_id.in_(user_ids)).delete(synchronize_session=False)
+        CreditLot.query.filter(CreditLot.user_id.in_(user_ids)).delete(synchronize_session=False)
+        Voice.query.filter(Voice.user_id.in_(user_ids)).delete(synchronize_session=False)
+        User.query.filter(User.id.in_(user_ids)).delete(synchronize_session=False)
+
         db.session.commit()
-        logger.info("Cleaned up %d test users", deleted)
+        logger.info("Cleaned up %d test users and associated data", len(user_ids))
 
 
 if __name__ == "__main__":
