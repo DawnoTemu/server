@@ -148,7 +148,7 @@ def create_app(testing=False):
     # Rate limiting
     redis_url_for_limiter = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
     app.config['RATELIMIT_STORAGE_URI'] = redis_url_for_limiter
-    if testing:
+    if testing or os.getenv('RATELIMIT_ENABLED', '').lower() == 'false':
         app.config['RATELIMIT_ENABLED'] = False
     limiter.init_app(app)
 

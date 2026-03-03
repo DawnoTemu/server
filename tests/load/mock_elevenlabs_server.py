@@ -66,6 +66,7 @@ def health():
 
 
 @app.route("/v1/text-to-speech/<voice_id>", methods=["POST"])
+@app.route("/v1/text-to-speech/<voice_id>/stream", methods=["POST"])
 def synthesize(voice_id: str):
     """
     Simulate ElevenLabs TTS synthesis.

@@ -1,3 +1,4 @@
+import os
 import requests
 from io import BytesIO
 import logging
@@ -10,9 +11,9 @@ class ElevenLabsService:
     """
     Service for handling all ElevenLabs API operations
     """
-    
-    # ElevenLabs API base URL
-    API_BASE_URL = "https://api.elevenlabs.io/v1"
+
+    # ElevenLabs API base URL (override via ELEVENLABS_API_URL for local testing)
+    API_BASE_URL = os.getenv("ELEVENLABS_API_URL", "https://api.elevenlabs.io/v1")
     
     @staticmethod
     def create_session():

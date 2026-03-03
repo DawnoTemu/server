@@ -66,8 +66,25 @@ def _login_on_start(task_set, user_index_attr: str = "_user_index"):
     if tokens is None:
         raise StopIteration(f"Login failed for {email}")
     task_set._tokens = tokens
-    task_set._voice_id = os.getenv("LOADTEST_VOICE_ID", "1")
     task_set._story_ids = _available_story_ids()
+
+    # Discover the user's voice via API
+    resp = task_set.client.get(
+        "/voices",
+        headers=auth_headers(tokens.access_token),
+        name="GET /voices (setup)",
+    )
+    if resp.status_code == 200:
+        data = resp.json()
+        # API may return a list directly or {"voices": [...]}
+        voices = data if isinstance(data, list) else data.get("voices", [])
+        if voices:
+            task_set._voice_id = voices[0]["id"]
+        else:
+            task_set._voice_id = os.getenv("LOADTEST_VOICE_ID", "1")
+    else:
+        task_set._voice_id = os.getenv("LOADTEST_VOICE_ID", "1")
+
     return tokens
 
 

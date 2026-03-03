@@ -8,7 +8,10 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional
 
-import redis
+try:
+    import redis
+except ImportError:
+    redis = None  # type: ignore[assignment]
 
 from tests.load.config import (
     ADMIN_API_KEY,
@@ -196,6 +199,9 @@ class RedisMetrics:
 
 def get_redis_metrics(redis_url: str = "redis://localhost:6379/0") -> RedisMetrics:
     """Read current queue depths and concurrency counters from Redis."""
+    if redis is None:
+        logger.warning("redis package not available — skipping metrics")
+        return RedisMetrics()
     try:
         r = redis.from_url(redis_url, decode_responses=True)
         return RedisMetrics(
@@ -244,23 +250,38 @@ def setup_test_users(client, count: int, admin_key: str = ADMIN_API_KEY):
     return users
 
 
-def activate_test_users(base_url: str, count: int, admin_key: str = ADMIN_API_KEY):
+def activate_test_users(base_url: str, count: int, admin_token: str = ADMIN_API_KEY):
     """
-    Activate test users (skip email confirmation, set is_active=True).
-    Requires admin API key.
+    Activate test users via the admin API.
 
-    This must be run separately (e.g., via a setup script) as it requires
-    direct admin access.
+    Requires a valid admin JWT token (from /admin/auth/generate-token).
+    The endpoint is POST /admin/users/<user_id>/activate with @admin_required.
+
+    For local Docker testing, prefer tests.load.setup_test_data which
+    creates users already activated, bypassing HTTP auth entirely.
     """
-    import requests
+    import requests as req
 
-    headers = {"X-Admin-Key": admin_key}
+    headers = {"Authorization": f"Bearer {admin_token}"}
     activated = 0
     for n in range(1, count + 1):
         email = make_test_email(n)
-        resp = requests.post(
-            f"{base_url}/admin/activate-user",
-            json={"email": email},
+        # First look up user ID by email via admin list
+        list_resp = req.get(
+            f"{base_url}/admin/users",
+            headers=headers,
+            timeout=10,
+        )
+        if list_resp.status_code != 200:
+            logger.error("Could not list users: %s", list_resp.status_code)
+            break
+        users = list_resp.json().get("users", [])
+        user = next((u for u in users if u.get("email") == email), None)
+        if not user:
+            logger.warning("User %s not found in admin list", email)
+            continue
+        resp = req.post(
+            f"{base_url}/admin/users/{user['id']}/activate",
             headers=headers,
             timeout=10,
         )
