@@ -64,7 +64,6 @@ class UserResult:
     user_id: int = 0
     voice_id: int = 0
     voice_upload_sec: float = 0.0
-    voice_ready_sec: float = 0.0
     synth_results: list = field(default_factory=list)
     errors: list = field(default_factory=list)
 
@@ -164,22 +163,39 @@ def request_synthesis(base_url, token, voice_id, story_id):
     return resp.status_code, resp.text[:300]
 
 
-def poll_audio(base_url, token, voice_id, story_id,
+def refresh_token(base_url, refresh_tok):
+    resp = requests.post(
+        f"{base_url}/auth/refresh",
+        json={"refresh_token": refresh_tok},
+        timeout=30,
+    )
+    if resp.status_code == 200:
+        return resp.json().get("access_token")
+    return None
+
+
+def poll_audio(base_url, token, refresh_tok, voice_id, story_id,
                timeout=POLL_TIMEOUT, interval=POLL_INTERVAL):
     start = time.monotonic()
     polls = 0
+    current_token = token
     while True:
         elapsed = time.monotonic() - start
         if elapsed >= timeout:
-            return False, elapsed, polls, "timeout"
+            return False, elapsed, polls, "timeout", current_token
         resp = requests.head(
             f"{base_url}/voices/{voice_id}/stories/{story_id}/audio",
-            headers={"Authorization": f"Bearer {token}"},
+            headers={"Authorization": f"Bearer {current_token}"},
             timeout=30,
         )
         polls += 1
         if resp.status_code == 200:
-            return True, time.monotonic() - start, polls, "ready"
+            return True, time.monotonic() - start, polls, "ready", current_token
+        if resp.status_code == 401 and refresh_tok:
+            new_tok = refresh_token(base_url, refresh_tok)
+            if new_tok:
+                current_token = new_tok
+                continue
         if resp.status_code not in (404, 202, 401):
             logger.warning(
                 "Unexpected HEAD status %d for voice=%d story=%d",
@@ -199,7 +215,7 @@ def run_user_test(base_url, user_num, voice_file_path, stories, stories_per_user
     try:
         # 1. Login (user pre-created via setup_test_data.py)
         logger.info("[User %d] Logging in as %s", user_num, result.email)
-        token, refresh_token, user_id = login_user(base_url, result.email, PASSWORD)
+        token, refresh_token_val, user_id = login_user(base_url, result.email, PASSWORD)
         result.user_id = user_id
 
         # 2. Delete any existing voices (fake ones from setup_test_data)
@@ -225,34 +241,15 @@ def run_user_test(base_url, user_num, voice_file_path, stories, stories_per_user
             result.voice_upload_sec,
         )
 
-        # 4. Wait for voice allocation (ElevenLabs/Cartesia clone)
-        logger.info("[User %d] Waiting for voice allocation...", user_num)
-        t0 = time.monotonic()
-        voice_ready = False
-        while time.monotonic() - t0 < VOICE_READY_TIMEOUT:
-            voice_info = get_voice(base_url, token, result.voice_id)
-            if voice_info:
-                alloc = voice_info.get("allocation_status", "")
-                status = voice_info.get("status", "")
-                if alloc == "ready":
-                    voice_ready = True
-                    break
-                if status == "error" or alloc == "error":
-                    err_msg = voice_info.get("error_message", "unknown error")
-                    raise RuntimeError(f"Voice allocation failed: {err_msg}")
-            time.sleep(5)
-        result.voice_ready_sec = time.monotonic() - t0
-
-        if voice_ready:
-            logger.info("[User %d] Voice ready in %.1fs", user_num, result.voice_ready_sec)
-        else:
-            logger.warning(
-                "[User %d] Voice not ready after %.0fs, proceeding anyway",
-                user_num, result.voice_ready_sec,
-            )
-
-        # 5. Request synthesis for selected stories
-        selected_stories = stories[:stories_per_user]
+        # 4. Request synthesis immediately (voice allocation is triggered
+        #    on-demand by ensure_active_voice — no need to wait separately).
+        #    This matches the real user flow: upload voice → pick story → play.
+        # Rotate stories so users don't all request the same one
+        offset = (user_num - 1) * stories_per_user
+        selected_stories = []
+        for i in range(stories_per_user):
+            idx = (offset + i) % len(stories)
+            selected_stories.append(stories[idx])
         for story in selected_stories:
             story_id = story["id"]
             sr = SynthResult(story_id=story_id)
@@ -285,8 +282,8 @@ def run_user_test(base_url, user_num, voice_file_path, stories, stories_per_user
             # 6. Poll until audio ready
             logger.info("[User %d] Polling for story %d audio...", user_num, story_id)
             t0 = time.monotonic()
-            success, elapsed, polls, final_status = poll_audio(
-                base_url, token, result.voice_id, story_id,
+            success, elapsed, polls, final_status, token = poll_audio(
+                base_url, token, refresh_token_val, result.voice_id, story_id,
             )
             sr.poll_sec = elapsed
             sr.total_sec = sr.request_sec + sr.poll_sec
@@ -418,12 +415,6 @@ def main():
         print(f"\nVoice Upload (S3 + API):")
         print(f"  avg={sum(upload_times)/len(upload_times):.1f}s  "
               f"min={min(upload_times):.1f}s  max={max(upload_times):.1f}s")
-
-    ready_times = [r.voice_ready_sec for r in results if r.voice_ready_sec > 0]
-    if ready_times:
-        print(f"\nVoice Allocation (clone on ElevenLabs/Cartesia):")
-        print(f"  avg={sum(ready_times)/len(ready_times):.1f}s  "
-              f"min={min(ready_times):.1f}s  max={max(ready_times):.1f}s")
 
     total_synths = sum(len(r.synth_results) for r in results)
     successful_synths = sum(1 for r in results for s in r.synth_results if s.success)
