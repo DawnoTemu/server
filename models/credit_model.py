@@ -14,6 +14,9 @@ from models.user_model import User
 
 class CreditTransaction(db.Model):
     __tablename__ = 'credit_transactions'
+    __table_args__ = (
+        db.Index('ix_credit_tx_audio_type_status', 'audio_story_id', 'type', 'status'),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(db.Integer, db.ForeignKey('users.id', ondelete='CASCADE'), index=True)

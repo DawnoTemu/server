@@ -1,7 +1,7 @@
 """add story position
 
 Revision ID: 3405be6b412c
-Revises: fix_sequence_20250312_fix_sequence
+Revises: fix_sequence_20250312
 Create Date: 2026-03-02
 
 """
@@ -9,7 +9,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = '3405be6b412c'
-down_revision = 'fix_sequence_20250312_fix_sequence'
+down_revision = 'fix_sequence_20250312'
 branch_labels = None
 depends_on = None
 

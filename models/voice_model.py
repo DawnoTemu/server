@@ -65,6 +65,7 @@ class Voice(db.Model):
             postgresql_where=text("elevenlabs_voice_id IS NOT NULL AND elevenlabs_voice_id <> ''"),
             sqlite_where=text("elevenlabs_voice_id IS NOT NULL AND elevenlabs_voice_id <> ''")
         ),
+        db.Index('ix_voices_allocation_status', 'allocation_status'),
     )
     
     id = db.Column(db.Integer, primary_key=True)

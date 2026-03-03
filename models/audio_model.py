@@ -25,7 +25,10 @@ class AudioStatus(Enum):
 class AudioStory(db.Model):
     """Database model for voice story audio"""
     __tablename__ = 'audio_stories'
-    
+    __table_args__ = (
+        db.UniqueConstraint('story_id', 'voice_id', name='uq_audio_stories_story_voice'),
+    )
+
     id = db.Column(db.Integer, primary_key=True)
     
     # Foreign keys
@@ -99,39 +102,41 @@ class AudioModel:
     @staticmethod
     def find_or_create_audio_record(story_id, voice_id, user_id):
         """
-        Find or create an audio record in the database
-        
+        Find or create an audio record in the database.
+
+        Uses a unique constraint on (story_id, voice_id) to prevent
+        duplicate rows under concurrent requests (TOCTOU race).
+
         Args:
             story_id: ID of the story
             voice_id: ID of the voice in our database
             user_id: ID of the user
-            
+
         Returns:
             AudioStory: Audio story record
         """
+        from sqlalchemy.exc import IntegrityError
+
+        audio = AudioStory.query.filter_by(story_id=story_id, voice_id=voice_id).first()
+        if audio:
+            return audio
+
+        audio = AudioStory(
+            story_id=story_id,
+            voice_id=voice_id,
+            user_id=user_id,
+            status=AudioStatus.PENDING.value,
+        )
         try:
-            # Check if a record already exists
-            audio = AudioStory.query.filter_by(story_id=story_id, voice_id=voice_id).first()
-            
-            if audio:
-                return audio
-            
-            # Create a new record
-            audio = AudioStory(
-                story_id=story_id,
-                voice_id=voice_id,
-                user_id=user_id,
-                status=AudioStatus.PENDING.value
-            )
-            
             db.session.add(audio)
             db.session.commit()
-            
-            logger.info(f"Created new audio story record: id={audio.id}, story={story_id}, voice={voice_id}")
+            logger.info("Created new audio story record: id=%s, story=%s, voice=%s", audio.id, story_id, voice_id)
             return audio
-        except Exception as e:
+        except IntegrityError:
             db.session.rollback()
-            logger.error(f"Error creating audio story record: {str(e)}")
+            audio = AudioStory.query.filter_by(story_id=story_id, voice_id=voice_id).first()
+            if audio:
+                return audio
             raise
     
     @staticmethod

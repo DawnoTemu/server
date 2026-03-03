@@ -44,6 +44,7 @@ class Config:
         "pool_pre_ping": True,  # Verify connections before using them
         "pool_size": 5,         # Max number of connections in the pool
         "max_overflow": 10,     # Max number of connections that can be created beyond pool_size
+        "pool_recycle": 300,    # Recycle connections after 5 min to prevent stale connections in Celery workers
     }
     
     # AWS and S3 configuration

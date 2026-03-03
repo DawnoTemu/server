@@ -17,8 +17,10 @@ from utils.redis_client import RedisClient
 
 logger = logging.getLogger("audio_controller")
 
-# Short TTL for request deduplication (seconds)
-SYNTH_DEDUP_TTL = 10
+# Request deduplication TTL (seconds).
+# Must exceed typical synthesis time (30-60s for long stories) to prevent
+# mobile app retries from queueing duplicate Celery tasks.
+SYNTH_DEDUP_TTL = 120
 
 
 class AudioController:
