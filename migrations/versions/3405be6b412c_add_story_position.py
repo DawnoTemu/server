@@ -15,10 +15,15 @@ depends_on = None
 
 
 def upgrade():
-    op.add_column('stories', sa.Column('position', sa.Integer(), nullable=True))
-    # Default: position = id (preserves existing order)
-    op.execute("UPDATE stories SET position = id")
-    op.alter_column('stories', 'position', nullable=False, server_default=sa.text('9999'))
+    # Idempotent: skip if column already exists (re-run after down_revision fix)
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    existing_columns = {c['name'] for c in inspector.get_columns('stories')}
+    if 'position' not in existing_columns:
+        op.add_column('stories', sa.Column('position', sa.Integer(), nullable=True))
+        # Default: position = id (preserves existing order)
+        op.execute("UPDATE stories SET position = id")
+        op.alter_column('stories', 'position', nullable=False, server_default=sa.text('9999'))
 
 
 def downgrade():
