@@ -21,7 +21,7 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger("loadtest.setup")
 
 
-def create_test_data():
+def create_test_data(skip_voices=False):
     from app import app
     from database import db
     from models.user_model import User
@@ -37,8 +37,8 @@ def create_test_data():
             email = TEST_USER_EMAIL_TEMPLATE.format(n=n)
             existing = User.query.filter_by(email=email).first()
             if existing:
-                # Ensure user has a voice
-                _ensure_voice(db, existing)
+                if not skip_voices:
+                    _ensure_voice(db, existing)
                 skipped += 1
                 continue
 
@@ -54,7 +54,8 @@ def create_test_data():
             db.session.flush()
 
             grant(user.id, 100, "loadtest_setup", "free")
-            _ensure_voice(db, user)
+            if not skip_voices:
+                _ensure_voice(db, user)
             created += 1
 
         db.session.commit()
@@ -185,5 +186,6 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "cleanup":
         cleanup_test_data()
     else:
-        ok = create_test_data()
+        skip_voices = "--no-voices" in sys.argv
+        ok = create_test_data(skip_voices=skip_voices)
         sys.exit(0 if ok else 1)
