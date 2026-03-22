@@ -4,6 +4,7 @@ from typing import Tuple
 from database import db
 from models.audio_model import AudioModel, AudioStatus, AudioStory
 from models.story_model import StoryModel
+from models.user_model import UserModel
 from models.voice_model import VoiceModel
 from models.credit_model import (
     debit as credit_debit,
@@ -88,6 +89,13 @@ class AudioController:
             voice = VoiceModel.get_voice_by_id(voice_id)
             if not voice:
                 return False, {"error": "Voice not found"}, 404
+
+            # Subscription / trial gate
+            gate_user = UserModel.get_by_id(voice.user_id)
+            if not gate_user:
+                return False, {"error": "User not found"}, 404
+            if not gate_user.subscription_active and not gate_user.trial_is_active:
+                return False, {"error": "Subscription required", "code": "SUBSCRIPTION_REQUIRED"}, 403
 
             story = StoryModel.get_story_by_id(story_id)
             if not story:

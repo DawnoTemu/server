@@ -3,7 +3,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from models.credit_model import CreditLot, CreditTransaction, CreditTransactionAllocation
+from database import db
+from models.user_model import User
+from models.credit_model import CreditLot, CreditTransaction, CreditTransactionAllocation, grant as credit_grant
 from tasks import billing_tasks
 
 
@@ -117,3 +119,88 @@ def test_expire_credit_lots_records_ledger(monkeypatch):
     allocation_amounts = sorted(allocation.amount for allocation in allocations)
     transaction_amounts = sorted(tx.amount for tx in transactions)
     assert allocation_amounts == transaction_amounts
+
+
+class TestGrantYearlySubscriberMonthlyCredits:
+
+    def test_grants_credits_to_yearly_subscribers(self, app):
+        with app.app_context():
+            user = User(
+                email="yearly-task@example.com",
+                is_active=True,
+                email_confirmed=True,
+                credits_balance=0,
+                subscription_active=True,
+                subscription_plan="dawnotemu_annual",
+            )
+            user.set_password("TestPass123!")
+            db.session.add(user)
+            db.session.commit()
+
+            billing_tasks.grant_yearly_subscriber_monthly_credits()
+
+            db.session.refresh(user)
+            assert user.credits_balance == 30
+
+    def test_skips_monthly_subscribers(self, app):
+        with app.app_context():
+            user = User(
+                email="monthly-skip@example.com",
+                is_active=True,
+                email_confirmed=True,
+                credits_balance=0,
+                subscription_active=True,
+                subscription_plan="dawnotemu_monthly",
+            )
+            user.set_password("TestPass123!")
+            db.session.add(user)
+            db.session.commit()
+
+            billing_tasks.grant_yearly_subscriber_monthly_credits()
+
+            db.session.refresh(user)
+            assert user.credits_balance == 0
+
+    def test_skips_if_already_granted_this_month(self, app):
+        with app.app_context():
+            user = User(
+                email="yearly-dup@example.com",
+                is_active=True,
+                email_confirmed=True,
+                credits_balance=0,
+                subscription_active=True,
+                subscription_plan="dawnotemu_annual",
+            )
+            user.set_password("TestPass123!")
+            db.session.add(user)
+            db.session.commit()
+
+            # Pre-grant this month
+            credit_grant(user.id, 30, reason="yearly_subscription_monthly_grant", source="monthly")
+            db.session.refresh(user)
+            assert user.credits_balance == 30
+
+            # Run task again — should skip
+            billing_tasks.grant_yearly_subscriber_monthly_credits()
+
+            db.session.refresh(user)
+            assert user.credits_balance == 30  # no double grant
+
+    def test_skips_inactive_subscribers(self, app):
+        with app.app_context():
+            user = User(
+                email="yearly-inactive@example.com",
+                is_active=True,
+                email_confirmed=True,
+                credits_balance=0,
+                subscription_active=False,
+                subscription_plan="dawnotemu_annual",
+            )
+            user.set_password("TestPass123!")
+            db.session.add(user)
+            db.session.commit()
+
+            billing_tasks.grant_yearly_subscriber_monthly_credits()
+
+            db.session.refresh(user)
+            assert user.credits_balance == 0

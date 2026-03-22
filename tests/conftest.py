@@ -29,6 +29,9 @@ def setup_test_environment():
     os.environ["AWS_SECRET_ACCESS_KEY"] = "test_aws_secret"
     os.environ["AWS_REGION"] = "test-region-1"
     os.environ["S3_BUCKET_NAME"] = "test-bucket"
+    os.environ["REVENUECAT_WEBHOOK_SECRET"] = "test-webhook-secret"
+    os.environ["TRIAL_DURATION_DAYS"] = "14"
+    os.environ["MONTHLY_SUBSCRIPTION_CREDITS"] = "26"
 
     # Create test directories
     Path("uploads").mkdir(exist_ok=True)
@@ -52,6 +55,8 @@ def _app_with_tables():
     import models.audio_model
     import models.story_model
     import models.credit_model
+    import models.addon_transaction_model
+    import models.webhook_event_model
 
     # Disable rate limiting for tests
     flask_app.config['RATELIMIT_ENABLED'] = False
