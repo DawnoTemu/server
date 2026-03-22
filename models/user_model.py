@@ -24,7 +24,16 @@ class User(db.Model):
     last_login = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
+
+    # Trial & Subscription
+    trial_expires_at = db.Column(db.DateTime, nullable=True)
+    subscription_active = db.Column(db.Boolean, default=False, nullable=False)
+    subscription_plan = db.Column(db.String(50), nullable=True)
+    subscription_expires_at = db.Column(db.DateTime, nullable=True)
+    subscription_will_renew = db.Column(db.Boolean, default=False, nullable=False)
+    subscription_source = db.Column(db.String(20), nullable=True)
+    revenuecat_app_user_id = db.Column(db.String(100), nullable=True, index=True)
+
     def __repr__(self):
         return f"<User {self.email}>"
     
@@ -35,7 +44,14 @@ class User(db.Model):
     def check_password(self, password):
         """Check if the plaintext password matches the stored hash"""
         return check_password_hash(self.password_hash, password)
-    
+
+    @property
+    def trial_is_active(self):
+        """Return True if the user's free trial has not yet expired."""
+        if self.trial_expires_at is None:
+            return False
+        return datetime.utcnow() < self.trial_expires_at
+
     def to_dict(self):
         """Convert user to dictionary (for API responses)"""
         return {
@@ -46,7 +62,14 @@ class User(db.Model):
             'is_admin': self.is_admin,
             'credits_balance': self.credits_balance,
             'created_at': self.created_at.isoformat() if self.created_at else None,
-            'last_login': self.last_login.isoformat() if self.last_login else None
+            'last_login': self.last_login.isoformat() if self.last_login else None,
+            'trial_is_active': self.trial_is_active,
+            'trial_expires_at': self.trial_expires_at.isoformat() if self.trial_expires_at else None,
+            'subscription_active': self.subscription_active,
+            'subscription_plan': self.subscription_plan,
+            'subscription_expires_at': self.subscription_expires_at.isoformat() if self.subscription_expires_at else None,
+            'subscription_will_renew': self.subscription_will_renew,
+            'subscription_source': self.subscription_source,
         }
     
     def get_confirmation_token(self, expires_in=86400):
@@ -145,8 +168,15 @@ class UserModel:
         """
         from config import Config
         initial_credits = getattr(Config, 'INITIAL_CREDITS', 0) or 0
+        trial_days = getattr(Config, 'TRIAL_DURATION_DAYS', 14) or 14
         # Create the user with zero cached balance; grant will create a free lot and update balance
-        user = User(email=email, is_admin=is_admin, is_active=is_active, credits_balance=0)
+        user = User(
+            email=email,
+            is_admin=is_admin,
+            is_active=is_active,
+            credits_balance=0,
+            trial_expires_at=datetime.utcnow() + timedelta(days=trial_days),
+        )
         user.set_password(password)
         
         # Add to database

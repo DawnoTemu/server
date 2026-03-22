@@ -8,6 +8,14 @@ from models.audio_model import AudioStatus
 from utils.voice_slot_manager import VoiceSlotManager, VoiceSlotState, VoiceSlotManagerError
 
 
+def make_gate_user(subscription_active=False, trial_is_active=True):
+    return SimpleNamespace(
+        id=10,
+        subscription_active=subscription_active,
+        trial_is_active=trial_is_active,
+    )
+
+
 @pytest.fixture
 def dummy_session(monkeypatch):
     class DummySession:
@@ -27,6 +35,11 @@ def dummy_session(monkeypatch):
     monkeypatch.setattr(
         "controllers.audio_controller.RedisClient",
         MagicMock(get_client=lambda: MagicMock(set=lambda *a, **kw: True)),
+    )
+    # Default: allow generation (trial active)
+    monkeypatch.setattr(
+        "controllers.audio_controller.UserModel.get_by_id",
+        lambda uid: make_gate_user(trial_is_active=True),
     )
     return session
 
@@ -531,3 +544,87 @@ def test_synthesize_audio_commit_failure_refunds(monkeypatch, dummy_session):
     assert "persist" in data["error"].lower()
     task_stub.delay.assert_not_called()
     assert refund_calls["args"] == (audio_record.id, "commit_failed")
+
+
+# ─── Generation Gate Tests ───────────────────────────────────────────────
+
+
+def test_synthesize_audio_subscription_required(monkeypatch, dummy_session):
+    """403 SUBSCRIPTION_REQUIRED when user has neither subscription nor trial."""
+    voice = make_voice()
+
+    monkeypatch.setattr(
+        "controllers.audio_controller.VoiceModel.get_voice_by_id", lambda voice_id: voice
+    )
+    monkeypatch.setattr(
+        "controllers.audio_controller.UserModel.get_by_id",
+        lambda uid: make_gate_user(subscription_active=False, trial_is_active=False),
+    )
+
+    success, data, status_code = AudioController.synthesize_audio(voice.id, 5)
+
+    assert success is False
+    assert status_code == 403
+    assert data["code"] == "SUBSCRIPTION_REQUIRED"
+
+
+def test_synthesize_audio_allows_with_trial(monkeypatch, dummy_session):
+    """Generation allowed when trial is active (no subscription)."""
+    voice = make_voice()
+    story = {"content": "Trial story"}
+    audio_record = make_audio_record(status=AudioStatus.READY.value, s3_key="s3://trial.mp3")
+
+    monkeypatch.setattr(
+        "controllers.audio_controller.VoiceModel.get_voice_by_id", lambda voice_id: voice
+    )
+    monkeypatch.setattr(
+        "controllers.audio_controller.UserModel.get_by_id",
+        lambda uid: make_gate_user(subscription_active=False, trial_is_active=True),
+    )
+    monkeypatch.setattr(
+        "controllers.audio_controller.StoryModel.get_story_by_id", lambda story_id: story
+    )
+    monkeypatch.setattr(
+        "controllers.audio_controller.AudioModel.find_or_create_audio_record",
+        lambda story_id, voice_id, user_id: audio_record,
+    )
+    monkeypatch.setattr(
+        "controllers.audio_controller.AudioModel.get_audio_presigned_url",
+        lambda voice_id, story_id, expires_in=3600: (True, "https://cdn/trial.mp3"),
+    )
+
+    success, data, status_code = AudioController.synthesize_audio(voice.id, 5)
+
+    assert success is True
+    assert status_code == 200
+
+
+def test_synthesize_audio_allows_with_subscription(monkeypatch, dummy_session):
+    """Generation allowed when subscribed (trial expired)."""
+    voice = make_voice()
+    story = {"content": "Sub story"}
+    audio_record = make_audio_record(status=AudioStatus.READY.value, s3_key="s3://sub.mp3")
+
+    monkeypatch.setattr(
+        "controllers.audio_controller.VoiceModel.get_voice_by_id", lambda voice_id: voice
+    )
+    monkeypatch.setattr(
+        "controllers.audio_controller.UserModel.get_by_id",
+        lambda uid: make_gate_user(subscription_active=True, trial_is_active=False),
+    )
+    monkeypatch.setattr(
+        "controllers.audio_controller.StoryModel.get_story_by_id", lambda story_id: story
+    )
+    monkeypatch.setattr(
+        "controllers.audio_controller.AudioModel.find_or_create_audio_record",
+        lambda story_id, voice_id, user_id: audio_record,
+    )
+    monkeypatch.setattr(
+        "controllers.audio_controller.AudioModel.get_audio_presigned_url",
+        lambda voice_id, story_id, expires_in=3600: (True, "https://cdn/sub.mp3"),
+    )
+
+    success, data, status_code = AudioController.synthesize_audio(voice.id, 5)
+
+    assert success is True
+    assert status_code == 200

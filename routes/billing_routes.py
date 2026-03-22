@@ -6,6 +6,7 @@ from utils.rate_limiter import limiter
 from utils.credits import get_credit_config, calculate_required_credits
 from models.credit_model import get_user_credit_summary, get_user_transactions
 from models.story_model import StoryModel
+from controllers.addon_controller import AddonController
 
 
 def _parse_transaction_types(arg_value: str | None):
@@ -74,3 +75,24 @@ def get_story_credits(story_id):
     text = story.get('content') or ''
     required = calculate_required_credits(text)
     return jsonify({'required_credits': required}), 200
+
+
+@billing_bp.route('/api/credits/grant-addon', methods=['POST'])
+@token_required
+@limiter.limit("10 per minute")
+def grant_addon(current_user):
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "Invalid request body"}), 400
+
+    receipt_token = (data.get("receipt_token") or "").strip()
+    product_id = (data.get("product_id") or "").strip()
+    platform = (data.get("platform") or "").strip()
+
+    if not receipt_token or not product_id or not platform:
+        return jsonify({"error": "Missing required fields: receipt_token, product_id, platform"}), 400
+
+    success, result, status = AddonController.grant_addon(
+        current_user, receipt_token, product_id, platform,
+    )
+    return jsonify(result), status

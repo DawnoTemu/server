@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from database import db
 from sqlalchemy import delete as sa_delete
@@ -160,3 +160,120 @@ def test_delete_user_surfaces_voice_service_failure(app, mocker):
         success, details = UserModel.delete_user(user.id)
         assert success is False
         assert "Rate limited" in str(details)
+
+
+class TestTrialAndSubscriptionFields:
+    def test_trial_is_active_when_future_expiry(self, app):
+        with app.app_context():
+            user = User(
+                email="trial-future@example.com",
+                is_active=True,
+                email_confirmed=True,
+                credits_balance=0,
+                trial_expires_at=datetime.utcnow() + timedelta(days=7),
+            )
+            user.set_password("TestPass123!")
+            db.session.add(user)
+            db.session.commit()
+
+            assert user.trial_is_active is True
+
+    def test_trial_is_not_active_when_expired(self, app):
+        with app.app_context():
+            user = User(
+                email="trial-expired@example.com",
+                is_active=True,
+                email_confirmed=True,
+                credits_balance=0,
+                trial_expires_at=datetime.utcnow() - timedelta(days=1),
+            )
+            user.set_password("TestPass123!")
+            db.session.add(user)
+            db.session.commit()
+
+            assert user.trial_is_active is False
+
+    def test_trial_is_not_active_when_null(self, app):
+        with app.app_context():
+            user = User(
+                email="trial-null@example.com",
+                is_active=True,
+                email_confirmed=True,
+                credits_balance=0,
+                trial_expires_at=None,
+            )
+            user.set_password("TestPass123!")
+            db.session.add(user)
+            db.session.commit()
+
+            assert user.trial_is_active is False
+
+    def test_subscription_fields_default_values(self, app):
+        with app.app_context():
+            user = User(
+                email="sub-defaults@example.com",
+                is_active=True,
+                email_confirmed=True,
+                credits_balance=0,
+            )
+            user.set_password("TestPass123!")
+            db.session.add(user)
+            db.session.commit()
+
+            assert user.subscription_active is False
+            assert user.subscription_plan is None
+            assert user.subscription_expires_at is None
+            assert user.subscription_will_renew is False
+            assert user.subscription_source is None
+            assert user.revenuecat_app_user_id is None
+
+    def test_revenuecat_app_user_id_lookup(self, app):
+        with app.app_context():
+            user = User(
+                email="rc-lookup@example.com",
+                is_active=True,
+                email_confirmed=True,
+                credits_balance=0,
+                revenuecat_app_user_id="12345",
+            )
+            user.set_password("TestPass123!")
+            db.session.add(user)
+            db.session.commit()
+
+            found = User.query.filter_by(revenuecat_app_user_id="12345").first()
+            assert found is not None
+            assert found.id == user.id
+
+    def test_create_user_sets_trial_expires_at(self, app):
+        with app.app_context():
+            user = UserModel.create_user(
+                email="trial-create@example.com",
+                password="TestPass123!",
+            )
+            assert user.trial_expires_at is not None
+            delta = user.trial_expires_at - datetime.utcnow()
+            assert 13 <= delta.days <= 14
+
+    def test_to_dict_includes_subscription_fields(self, app):
+        with app.app_context():
+            user = User(
+                email="dict-test@example.com",
+                is_active=True,
+                email_confirmed=True,
+                credits_balance=0,
+                trial_expires_at=datetime.utcnow() + timedelta(days=7),
+                subscription_active=True,
+                subscription_plan="monthly",
+            )
+            user.set_password("TestPass123!")
+            db.session.add(user)
+            db.session.commit()
+
+            d = user.to_dict()
+            assert "trial_is_active" in d
+            assert "trial_expires_at" in d
+            assert "subscription_active" in d
+            assert "subscription_plan" in d
+            assert d["trial_is_active"] is True
+            assert d["subscription_active"] is True
+            assert d["subscription_plan"] == "monthly"

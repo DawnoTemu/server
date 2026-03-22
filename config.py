@@ -108,6 +108,28 @@ class Config:
     except Exception:
         _ic_val = 10
     INITIAL_CREDITS = _ic_val if _ic_val >= 0 else 10
+    # RevenueCat / Subscription
+    REVENUECAT_WEBHOOK_SECRET = os.getenv("REVENUECAT_WEBHOOK_SECRET")
+    REVENUECAT_API_KEY = os.getenv("REVENUECAT_API_KEY")
+    try:
+        _td_raw = os.getenv("TRIAL_DURATION_DAYS", "14")
+        _td_val = int(_td_raw) if str(_td_raw).strip() != "" else 14
+    except Exception:
+        _td_val = 14
+    TRIAL_DURATION_DAYS = _td_val if _td_val > 0 else 14
+    try:
+        _msc_raw = os.getenv("MONTHLY_SUBSCRIPTION_CREDITS", "26")
+        _msc_val = int(_msc_raw) if str(_msc_raw).strip() != "" else 26
+    except Exception:
+        _msc_val = 26
+    MONTHLY_SUBSCRIPTION_CREDITS = _msc_val if _msc_val > 0 else 26
+    try:
+        _ysc_raw = os.getenv("YEARLY_SUBSCRIPTION_MONTHLY_CREDITS", "30")
+        _ysc_val = int(_ysc_raw) if str(_ysc_raw).strip() != "" else 30
+    except Exception:
+        _ysc_val = 30
+    YEARLY_SUBSCRIPTION_MONTHLY_CREDITS = _ysc_val if _ysc_val > 0 else 30
+
     # Consumption priority: event -> monthly -> referral -> add_on -> free
     _csp_raw = os.getenv("CREDIT_SOURCES_PRIORITY", "event,monthly,referral,add_on,free")
     CREDIT_SOURCES_PRIORITY = [s.strip() for s in _csp_raw.split(',') if s.strip()]
@@ -126,11 +148,11 @@ class Config:
     # Validate configuration
     @classmethod
     def validate(cls):
-        missing = [k for k, v in cls.__dict__.items() 
-                  if not k.startswith('__') and 
-                  v is None and 
-                  k != "VOICE_NAME" and
-                  k != "DATABASE_URL" and  # DATABASE_URL can be None, will use default
+        _optional = {"VOICE_NAME", "DATABASE_URL", "REVENUECAT_WEBHOOK_SECRET", "REVENUECAT_API_KEY"}
+        missing = [k for k, v in cls.__dict__.items()
+                  if not k.startswith('__') and
+                  v is None and
+                  k not in _optional and
                   not callable(v)]
         if missing:
             raise EnvironmentError(f"Missing environment variables: {', '.join(missing)}")
