@@ -228,7 +228,7 @@ class TestProcessVoiceRecording:
         )
 
         assert result is True
-        assert voice.status == VoiceStatus.RECORDED
+        assert voice.status == VoiceStatus.READY
         assert voice.recording_filesize == 12345
         assert stub_db.commit_calls == 1
 
@@ -269,7 +269,7 @@ class TestProcessVoiceRecording:
             voice_id=1, s3_key="k", filename="f.wav", user_id=10,
         )
         assert result is True
-        assert voice.status == VoiceStatus.RECORDED
+        assert voice.status == VoiceStatus.READY
 
 
 # ===================================================================
@@ -1075,5 +1075,5 @@ class TestNoEagerAllocation:
         )
 
         assert result is True
-        assert voice.status == VoiceStatus.RECORDED
+        assert voice.status == VoiceStatus.READY
         alloc_mock.assert_not_called()

@@ -130,8 +130,11 @@ def process_voice_recording(self, voice_id, s3_key, filename, user_id, voice_nam
             logger.warning("Failed to inspect S3 metadata for %s: %s", s3_key, e)
             head_metadata['inspection_error'] = str(e)
 
-        # Ensure voice remains in recorded state
-        voice.status = VoiceStatus.RECORDED
+        # Mark voice as READY so the mobile app's status polling resolves.
+        # Remote slot allocation is still deferred until the first audio
+        # synthesis request (just-in-time via VoiceSlotManager.ensure_active_voice),
+        # but the voice is usable from the user's perspective.
+        voice.status = VoiceStatus.READY
         voice.updated_at = datetime.utcnow()
 
         VoiceSlotEvent.log_event(
@@ -149,9 +152,6 @@ def process_voice_recording(self, voice_id, s3_key, filename, user_id, voice_nam
 
         logger.info("Completed processing for voice %s", voice_id)
 
-        # Voice remains in RECORDED state. Remote slot allocation is deferred
-        # until the first audio synthesis request (just-in-time allocation via
-        # VoiceSlotManager.ensure_active_voice).
         emit_metric("voice.process.completed", provider=str(voice.service_provider))
         return True
 
