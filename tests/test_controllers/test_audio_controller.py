@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -8,12 +9,28 @@ from models.audio_model import AudioStatus
 from utils.voice_slot_manager import VoiceSlotManager, VoiceSlotState, VoiceSlotManagerError
 
 
-def make_gate_user(subscription_active=False, trial_is_active=True):
-    return SimpleNamespace(
+def make_gate_user(subscription_active=False, trial_is_active=True,
+                   subscription_expires_at=None):
+    ns = SimpleNamespace(
         id=10,
         subscription_active=subscription_active,
         trial_is_active=trial_is_active,
+        subscription_expires_at=subscription_expires_at,
     )
+    # Mirror the real User model property logic:
+    # subscription_is_active requires the boolean flag AND a non-null, future expiration
+    from datetime import datetime
+    expired = (
+        subscription_expires_at is not None
+        and datetime.utcnow() >= subscription_expires_at
+    )
+    ns.subscription_is_active = (
+        subscription_active
+        and subscription_expires_at is not None
+        and not expired
+    )
+    ns.can_generate = ns.subscription_is_active or trial_is_active
+    return ns
 
 
 @pytest.fixture
@@ -610,7 +627,10 @@ def test_synthesize_audio_allows_with_subscription(monkeypatch, dummy_session):
     )
     monkeypatch.setattr(
         "controllers.audio_controller.UserModel.get_by_id",
-        lambda uid: make_gate_user(subscription_active=True, trial_is_active=False),
+        lambda uid: make_gate_user(
+            subscription_active=True, trial_is_active=False,
+            subscription_expires_at=datetime.utcnow() + timedelta(days=30),
+        ),
     )
     monkeypatch.setattr(
         "controllers.audio_controller.StoryModel.get_story_by_id", lambda story_id: story

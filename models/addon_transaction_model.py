@@ -11,6 +11,10 @@ class ConsumedAddonTransaction(db.Model):
     """
 
     __tablename__ = 'consumed_addon_transactions'
+    __table_args__ = (
+        db.CheckConstraint('credits_granted > 0', name='ck_addon_credits_positive'),
+        db.CheckConstraint("platform IN ('ios', 'android')", name='ck_addon_valid_platform'),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
     receipt_token = db.Column(db.String(512), unique=True, nullable=False, index=True)

@@ -1,9 +1,14 @@
 from datetime import datetime, timedelta
+from unittest.mock import patch, MagicMock
 
 from database import db
 from models.user_model import User
 from models.credit_model import grant as credit_grant
-from controllers.addon_controller import AddonController
+from controllers.addon_controller import (
+    AddonController,
+    ReceiptValidationUnavailable,
+    _validate_receipt_with_revenuecat,
+)
 
 
 def _create_subscribed_user(email="addon-ctrl@example.com", credits=0):
@@ -15,6 +20,7 @@ def _create_subscribed_user(email="addon-ctrl@example.com", credits=0):
         trial_expires_at=datetime.utcnow() - timedelta(days=1),
         subscription_active=True,
         subscription_plan="monthly",
+        subscription_expires_at=datetime.utcnow() + timedelta(days=30),
     )
     user.set_password("TestPass123!")
     db.session.add(user)
@@ -43,7 +49,8 @@ def _create_non_subscriber(email="nonsub@example.com"):
 
 class TestAddonController:
 
-    def test_grant_addon_success(self, app):
+    @patch("controllers.addon_controller._validate_receipt_with_revenuecat", return_value=True)
+    def test_grant_addon_success(self, mock_validate, app):
         with app.app_context():
             user = _create_subscribed_user("grant-ok@example.com", credits=10)
             success, data, status = AddonController.grant_addon(
@@ -54,8 +61,10 @@ class TestAddonController:
             assert status == 200
             assert data["credits_granted"] == 10
             assert data["new_balance"] == 20
+            mock_validate.assert_called_once()
 
-    def test_grant_addon_idempotent_replay(self, app):
+    @patch("controllers.addon_controller._validate_receipt_with_revenuecat", return_value=True)
+    def test_grant_addon_idempotent_replay(self, mock_validate, app):
         with app.app_context():
             user = _create_subscribed_user("idem@example.com", credits=10)
 
@@ -71,7 +80,8 @@ class TestAddonController:
             assert data["credits_granted"] == 10
             assert data["new_balance"] == 20
 
-    def test_grant_addon_cross_user_conflict(self, app):
+    @patch("controllers.addon_controller._validate_receipt_with_revenuecat", return_value=True)
+    def test_grant_addon_cross_user_conflict(self, mock_validate, app):
         with app.app_context():
             user_a = _create_subscribed_user("cross-a@example.com", credits=10)
             user_b = _create_subscribed_user("cross-b@example.com", credits=10)
@@ -105,6 +115,29 @@ class TestAddonController:
             assert success is False
             assert status == 403
 
+    def test_grant_addon_expired_subscription(self, app):
+        """Subscription with expired date should be rejected even if bool is True."""
+        with app.app_context():
+            user = User(
+                email="expired-sub-addon@example.com",
+                is_active=True,
+                email_confirmed=True,
+                credits_balance=0,
+                subscription_active=True,
+                subscription_plan="monthly",
+                subscription_expires_at=datetime.utcnow() - timedelta(days=1),
+            )
+            user.set_password("TestPass123!")
+            db.session.add(user)
+            db.session.commit()
+
+            success, data, status = AddonController.grant_addon(
+                user, "rc_exp", "credits_10", "ios",
+            )
+
+            assert success is False
+            assert status == 403
+
     def test_grant_addon_invalid_platform(self, app):
         with app.app_context():
             user = _create_subscribed_user("badplat@example.com")
@@ -114,3 +147,210 @@ class TestAddonController:
 
             assert success is False
             assert status == 400
+
+    @patch("controllers.addon_controller._validate_receipt_with_revenuecat", return_value=False)
+    def test_grant_addon_receipt_validation_failure(self, mock_validate, app):
+        with app.app_context():
+            user = _create_subscribed_user("bad-receipt@example.com", credits=10)
+            success, data, status = AddonController.grant_addon(
+                user, "rc_fake_receipt", "credits_10", "ios",
+            )
+
+            assert success is False
+            assert status == 403
+            assert "validation" in data["error"].lower()
+
+    @patch("controllers.addon_controller._validate_receipt_with_revenuecat", return_value=True)
+    @patch("controllers.addon_controller.credit_grant", side_effect=RuntimeError("db error"))
+    def test_grant_addon_generic_exception_returns_500(self, mock_grant, mock_validate, app):
+        with app.app_context():
+            user = _create_subscribed_user("generic-exc@example.com", credits=10)
+            success, data, status = AddonController.grant_addon(
+                user, "rc_generic_exc", "credits_10", "ios",
+            )
+
+            assert success is False
+            assert status == 500
+
+    @patch(
+        "controllers.addon_controller._validate_receipt_with_revenuecat",
+        side_effect=ReceiptValidationUnavailable("service down"),
+    )
+    def test_grant_addon_transient_error_returns_503(self, mock_validate, app):
+        with app.app_context():
+            user = _create_subscribed_user("transient@example.com", credits=10)
+            success, data, status = AddonController.grant_addon(
+                user, "rc_transient", "credits_10", "ios",
+            )
+
+            assert success is False
+            assert status == 503
+            assert "retry" in data["error"].lower()
+
+    @patch(
+        "controllers.addon_controller._validate_receipt_with_revenuecat",
+        side_effect=ValueError("unexpected parse error"),
+    )
+    def test_grant_addon_unexpected_validation_error_returns_500(self, mock_validate, app):
+        with app.app_context():
+            user = _create_subscribed_user("unexpected-err@example.com", credits=10)
+            success, data, status = AddonController.grant_addon(
+                user, "rc_unexpected", "credits_10", "ios",
+            )
+
+            assert success is False
+            assert status == 500
+
+
+class TestValidateReceiptWithRevenueCat:
+
+    def test_returns_true_when_api_key_missing_in_dev(self, app):
+        with app.app_context():
+            user = _create_subscribed_user("val-dev@example.com")
+            user.revenuecat_app_user_id = "rc_dev"
+            with patch("controllers.addon_controller.Config.REVENUECAT_API_KEY", None), \
+                 patch("controllers.addon_controller.os.getenv", return_value="development"):
+                result = _validate_receipt_with_revenuecat(user, "tok_123")
+            assert result is True
+
+    def test_returns_false_when_api_key_missing_and_env_unknown(self, app):
+        """Ambiguous environment (no FLASK_ENV/ENVIRONMENT) must reject."""
+        with app.app_context():
+            user = _create_subscribed_user("val-ambiguous@example.com")
+            user.revenuecat_app_user_id = "rc_ambiguous"
+            with patch("controllers.addon_controller.Config.REVENUECAT_API_KEY", None), \
+                 patch("controllers.addon_controller.os.getenv", return_value=""):
+                result = _validate_receipt_with_revenuecat(user, "tok_123")
+            assert result is False
+
+    def test_returns_false_when_api_key_missing_in_production(self, app):
+        with app.app_context():
+            user = _create_subscribed_user("val-prod@example.com")
+            user.revenuecat_app_user_id = "rc_prod"
+            with patch("controllers.addon_controller.Config.REVENUECAT_API_KEY", None), \
+                 patch("controllers.addon_controller.os.getenv", return_value="production"):
+                result = _validate_receipt_with_revenuecat(user, "tok_123")
+            assert result is False
+
+    @patch("controllers.addon_controller.Config.REVENUECAT_PROJECT_ID", "proj_test")
+    @patch("controllers.addon_controller.Config.REVENUECAT_API_KEY", "test-key")
+    def test_returns_false_when_no_rc_user_id(self, app):
+        with app.app_context():
+            user = _create_subscribed_user("val-norc@example.com")
+            # user has no revenuecat_app_user_id set
+            result = _validate_receipt_with_revenuecat(user, "tok_123")
+            assert result is False
+
+    @patch("controllers.addon_controller.requests.get")
+    @patch("controllers.addon_controller.Config.REVENUECAT_PROJECT_ID", "proj_test")
+    @patch("controllers.addon_controller.Config.REVENUECAT_API_KEY", "test-key")
+    def test_returns_true_when_receipt_matches(self, mock_get, app):
+        with app.app_context():
+            user = _create_subscribed_user("val-match@example.com")
+            user.revenuecat_app_user_id = "rc_match"
+            db.session.commit()
+            mock_get.return_value = MagicMock(
+                status_code=200,
+                json=lambda: {
+                    "items": [
+                        {"store_purchase_identifier": "tok_match", "id": "purch_other"}
+                    ]
+                },
+            )
+            result = _validate_receipt_with_revenuecat(user, "tok_match")
+            assert result is True
+
+    @patch("controllers.addon_controller.requests.get")
+    @patch("controllers.addon_controller.Config.REVENUECAT_PROJECT_ID", "proj_test")
+    @patch("controllers.addon_controller.Config.REVENUECAT_API_KEY", "test-key")
+    def test_returns_true_when_receipt_matches_by_id(self, mock_get, app):
+        with app.app_context():
+            user = _create_subscribed_user("val-match-id@example.com")
+            user.revenuecat_app_user_id = "rc_match_id"
+            db.session.commit()
+            mock_get.return_value = MagicMock(
+                status_code=200,
+                json=lambda: {
+                    "items": [
+                        {"store_purchase_identifier": "other", "id": "tok_by_id"}
+                    ]
+                },
+            )
+            result = _validate_receipt_with_revenuecat(user, "tok_by_id")
+            assert result is True
+
+    @patch("controllers.addon_controller.requests.get")
+    @patch("controllers.addon_controller.Config.REVENUECAT_PROJECT_ID", "proj_test")
+    @patch("controllers.addon_controller.Config.REVENUECAT_API_KEY", "test-key")
+    def test_returns_false_when_receipt_not_found(self, mock_get, app):
+        with app.app_context():
+            user = _create_subscribed_user("val-nofind@example.com")
+            user.revenuecat_app_user_id = "rc_nofind"
+            db.session.commit()
+            mock_get.return_value = MagicMock(
+                status_code=200,
+                json=lambda: {"items": []},
+            )
+            result = _validate_receipt_with_revenuecat(user, "tok_missing")
+            assert result is False
+
+    @patch("controllers.addon_controller.requests.get")
+    @patch("controllers.addon_controller.Config.REVENUECAT_PROJECT_ID", "proj_test")
+    @patch("controllers.addon_controller.Config.REVENUECAT_API_KEY", "test-key")
+    def test_raises_on_timeout(self, mock_get, app):
+        import requests as req
+        with app.app_context():
+            user = _create_subscribed_user("val-timeout@example.com")
+            user.revenuecat_app_user_id = "rc_timeout"
+            db.session.commit()
+            mock_get.side_effect = req.exceptions.Timeout("timed out")
+            import pytest
+            with pytest.raises(ReceiptValidationUnavailable):
+                _validate_receipt_with_revenuecat(user, "tok_timeout")
+
+    @patch("controllers.addon_controller.requests.get")
+    @patch("controllers.addon_controller.Config.REVENUECAT_PROJECT_ID", "proj_test")
+    @patch("controllers.addon_controller.Config.REVENUECAT_API_KEY", "test-key")
+    def test_raises_on_connection_error(self, mock_get, app):
+        import requests as req
+        with app.app_context():
+            user = _create_subscribed_user("val-conn@example.com")
+            user.revenuecat_app_user_id = "rc_conn"
+            db.session.commit()
+            mock_get.side_effect = req.exceptions.ConnectionError("refused")
+            import pytest
+            with pytest.raises(ReceiptValidationUnavailable):
+                _validate_receipt_with_revenuecat(user, "tok_conn")
+
+    @patch("controllers.addon_controller.requests.get")
+    @patch("controllers.addon_controller.Config.REVENUECAT_PROJECT_ID", "proj_test")
+    @patch("controllers.addon_controller.Config.REVENUECAT_API_KEY", "test-key")
+    def test_raises_on_server_error(self, mock_get, app):
+        """5xx from RevenueCat should raise ReceiptValidationUnavailable, not return False."""
+        import pytest
+        with app.app_context():
+            user = _create_subscribed_user("val-http500@example.com")
+            user.revenuecat_app_user_id = "rc_http500"
+            db.session.commit()
+            mock_get.return_value = MagicMock(
+                status_code=500,
+                text="Internal Server Error",
+            )
+            with pytest.raises(ReceiptValidationUnavailable):
+                _validate_receipt_with_revenuecat(user, "tok_http")
+
+    @patch("controllers.addon_controller.requests.get")
+    @patch("controllers.addon_controller.Config.REVENUECAT_PROJECT_ID", "proj_test")
+    @patch("controllers.addon_controller.Config.REVENUECAT_API_KEY", "test-key")
+    def test_returns_false_on_client_error(self, mock_get, app):
+        """4xx from RevenueCat should return False (genuinely not found)."""
+        with app.app_context():
+            user = _create_subscribed_user("val-http404@example.com")
+            user.revenuecat_app_user_id = "rc_http404"
+            db.session.commit()
+            mock_get.return_value = MagicMock(
+                status_code=404,
+                text="Not Found",
+            )
+            result = _validate_receipt_with_revenuecat(user, "tok_http")
+            assert result is False

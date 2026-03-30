@@ -32,7 +32,8 @@ class User(db.Model):
     subscription_expires_at = db.Column(db.DateTime, nullable=True)
     subscription_will_renew = db.Column(db.Boolean, default=False, nullable=False)
     subscription_source = db.Column(db.String(20), nullable=True)
-    revenuecat_app_user_id = db.Column(db.String(100), nullable=True, index=True)
+    revenuecat_app_user_id = db.Column(db.String(100), nullable=True, unique=True, index=True)
+    billing_issue_at = db.Column(db.DateTime, nullable=True)
 
     def __repr__(self):
         return f"<User {self.email}>"
@@ -52,6 +53,24 @@ class User(db.Model):
             return False
         return datetime.utcnow() < self.trial_expires_at
 
+    @property
+    def subscription_is_active(self):
+        """Return True if subscription is active and not past expiration.
+
+        A subscription with no expiration date is treated as inactive to
+        prevent accidental permanent access from malformed webhook data.
+        """
+        if not self.subscription_active:
+            return False
+        if self.subscription_expires_at is None:
+            return False
+        return datetime.utcnow() < self.subscription_expires_at
+
+    @property
+    def can_generate(self):
+        """Return True if user can generate content (active subscription or trial)."""
+        return self.subscription_is_active or self.trial_is_active
+
     def to_dict(self):
         """Convert user to dictionary (for API responses)"""
         return {
@@ -65,11 +84,12 @@ class User(db.Model):
             'last_login': self.last_login.isoformat() if self.last_login else None,
             'trial_is_active': self.trial_is_active,
             'trial_expires_at': self.trial_expires_at.isoformat() if self.trial_expires_at else None,
-            'subscription_active': self.subscription_active,
+            'subscription_is_active': self.subscription_is_active,
             'subscription_plan': self.subscription_plan,
             'subscription_expires_at': self.subscription_expires_at.isoformat() if self.subscription_expires_at else None,
             'subscription_will_renew': self.subscription_will_renew,
             'subscription_source': self.subscription_source,
+            'can_generate': self.can_generate,
         }
     
     def get_confirmation_token(self, expires_in=86400):
@@ -135,7 +155,7 @@ class User(db.Model):
                 return payload.get('reset_password')
                 
             return None
-        except:
+        except Exception:
             return None
 
 
@@ -189,13 +209,10 @@ class UserModel:
             try:
                 grant(user.id, int(initial_credits), reason="initial_grant", source="free", expires_at=None)
             except Exception as e:
-                # Roll back failed transaction to keep session usable
-                try:
-                    db.session.rollback()
-                except Exception:
-                    pass
-                logging.getLogger(__name__).warning(
-                    "Initial credit grant failed for user %s: %s", email, str(e)
+                db.session.rollback()
+                logger.error(
+                    "Initial credit grant failed for user %s: %s -- user created without credits",
+                    email, e, exc_info=True,
                 )
 
         return user

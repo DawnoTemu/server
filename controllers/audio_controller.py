@@ -90,11 +90,12 @@ class AudioController:
             if not voice:
                 return False, {"error": "Voice not found"}, 404
 
-            # Subscription / trial gate
+            # Gate: verify the voice's owner has an active subscription or trial
             gate_user = UserModel.get_by_id(voice.user_id)
             if not gate_user:
-                return False, {"error": "User not found"}, 404
-            if not gate_user.subscription_active and not gate_user.trial_is_active:
+                logger.warning("Voice %s owned by non-existent user %s", voice_id, voice.user_id)
+                return False, {"error": "Voice owner account not found", "code": "USER_NOT_FOUND"}, 404
+            if not gate_user.can_generate:
                 return False, {"error": "Subscription required", "code": "SUBSCRIPTION_REQUIRED"}, 403
 
             story = StoryModel.get_story_by_id(story_id)
@@ -180,13 +181,14 @@ class AudioController:
                 """Rollback pending debit and mark audio as error."""
                 try:
                     db.session.rollback()
-                except Exception:
-                    pass
+                except Exception as rb_exc:
+                    logger.warning("Rollback during error marking failed: %s", rb_exc)
                 fresh = None
                 if hasattr(db.session, "get"):
                     try:
                         fresh = db.session.get(AudioStory, audio_record.id)
-                    except Exception:
+                    except Exception as get_exc:
+                        logger.warning("Failed to reload audio record %s: %s", audio_record.id, get_exc)
                         fresh = None
                 try:
                     target = fresh or audio_record
@@ -195,7 +197,8 @@ class AudioController:
                     target.status = AudioStatus.ERROR.value
                     target.error_message = msg
                     db.session.commit()
-                except Exception:
+                except Exception as commit_exc:
+                    logger.warning("Failed to persist error status for audio %s: %s", audio_record.id, commit_exc)
                     db.session.rollback()
                 return False, {"error": msg}, status_code
 
@@ -205,7 +208,11 @@ class AudioController:
                 try:
                     refund_by_audio(audio_record.id, reason=reason)
                 except Exception as refund_exc:
-                    logger.error("Refund after %s failed: %s", reason, refund_exc)
+                    logger.error(
+                        "CRITICAL: Refund after %s failed for audio %s user %s: %s",
+                        reason, audio_record.id, voice.user_id, refund_exc,
+                        exc_info=True,
+                    )
 
             try:
                 slot_state = VoiceSlotManager.ensure_active_voice(voice, request_metadata=request_meta)

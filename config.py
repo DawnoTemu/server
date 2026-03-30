@@ -20,6 +20,7 @@ logging.getLogger('werkzeug').setLevel(logging.WARNING)
 _config_logger = logging.getLogger(__name__)
 
 
+
 def _safe_positive_int_env(env_var, default):
     """Return a positive integer from an env var, falling back to *default* on bad input."""
     raw = os.getenv(env_var)
@@ -121,6 +122,7 @@ class Config:
         _cus_val = int(_cus_raw) if str(_cus_raw).strip() != "" else 1000
     except Exception:
         _cus_val = 1000
+        logging.getLogger(__name__).warning("Invalid CREDITS_UNIT_SIZE=%r, using default 1000", os.getenv("CREDITS_UNIT_SIZE"))
     CREDITS_UNIT_SIZE = _cus_val if _cus_val > 0 else 1000
     try:
         _ic_raw = os.getenv("INITIAL_CREDITS", "10")
@@ -131,23 +133,30 @@ class Config:
     # RevenueCat / Subscription
     REVENUECAT_WEBHOOK_SECRET = os.getenv("REVENUECAT_WEBHOOK_SECRET")
     REVENUECAT_API_KEY = os.getenv("REVENUECAT_API_KEY")
+    REVENUECAT_PROJECT_ID = os.getenv("REVENUECAT_PROJECT_ID")
+    YEARLY_PRODUCT_IDS = frozenset(
+        s.strip() for s in os.getenv("YEARLY_PRODUCT_IDS", "dawnotemu_annual,dawnotemu_yearly").split(",") if s.strip()
+    )
     try:
         _td_raw = os.getenv("TRIAL_DURATION_DAYS", "14")
         _td_val = int(_td_raw) if str(_td_raw).strip() != "" else 14
     except Exception:
         _td_val = 14
+        logging.getLogger(__name__).warning("Invalid TRIAL_DURATION_DAYS=%r, using default 14", os.getenv("TRIAL_DURATION_DAYS"))
     TRIAL_DURATION_DAYS = _td_val if _td_val > 0 else 14
     try:
         _msc_raw = os.getenv("MONTHLY_SUBSCRIPTION_CREDITS", "26")
         _msc_val = int(_msc_raw) if str(_msc_raw).strip() != "" else 26
     except Exception:
         _msc_val = 26
+        logging.getLogger(__name__).warning("Invalid MONTHLY_SUBSCRIPTION_CREDITS=%r, using default 26", os.getenv("MONTHLY_SUBSCRIPTION_CREDITS"))
     MONTHLY_SUBSCRIPTION_CREDITS = _msc_val if _msc_val > 0 else 26
     try:
         _ysc_raw = os.getenv("YEARLY_SUBSCRIPTION_MONTHLY_CREDITS", "30")
         _ysc_val = int(_ysc_raw) if str(_ysc_raw).strip() != "" else 30
     except Exception:
         _ysc_val = 30
+        logging.getLogger(__name__).warning("Invalid YEARLY_SUBSCRIPTION_MONTHLY_CREDITS=%r, using default 30", os.getenv("YEARLY_SUBSCRIPTION_MONTHLY_CREDITS"))
     YEARLY_SUBSCRIPTION_MONTHLY_CREDITS = _ysc_val if _ysc_val > 0 else 30
 
     # Consumption priority: event -> monthly -> referral -> add_on -> free
@@ -159,6 +168,7 @@ class Config:
         _mc_val = int(_mc_raw) if str(_mc_raw).strip() != "" else 0
     except Exception:
         _mc_val = 0
+        logging.getLogger(__name__).warning("Invalid MONTHLY_CREDITS_DEFAULT=%r, using default 0", os.getenv("MONTHLY_CREDITS_DEFAULT"))
     MONTHLY_CREDITS_DEFAULT = _mc_val if _mc_val >= 0 else 0
     
     # Create required directories
@@ -168,7 +178,7 @@ class Config:
     # Validate configuration
     @classmethod
     def validate(cls):
-        _optional = {"VOICE_NAME", "DATABASE_URL", "REVENUECAT_WEBHOOK_SECRET", "REVENUECAT_API_KEY"}
+        _optional = {"VOICE_NAME", "DATABASE_URL", "REVENUECAT_WEBHOOK_SECRET", "REVENUECAT_API_KEY", "REVENUECAT_PROJECT_ID"}
         missing = [k for k, v in cls.__dict__.items()
                   if not k.startswith('__') and
                   v is None and
@@ -176,6 +186,21 @@ class Config:
                   not callable(v)]
         if missing:
             raise EnvironmentError(f"Missing environment variables: {', '.join(missing)}")
+
+        # Warn about subscription config gaps that would silently break features
+        _subscription_vars = {
+            "REVENUECAT_WEBHOOK_SECRET": cls.REVENUECAT_WEBHOOK_SECRET,
+            "REVENUECAT_API_KEY": cls.REVENUECAT_API_KEY,
+            "REVENUECAT_PROJECT_ID": cls.REVENUECAT_PROJECT_ID,
+        }
+        missing_sub = [k for k, v in _subscription_vars.items() if not v]
+        if missing_sub:
+            _config_logger.warning(
+                "Subscription features partially configured — missing: %s. "
+                "Webhook auth and addon receipt validation will fail.",
+                ", ".join(missing_sub),
+            )
+
         return True
     
     # Get S3 client using our optimized implementation

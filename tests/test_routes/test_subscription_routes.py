@@ -1,6 +1,7 @@
 import os
 import uuid
 from datetime import datetime, timedelta
+from unittest.mock import patch
 
 from database import db
 from models.user_model import User
@@ -96,12 +97,16 @@ class TestSubscriptionStatusRoute:
         assert data["can_generate"] is True
 
     def test_subscription_active(self, client, app):
-        _, token = _create_user(
+        user_id, token = _create_user(
             app, "sub-route@example.com",
             trial_days=-1,
             subscription_active=True,
             subscription_plan="monthly",
         )
+        with app.app_context():
+            user = db.session.get(User, user_id)
+            user.subscription_expires_at = datetime.utcnow() + timedelta(days=30)
+            db.session.commit()
         resp = client.get("/api/user/subscription-status", headers=_auth_header(token))
 
         data = resp.get_json()
@@ -265,6 +270,216 @@ class TestWebhookRoute:
 
         assert resp.status_code == 200
 
+    def test_missing_auth_header_returns_401(self, client, app):
+        payload = _make_payload("TEST", "999")
+        resp = client.post(
+            "/api/webhooks/revenuecat",
+            json=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        assert resp.status_code == 401
+
+    def test_empty_auth_header_returns_401(self, client, app):
+        payload = _make_payload("TEST", "999")
+        resp = client.post(
+            "/api/webhooks/revenuecat",
+            json=payload,
+            headers={"Authorization": "", "Content-Type": "application/json"},
+        )
+        assert resp.status_code == 401
+
+    def test_empty_body_returns_400(self, client, app):
+        resp = client.post(
+            "/api/webhooks/revenuecat",
+            data=b"",
+            headers={"Authorization": WEBHOOK_SECRET, "Content-Type": "application/json"},
+        )
+        assert resp.status_code == 400
+
+    def test_malformed_json_returns_400(self, client, app):
+        resp = client.post(
+            "/api/webhooks/revenuecat",
+            data=b"{invalid json",
+            headers={"Authorization": WEBHOOK_SECRET, "Content-Type": "application/json"},
+        )
+        assert resp.status_code == 400
+
+    def test_unknown_user_returns_404(self, client, app):
+        payload = _make_payload("INITIAL_PURCHASE", "nonexistent-user-id")
+        resp = client.post("/api/webhooks/revenuecat", json=payload, headers=_webhook_header())
+
+        assert resp.status_code == 404
+
+    def test_product_change_updates_plan(self, client, app):
+        user_id, _ = _create_user(
+            app, "webhook-planchange@example.com",
+            subscription_active=True,
+            subscription_plan="dawnotemu_monthly",
+        )
+        with app.app_context():
+            user = db.session.get(User, user_id)
+            user.revenuecat_app_user_id = str(user_id)
+            db.session.commit()
+
+        payload = {
+            "api_version": "1.0",
+            "event": {
+                "type": "PRODUCT_CHANGE",
+                "id": str(uuid.uuid4()),
+                "app_user_id": str(user_id),
+                "new_product_id": "dawnotemu_annual",
+                "product_id": "dawnotemu_monthly",
+                "store": "APP_STORE",
+            },
+        }
+        resp = client.post("/api/webhooks/revenuecat", json=payload, headers=_webhook_header())
+
+        assert resp.status_code == 200
+        with app.app_context():
+            user = db.session.get(User, user_id)
+            assert user.subscription_plan == "dawnotemu_annual"
+
+    def test_billing_issue_sets_flag(self, client, app):
+        user_id, _ = _create_user(
+            app, "webhook-billing@example.com",
+            subscription_active=True,
+        )
+        with app.app_context():
+            user = db.session.get(User, user_id)
+            user.revenuecat_app_user_id = str(user_id)
+            db.session.commit()
+
+        payload = _make_payload("BILLING_ISSUE", user_id)
+        resp = client.post("/api/webhooks/revenuecat", json=payload, headers=_webhook_header())
+
+        assert resp.status_code == 200
+        with app.app_context():
+            user = db.session.get(User, user_id)
+            assert user.billing_issue_at is not None
+            assert user.subscription_active is True  # still active
+
+    def test_uncancellation_sets_will_renew_true(self, client, app):
+        user_id, _ = _create_user(
+            app, "webhook-uncancel@example.com",
+            subscription_active=True,
+            subscription_will_renew=False,
+        )
+        with app.app_context():
+            user = db.session.get(User, user_id)
+            user.revenuecat_app_user_id = str(user_id)
+            db.session.commit()
+
+        payload = _make_payload("UNCANCELLATION", user_id)
+        resp = client.post("/api/webhooks/revenuecat", json=payload, headers=_webhook_header())
+
+        assert resp.status_code == 200
+        with app.app_context():
+            user = db.session.get(User, user_id)
+            assert user.subscription_will_renew is True
+
+    def test_unhandled_event_type_returns_200(self, client, app):
+        user_id, _ = _create_user(app, "webhook-alias@example.com")
+        with app.app_context():
+            user = db.session.get(User, user_id)
+            user.revenuecat_app_user_id = str(user_id)
+            db.session.commit()
+
+        payload = _make_payload("SUBSCRIBER_ALIAS", user_id)
+        resp = client.post("/api/webhooks/revenuecat", json=payload, headers=_webhook_header())
+
+        assert resp.status_code == 200
+
+    def test_renewal_clears_billing_issue(self, client, app):
+        user_id, _ = _create_user(
+            app, "webhook-billing-clear@example.com",
+            trial_days=-1,
+            subscription_active=True,
+        )
+        with app.app_context():
+            user = db.session.get(User, user_id)
+            user.revenuecat_app_user_id = str(user_id)
+            user.billing_issue_at = datetime.utcnow()
+            db.session.commit()
+
+        payload = _make_payload("RENEWAL", user_id)
+        resp = client.post("/api/webhooks/revenuecat", json=payload, headers=_webhook_header())
+
+        assert resp.status_code == 200
+        with app.app_context():
+            user = db.session.get(User, user_id)
+            assert user.billing_issue_at is None
+
+    def test_bearer_prefix_auth_accepted(self, client, app):
+        """Webhook should accept Authorization header with Bearer prefix."""
+        payload = _make_payload("TEST", "999")
+        resp = client.post(
+            "/api/webhooks/revenuecat",
+            json=payload,
+            headers={"Authorization": f"Bearer {WEBHOOK_SECRET}", "Content-Type": "application/json"},
+        )
+        assert resp.status_code == 200
+
+
+# ─── POST /api/user/link-revenuecat ──────────────────────────────────────
+
+
+class TestLinkRevenueCatRoute:
+
+    def test_link_success(self, client, app):
+        _, token = _create_user(app, "link-ok@example.com")
+        resp = client.post(
+            "/api/user/link-revenuecat",
+            json={"revenuecat_app_user_id": "rc_user_123"},
+            headers=_auth_header(token),
+        )
+
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["status"] == "linked"
+        assert data["revenuecat_app_user_id"] == "rc_user_123"
+
+    def test_link_missing_id_returns_400(self, client, app):
+        _, token = _create_user(app, "link-missing@example.com")
+        resp = client.post(
+            "/api/user/link-revenuecat",
+            json={"revenuecat_app_user_id": ""},
+            headers=_auth_header(token),
+        )
+        assert resp.status_code == 400
+
+    def test_link_conflict_returns_409(self, client, app):
+        user1_id, _ = _create_user(app, "link-conflict1@example.com")
+        _, token2 = _create_user(app, "link-conflict2@example.com")
+
+        with app.app_context():
+            user1 = db.session.get(User, user1_id)
+            user1.revenuecat_app_user_id = "rc_taken"
+            db.session.commit()
+
+        resp = client.post(
+            "/api/user/link-revenuecat",
+            json={"revenuecat_app_user_id": "rc_taken"},
+            headers=_auth_header(token2),
+        )
+        assert resp.status_code == 409
+
+    def test_link_too_long_id_returns_400(self, client, app):
+        _, token = _create_user(app, "link-long@example.com")
+        long_id = "x" * 101
+        resp = client.post(
+            "/api/user/link-revenuecat",
+            json={"revenuecat_app_user_id": long_id},
+            headers=_auth_header(token),
+        )
+        assert resp.status_code == 400
+
+    def test_link_unauthenticated_returns_401(self, client, app):
+        resp = client.post(
+            "/api/user/link-revenuecat",
+            json={"revenuecat_app_user_id": "rc_user_456"},
+        )
+        assert resp.status_code == 401
+
 
 # ─── POST /api/credits/grant-addon ───────────────────────────────────────
 
@@ -279,9 +494,14 @@ class TestGrantAddonRoute:
             subscription_plan="monthly",
             credits=credits,
         )
+        with app.app_context():
+            user = db.session.get(User, user_id)
+            user.subscription_expires_at = datetime.utcnow() + timedelta(days=30)
+            db.session.commit()
         return user_id, token
 
-    def test_grant_addon_success(self, client, app):
+    @patch("controllers.addon_controller._validate_receipt_with_revenuecat", return_value=True)
+    def test_grant_addon_success(self, mock_validate, client, app):
         _, token = self._create_subscribed_user(app, "addon-ok@example.com", credits=10)
         resp = client.post(
             "/api/credits/grant-addon",
@@ -294,7 +514,8 @@ class TestGrantAddonRoute:
         assert data["credits_granted"] == 10
         assert data["new_balance"] == 20
 
-    def test_grant_addon_idempotent(self, client, app):
+    @patch("controllers.addon_controller._validate_receipt_with_revenuecat", return_value=True)
+    def test_grant_addon_idempotent(self, mock_validate, client, app):
         _, token = self._create_subscribed_user(app, "addon-idem@example.com", credits=10)
         body = {"receipt_token": "rc_route_idem", "product_id": "credits_10", "platform": "ios"}
 

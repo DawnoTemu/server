@@ -114,3 +114,6 @@ docker-compose.override.yaml
 docker-compose.local.yaml
 .docker-compose-env.yml
 .serena/
+
+# Database backups
+backups/

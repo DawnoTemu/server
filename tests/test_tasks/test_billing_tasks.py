@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
@@ -132,6 +133,7 @@ class TestGrantYearlySubscriberMonthlyCredits:
                 credits_balance=0,
                 subscription_active=True,
                 subscription_plan="dawnotemu_annual",
+                subscription_expires_at=datetime.utcnow() + timedelta(days=365),
             )
             user.set_password("TestPass123!")
             db.session.add(user)
@@ -204,3 +206,70 @@ class TestGrantYearlySubscriberMonthlyCredits:
 
             db.session.refresh(user)
             assert user.credits_balance == 0
+
+    def test_skips_expired_yearly_subscribers(self, app):
+        """Users with subscription_active=True but expired subscription_expires_at should be skipped."""
+        with app.app_context():
+            user = User(
+                email="yearly-expired@example.com",
+                is_active=True,
+                email_confirmed=True,
+                credits_balance=0,
+                subscription_active=True,
+                subscription_plan="dawnotemu_annual",
+                subscription_expires_at=datetime.utcnow() - timedelta(days=1),
+            )
+            user.set_password("TestPass123!")
+            db.session.add(user)
+            db.session.commit()
+
+            billing_tasks.grant_yearly_subscriber_monthly_credits()
+
+            db.session.refresh(user)
+            assert user.credits_balance == 0
+
+
+class TestExpireCreditLotsReraise:
+
+    def test_expire_credit_lots_reraises_on_commit_failure(self, monkeypatch):
+        """expire_credit_lots should re-raise on commit failure so Celery can retry."""
+        now = datetime.utcnow()
+        lot = CreditLot(
+            user_id=1,
+            source='monthly',
+            amount_granted=10,
+            amount_remaining=10,
+            expires_at=now - timedelta(days=1),
+        )
+        lot.id = 101
+        user = SimpleNamespace(id=1, credits_balance=10)
+
+        class FailingSession:
+            def __init__(self):
+                self.rollback_called = False
+
+            def query(self, model):
+                return _FakeQuery([lot])
+
+            def add(self, obj):
+                pass
+
+            def get(self, model, obj_id):
+                return user
+
+            def commit(self):
+                raise RuntimeError("db down")
+
+            def rollback(self):
+                self.rollback_called = True
+
+            def flush(self):
+                pass
+
+        session = FailingSession()
+        monkeypatch.setattr(billing_tasks, 'db', SimpleNamespace(session=session))
+
+        with pytest.raises(RuntimeError, match="db down"):
+            billing_tasks.expire_credit_lots()
+
+        assert session.rollback_called is True

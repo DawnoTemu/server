@@ -68,7 +68,9 @@ def get_my_credit_history(current_user):
 
 
 @billing_bp.route('/stories/<int:story_id>/credits', methods=['GET'])
-def get_story_credits(story_id):
+@token_required
+@limiter.limit("30 per minute")
+def get_story_credits(current_user, story_id):
     story = StoryModel.get_story_by_id(story_id)
     if not story:
         return jsonify({'error': 'Story not found'}), 404

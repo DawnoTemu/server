@@ -39,14 +39,15 @@ def grant_monthly_credits():
     else:
         next_month = start_of_month.replace(month=start_of_month.month + 1)
 
-    users = db.session.query(User).filter(User.is_active.is_(True)).all()
+    user_ids = [uid for (uid,) in db.session.query(User.id).filter(User.is_active.is_(True)).all()]
     granted = 0
-    for u in users:
+    failed = 0
+    for uid in user_ids:
         # Check if user already has a monthly lot created this month
         existing = (
             db.session.query(CreditLot)
             .filter(
-                CreditLot.user_id == u.id,
+                CreditLot.user_id == uid,
                 CreditLot.source == 'monthly',
                 CreditLot.created_at >= start_of_month,
                 CreditLot.created_at < next_month,
@@ -56,11 +57,19 @@ def grant_monthly_credits():
         if existing:
             continue
         try:
-            credit_grant(u.id, amount, reason='monthly_grant', source='monthly', expires_at=None)
+            credit_grant(uid, amount, reason='monthly_grant', source='monthly', expires_at=None)
             granted += 1
         except Exception as e:
-            logger.error('Failed granting monthly credits to user %s: %s', u.id, e)
-    logger.info('Monthly credit grant complete. Users granted: %s', granted)
+            db.session.rollback()
+            failed += 1
+            logger.error('Failed granting monthly credits to user %s: %s', uid, e, exc_info=True)
+
+    logger.info('Monthly credit grant complete. Granted: %s, failed: %s', granted, failed)
+
+    if failed > 0 and (failed / max(granted + failed, 1)) > 0.1:
+        raise RuntimeError(
+            f"Monthly credit grant failure rate too high: {failed}/{granted + failed}"
+        )
 
 
 # Register Celery beat schedule (runs daily at 03:00 UTC)
@@ -74,9 +83,6 @@ celery_app.conf.beat_schedule = {
 }
 
 
-YEARLY_PRODUCT_IDS = {'dawnotemu_annual', 'dawnotemu_yearly'}
-
-
 @celery_app.task(name='billing.grant_yearly_subscriber_monthly_credits', base=FlaskTask, ignore_result=True)
 def grant_yearly_subscriber_monthly_credits():
     """Daily scheduler task that grants monthly credits to yearly subscribers.
@@ -85,6 +91,9 @@ def grant_yearly_subscriber_monthly_credits():
     but should get credits every month.  This task finds active yearly
     subscribers who have not yet received a monthly lot this calendar month
     and grants them their credits (YEARLY_SUBSCRIPTION_MONTHLY_CREDITS, default 30).
+
+    The webhook handler also grants credits on INITIAL_PURCHASE; the
+    duplicate-lot check prevents double-granting in the same calendar month.
     """
     amount = int(getattr(Config, 'YEARLY_SUBSCRIPTION_MONTHLY_CREDITS', 30) or 30)
     if amount <= 0:
@@ -98,24 +107,28 @@ def grant_yearly_subscriber_monthly_credits():
     else:
         next_month = start_of_month.replace(month=start_of_month.month + 1)
 
-    # Find active yearly subscribers
-    yearly_users = (
-        db.session.query(User)
+    # Find active yearly subscribers whose subscription has not expired
+    yearly_user_ids = [
+        uid for (uid,) in
+        db.session.query(User.id)
         .filter(
             User.is_active.is_(True),
             User.subscription_active.is_(True),
-            User.subscription_plan.in_(YEARLY_PRODUCT_IDS),
+            User.subscription_plan.in_(Config.YEARLY_PRODUCT_IDS),
+            User.subscription_expires_at.isnot(None),
+            User.subscription_expires_at > now,
         )
         .all()
-    )
+    ]
 
     granted = 0
-    for u in yearly_users:
+    failed = 0
+    for uid in yearly_user_ids:
         # Skip if already granted this month
         existing = (
             db.session.query(CreditLot)
             .filter(
-                CreditLot.user_id == u.id,
+                CreditLot.user_id == uid,
                 CreditLot.source == 'monthly',
                 CreditLot.created_at >= start_of_month,
                 CreditLot.created_at < next_month,
@@ -126,16 +139,26 @@ def grant_yearly_subscriber_monthly_credits():
             continue
         try:
             credit_grant(
-                u.id, amount,
+                uid, amount,
                 reason='yearly_subscription_monthly_grant',
                 source='monthly',
                 expires_at=None,
             )
             granted += 1
         except Exception as e:
-            logger.error('Failed granting yearly monthly credits to user %s: %s', u.id, e)
+            db.session.rollback()
+            failed += 1
+            logger.error('Failed granting yearly monthly credits to user %s: %s', uid, e, exc_info=True)
 
-    logger.info('Yearly subscriber monthly credit grant complete. Users granted: %s/%s', granted, len(yearly_users))
+    logger.info(
+        'Yearly subscriber monthly credit grant complete. Granted: %s/%s, failed: %s',
+        granted, len(yearly_user_ids), failed,
+    )
+
+    if failed > 0 and (failed / max(granted + failed, 1)) > 0.1:
+        raise RuntimeError(
+            f"Yearly monthly credit grant failure rate too high: {failed}/{granted + failed}"
+        )
 
 
 @celery_app.task(name='billing.expire_credit_lots', base=FlaskTask, ignore_result=True)
@@ -162,7 +185,8 @@ def expire_credit_lots():
     try:
         bind = getattr(db.session, "get_bind", lambda: None)()
         dialect_name = getattr(getattr(bind, "dialect", None), "name", None)
-    except Exception:
+    except (AttributeError, TypeError):
+        logger.warning("Could not determine dialect for row locking; proceeding without FOR UPDATE", exc_info=True)
         dialect_name = None
     if hasattr(query, "with_for_update") and dialect_name not in (None, "sqlite"):
         query = query.with_for_update()
@@ -202,6 +226,7 @@ def expire_credit_lots():
     for user_id, delta in delta_by_user.items():
         user = db.session.get(User, user_id)
         if not user:
+            logger.warning("User %s not found during credit lot expiration — skipping balance adjustment", user_id)
             continue
         curr = int(user.credits_balance or 0)
         new_val = max(0, curr - delta)
@@ -212,7 +237,8 @@ def expire_credit_lots():
         logger.info('Expired %d lots; adjusted %d users.', len(expired_lots), len(delta_by_user))
     except Exception as e:
         db.session.rollback()
-        logger.error('Error expiring credit lots: %s', e)
+        logger.error('Error expiring credit lots: %s', e, exc_info=True)
+        raise
 
 
 # Schedule the expiration sweeper daily at 03:15 UTC

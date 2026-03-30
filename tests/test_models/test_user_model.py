@@ -254,6 +254,123 @@ class TestTrialAndSubscriptionFields:
             delta = user.trial_expires_at - datetime.utcnow()
             assert 13 <= delta.days <= 14
 
+    def test_subscription_is_active_when_active_and_not_expired(self, app):
+        with app.app_context():
+            user = User(
+                email="sub-active-check@example.com",
+                is_active=True,
+                email_confirmed=True,
+                credits_balance=0,
+                subscription_active=True,
+                subscription_plan="monthly",
+                subscription_expires_at=datetime.utcnow() + timedelta(days=30),
+            )
+            user.set_password("TestPass123!")
+            db.session.add(user)
+            db.session.commit()
+
+            assert user.subscription_is_active is True
+
+    def test_subscription_is_active_false_when_expired(self, app):
+        with app.app_context():
+            user = User(
+                email="sub-expired-check@example.com",
+                is_active=True,
+                email_confirmed=True,
+                credits_balance=0,
+                subscription_active=True,
+                subscription_plan="monthly",
+                subscription_expires_at=datetime.utcnow() - timedelta(days=1),
+            )
+            user.set_password("TestPass123!")
+            db.session.add(user)
+            db.session.commit()
+
+            assert user.subscription_is_active is False
+
+    def test_subscription_is_active_false_when_no_expiry(self, app):
+        """Null expiration is treated as inactive to prevent accidental permanent access."""
+        with app.app_context():
+            user = User(
+                email="sub-no-expiry@example.com",
+                is_active=True,
+                email_confirmed=True,
+                credits_balance=0,
+                subscription_active=True,
+                subscription_plan="monthly",
+                subscription_expires_at=None,
+            )
+            user.set_password("TestPass123!")
+            db.session.add(user)
+            db.session.commit()
+
+            assert user.subscription_is_active is False
+
+    def test_subscription_is_active_false_when_inactive(self, app):
+        with app.app_context():
+            user = User(
+                email="sub-inactive-check@example.com",
+                is_active=True,
+                email_confirmed=True,
+                credits_balance=0,
+                subscription_active=False,
+            )
+            user.set_password("TestPass123!")
+            db.session.add(user)
+            db.session.commit()
+
+            assert user.subscription_is_active is False
+
+    def test_can_generate_with_trial(self, app):
+        with app.app_context():
+            user = User(
+                email="can-gen-trial@example.com",
+                is_active=True,
+                email_confirmed=True,
+                credits_balance=0,
+                trial_expires_at=datetime.utcnow() + timedelta(days=7),
+                subscription_active=False,
+            )
+            user.set_password("TestPass123!")
+            db.session.add(user)
+            db.session.commit()
+
+            assert user.can_generate is True
+
+    def test_can_generate_with_subscription(self, app):
+        with app.app_context():
+            user = User(
+                email="can-gen-sub@example.com",
+                is_active=True,
+                email_confirmed=True,
+                credits_balance=0,
+                trial_expires_at=datetime.utcnow() - timedelta(days=1),
+                subscription_active=True,
+                subscription_plan="monthly",
+                subscription_expires_at=datetime.utcnow() + timedelta(days=30),
+            )
+            user.set_password("TestPass123!")
+            db.session.add(user)
+            db.session.commit()
+
+            assert user.can_generate is True
+
+    def test_can_generate_false_when_nothing_active(self, app):
+        with app.app_context():
+            user = User(
+                email="cant-gen@example.com",
+                is_active=True,
+                email_confirmed=True,
+                credits_balance=0,
+                trial_expires_at=datetime.utcnow() - timedelta(days=1),
+                subscription_active=False,
+            )
+            user.set_password("TestPass123!")
+            db.session.add(user)
+            db.session.commit()
+
+            assert user.can_generate is False
+
     def test_to_dict_includes_subscription_fields(self, app):
         with app.app_context():
             user = User(
@@ -264,6 +381,7 @@ class TestTrialAndSubscriptionFields:
                 trial_expires_at=datetime.utcnow() + timedelta(days=7),
                 subscription_active=True,
                 subscription_plan="monthly",
+                subscription_expires_at=datetime.utcnow() + timedelta(days=30),
             )
             user.set_password("TestPass123!")
             db.session.add(user)
@@ -272,8 +390,10 @@ class TestTrialAndSubscriptionFields:
             d = user.to_dict()
             assert "trial_is_active" in d
             assert "trial_expires_at" in d
-            assert "subscription_active" in d
+            assert "subscription_is_active" in d
             assert "subscription_plan" in d
+            assert "can_generate" in d
             assert d["trial_is_active"] is True
-            assert d["subscription_active"] is True
+            assert d["subscription_is_active"] is True
             assert d["subscription_plan"] == "monthly"
+            assert d["can_generate"] is True

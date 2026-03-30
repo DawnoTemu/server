@@ -30,6 +30,8 @@ def setup_test_environment():
     os.environ["AWS_REGION"] = "test-region-1"
     os.environ["S3_BUCKET_NAME"] = "test-bucket"
     os.environ["REVENUECAT_WEBHOOK_SECRET"] = "test-webhook-secret"
+    os.environ.setdefault("REVENUECAT_API_KEY", "test-revenuecat-api-key")
+    os.environ.setdefault("REVENUECAT_PROJECT_ID", "proj802211a0")
     os.environ["TRIAL_DURATION_DAYS"] = "14"
     os.environ["MONTHLY_SUBSCRIPTION_CREDITS"] = "26"
 
