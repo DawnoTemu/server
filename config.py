@@ -41,10 +41,11 @@ class Config:
     
     # Additional psycopg3 specific configuration
     SQLALCHEMY_ENGINE_OPTIONS = {
-        "pool_pre_ping": True,  # Verify connections before using them
-        "pool_size": 10,        # Max number of connections in the pool
-        "max_overflow": 15,     # Max number of connections that can be created beyond pool_size
-        "pool_recycle": 300,    # Recycle connections after 5 min to prevent stale connections in Celery workers
+        "pool_pre_ping": True,
+        "pool_size": int(os.getenv("SQLALCHEMY_POOL_SIZE", "5")),
+        "max_overflow": int(os.getenv("SQLALCHEMY_MAX_OVERFLOW", "5")),
+        "pool_recycle": 300,
+        "pool_timeout": 20,
     }
     
     # AWS and S3 configuration
