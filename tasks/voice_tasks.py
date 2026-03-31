@@ -70,6 +70,7 @@ class VoiceTask(Task):
                         db.session.commit()
                         logger.info(f"Updated voice {voice_id} status to ERROR")
             except Exception as e:
+                db.session.rollback()
                 logger.error(f"Error in on_failure handler: {e}")
 
 
@@ -220,6 +221,11 @@ def process_voice_queue(self):
                 jitter = random.randint(-base_delay // 3, base_delay // 3)
                 delay_seconds = max(5, base_delay + jitter)
                 VoiceSlotQueue.enqueue(item["voice_id"], item, delay_seconds=delay_seconds)
+
+    # Roll back the implicit transaction so the connection returns to the pool
+    # promptly instead of waiting for app_context teardown.  task_postrun
+    # calls db.session.remove() as a final safety net after the task finishes.
+    db.session.rollback()
 
     if processed:
         logger.info("Dispatched %s queued allocation request(s)", processed)

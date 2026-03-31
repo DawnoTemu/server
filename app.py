@@ -81,6 +81,7 @@ def create_app(testing=False):
     # Configure the app
     app.config['SQLALCHEMY_DATABASE_URI'] = Config.SQLALCHEMY_DATABASE_URI
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = Config.SQLALCHEMY_TRACK_MODIFICATIONS
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = Config.SQLALCHEMY_ENGINE_OPTIONS
     
     # Celery configuration
     redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/0')

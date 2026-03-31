@@ -60,6 +60,7 @@ class AudioTask(Task):
                                 "Failed to refund credits for audio %s: %s", audio_id, refund_exc
                             )
             except Exception as handler_exc:
+                db.session.rollback()
                 logger.error("Error in on_failure handler: %s", handler_exc)
 
 

@@ -17,6 +17,25 @@ logging.getLogger('botocore').setLevel(logging.WARNING)
 logging.getLogger('urllib3').setLevel(logging.WARNING)
 logging.getLogger('werkzeug').setLevel(logging.WARNING)
 
+_config_logger = logging.getLogger(__name__)
+
+
+def _safe_positive_int_env(env_var, default):
+    """Return a positive integer from an env var, falling back to *default* on bad input."""
+    raw = os.getenv(env_var)
+    if raw is None:
+        return default
+    try:
+        val = int(raw)
+    except (ValueError, TypeError):
+        _config_logger.warning("Invalid %s=%r; falling back to %s", env_var, raw, default)
+        return default
+    if val <= 0:
+        _config_logger.warning("%s must be > 0 (got %s); falling back to %s", env_var, val, default)
+        return default
+    return val
+
+
 # Load environment variables
 load_dotenv()
 
@@ -41,10 +60,11 @@ class Config:
     
     # Additional psycopg3 specific configuration
     SQLALCHEMY_ENGINE_OPTIONS = {
-        "pool_pre_ping": True,  # Verify connections before using them
-        "pool_size": 10,        # Max number of connections in the pool
-        "max_overflow": 15,     # Max number of connections that can be created beyond pool_size
-        "pool_recycle": 300,    # Recycle connections after 5 min to prevent stale connections in Celery workers
+        "pool_pre_ping": True,
+        "pool_size": _safe_positive_int_env("SQLALCHEMY_POOL_SIZE", 5),
+        "max_overflow": _safe_positive_int_env("SQLALCHEMY_MAX_OVERFLOW", 5),
+        "pool_recycle": 300,       # Seconds before recycling a connection
+        "pool_timeout": 20,        # Seconds to wait for a connection before raising TimeoutError
     }
     
     # AWS and S3 configuration
