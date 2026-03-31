@@ -61,8 +61,8 @@ class Config:
     # Additional psycopg3 specific configuration
     SQLALCHEMY_ENGINE_OPTIONS = {
         "pool_pre_ping": True,
-        "pool_size": _safe_positive_int_env("SQLALCHEMY_POOL_SIZE", 5),
-        "max_overflow": _safe_positive_int_env("SQLALCHEMY_MAX_OVERFLOW", 5),
+        "pool_size": _safe_positive_int_env("SQLALCHEMY_POOL_SIZE", 10),
+        "max_overflow": _safe_positive_int_env("SQLALCHEMY_MAX_OVERFLOW", 15),
         "pool_recycle": 300,       # Seconds before recycling a connection
         "pool_timeout": 20,        # Seconds to wait for a connection before raising TimeoutError
     }
