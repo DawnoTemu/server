@@ -15,12 +15,20 @@ migrate = Migrate()
 def cleanup_session_after_task(sender=None, **kwargs):
     """Remove scoped session after every Celery task to return connections to the pool.
 
-    Flask-SQLAlchemy's teardown_appcontext normally handles this for HTTP
-    requests, but Celery tasks that exit abnormally (OOM, SIGKILL, unhandled
-    exception before context exit) can leak sessions.  This signal fires
-    reliably after every task execution regardless of outcome.
+    Flask-SQLAlchemy's teardown_appcontext normally handles session cleanup for
+    HTTP requests, but Celery workers reuse a long-lived app context across
+    tasks.  Without explicit cleanup, a session opened by one task can hold a
+    connection through subsequent tasks, eventually exhausting the pool.
+    task_postrun fires after every task completion (success or exception).
     """
-    db.session.remove()
+    try:
+        db.session.remove()
+    except Exception as exc:
+        logger.warning(
+            "Failed to remove DB session in task_postrun (sender=%s): %s",
+            getattr(sender, 'name', sender),
+            exc,
+        )
 
 
 def init_db(app):

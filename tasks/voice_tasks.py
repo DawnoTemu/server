@@ -222,8 +222,9 @@ def process_voice_queue(self):
                 delay_seconds = max(5, base_delay + jitter)
                 VoiceSlotQueue.enqueue(item["voice_id"], item, delay_seconds=delay_seconds)
 
-    # Explicitly close the read transaction so the connection returns to the pool
-    # promptly instead of waiting for app_context teardown.
+    # Roll back the implicit transaction so the connection returns to the pool
+    # promptly instead of waiting for app_context teardown.  task_postrun
+    # calls db.session.remove() as a final safety net after the task finishes.
     db.session.rollback()
 
     if processed:
