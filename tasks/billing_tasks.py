@@ -74,6 +74,70 @@ celery_app.conf.beat_schedule = {
 }
 
 
+YEARLY_PRODUCT_IDS = {'dawnotemu_annual', 'dawnotemu_yearly'}
+
+
+@celery_app.task(name='billing.grant_yearly_subscriber_monthly_credits', base=FlaskTask, ignore_result=True)
+def grant_yearly_subscriber_monthly_credits():
+    """Daily scheduler task that grants monthly credits to yearly subscribers.
+
+    Yearly subscribers receive one RevenueCat INITIAL_PURCHASE event per year,
+    but should get credits every month.  This task finds active yearly
+    subscribers who have not yet received a monthly lot this calendar month
+    and grants them their credits (YEARLY_SUBSCRIPTION_MONTHLY_CREDITS, default 30).
+    """
+    amount = int(getattr(Config, 'YEARLY_SUBSCRIPTION_MONTHLY_CREDITS', 30) or 30)
+    if amount <= 0:
+        logger.info('Yearly monthly credit grants disabled (amount=%s).', amount)
+        return
+
+    now = datetime.utcnow()
+    start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    if start_of_month.month == 12:
+        next_month = start_of_month.replace(year=start_of_month.year + 1, month=1)
+    else:
+        next_month = start_of_month.replace(month=start_of_month.month + 1)
+
+    # Find active yearly subscribers
+    yearly_users = (
+        db.session.query(User)
+        .filter(
+            User.is_active.is_(True),
+            User.subscription_active.is_(True),
+            User.subscription_plan.in_(YEARLY_PRODUCT_IDS),
+        )
+        .all()
+    )
+
+    granted = 0
+    for u in yearly_users:
+        # Skip if already granted this month
+        existing = (
+            db.session.query(CreditLot)
+            .filter(
+                CreditLot.user_id == u.id,
+                CreditLot.source == 'monthly',
+                CreditLot.created_at >= start_of_month,
+                CreditLot.created_at < next_month,
+            )
+            .first()
+        )
+        if existing:
+            continue
+        try:
+            credit_grant(
+                u.id, amount,
+                reason='yearly_subscription_monthly_grant',
+                source='monthly',
+                expires_at=None,
+            )
+            granted += 1
+        except Exception as e:
+            logger.error('Failed granting yearly monthly credits to user %s: %s', u.id, e)
+
+    logger.info('Yearly subscriber monthly credit grant complete. Users granted: %s/%s', granted, len(yearly_users))
+
+
 @celery_app.task(name='billing.expire_credit_lots', base=FlaskTask, ignore_result=True)
 def expire_credit_lots():
     """Daily job to expire credit lots at or before now and adjust balances.
@@ -158,5 +222,9 @@ celery_app.conf.beat_schedule = {
     'expire-credit-lots-daily': {
         'task': 'billing.expire_credit_lots',
         'schedule': crontab(minute=15, hour=3),
+    },
+    'yearly-subscriber-monthly-credits': {
+        'task': 'billing.grant_yearly_subscriber_monthly_credits',
+        'schedule': crontab(minute=30, hour=3),  # daily at 03:30 UTC
     },
 }

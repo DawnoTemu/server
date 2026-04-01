@@ -1,0 +1,334 @@
+import os
+import uuid
+from datetime import datetime, timedelta
+
+from database import db
+from models.user_model import User
+from models.credit_model import grant as credit_grant
+from controllers.auth_controller import AuthController
+
+
+WEBHOOK_SECRET = os.environ.get("REVENUECAT_WEBHOOK_SECRET", "test-webhook-secret")
+
+
+def _create_user(app, email, trial_days=14, subscription_active=False,
+                 subscription_plan=None, subscription_will_renew=False,
+                 revenuecat_id=None, credits=0):
+    with app.app_context():
+        trial_at = (
+            datetime.utcnow() + timedelta(days=trial_days)
+            if trial_days is not None
+            else None
+        )
+        user = User(
+            email=email,
+            is_active=True,
+            email_confirmed=True,
+            credits_balance=0,
+            trial_expires_at=trial_at,
+            subscription_active=subscription_active,
+            subscription_plan=subscription_plan,
+            subscription_will_renew=subscription_will_renew,
+            revenuecat_app_user_id=revenuecat_id,
+        )
+        user.set_password("TestPass123!")
+        db.session.add(user)
+        db.session.commit()
+
+        if credits > 0:
+            credit_grant(user.id, credits, reason="test_seed", source="free")
+            db.session.refresh(user)
+
+        token = AuthController.generate_access_token(user, expires_delta=timedelta(minutes=30))
+        return user.id, token
+
+
+def _auth_header(token):
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _webhook_header():
+    return {"Authorization": WEBHOOK_SECRET, "Content-Type": "application/json"}
+
+
+def _make_payload(event_type, app_user_id, event_id=None, product_id="dawnotemu_monthly",
+                  store="APP_STORE", expiration_days=30):
+    return {
+        "api_version": "1.0",
+        "event": {
+            "type": event_type,
+            "id": event_id or str(uuid.uuid4()),
+            "app_user_id": str(app_user_id),
+            "product_id": product_id,
+            "store": store,
+            "expiration_at_ms": int(
+                (datetime.utcnow() + timedelta(days=expiration_days)).timestamp() * 1000
+            ),
+        },
+    }
+
+
+# ─── GET /api/user/subscription-status ───────────────────────────────────
+
+
+class TestSubscriptionStatusRoute:
+
+    def test_authenticated_returns_correct_shape(self, client, app):
+        _, token = _create_user(app, "status-shape@example.com")
+        resp = client.get("/api/user/subscription-status", headers=_auth_header(token))
+
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert isinstance(data["trial"], dict)
+        assert isinstance(data["can_generate"], bool)
+        assert "initial_credits" in data
+
+    def test_unauthenticated_returns_401(self, client, app):
+        resp = client.get("/api/user/subscription-status")
+        assert resp.status_code == 401
+
+    def test_trial_active(self, client, app):
+        _, token = _create_user(app, "trial-route@example.com", trial_days=7)
+        resp = client.get("/api/user/subscription-status", headers=_auth_header(token))
+
+        data = resp.get_json()
+        assert data["trial"]["active"] is True
+        assert data["can_generate"] is True
+
+    def test_subscription_active(self, client, app):
+        _, token = _create_user(
+            app, "sub-route@example.com",
+            trial_days=-1,
+            subscription_active=True,
+            subscription_plan="monthly",
+        )
+        resp = client.get("/api/user/subscription-status", headers=_auth_header(token))
+
+        data = resp.get_json()
+        assert data["subscription"]["active"] is True
+        assert data["can_generate"] is True
+
+
+# ─── POST /api/webhooks/revenuecat ───────────────────────────────────────
+
+
+class TestWebhookRoute:
+
+    def test_initial_purchase(self, client, app):
+        user_id, _ = _create_user(
+            app, "webhook-init@example.com", trial_days=-1,
+        )
+        with app.app_context():
+            user = db.session.get(User, user_id)
+            user.revenuecat_app_user_id = str(user_id)
+            db.session.commit()
+
+        payload = _make_payload("INITIAL_PURCHASE", user_id)
+        resp = client.post("/api/webhooks/revenuecat", json=payload, headers=_webhook_header())
+
+        assert resp.status_code == 200
+        with app.app_context():
+            user = db.session.get(User, user_id)
+            assert user.subscription_active is True
+            assert user.subscription_will_renew is True
+            assert user.credits_balance == 26
+
+    def test_renewal_grants_credits(self, client, app):
+        user_id, _ = _create_user(
+            app, "webhook-renew@example.com",
+            trial_days=-1,
+            subscription_active=True,
+        )
+        with app.app_context():
+            user = db.session.get(User, user_id)
+            user.revenuecat_app_user_id = str(user_id)
+            db.session.commit()
+
+        payload = _make_payload("RENEWAL", user_id)
+        resp = client.post("/api/webhooks/revenuecat", json=payload, headers=_webhook_header())
+
+        assert resp.status_code == 200
+        with app.app_context():
+            user = db.session.get(User, user_id)
+            assert user.credits_balance == 26
+
+    def test_initial_purchase_yearly_grants_30_credits(self, client, app):
+        user_id, _ = _create_user(
+            app, "webhook-yearly@example.com", trial_days=-1,
+        )
+        with app.app_context():
+            user = db.session.get(User, user_id)
+            user.revenuecat_app_user_id = str(user_id)
+            db.session.commit()
+
+        payload = _make_payload("INITIAL_PURCHASE", user_id, product_id="dawnotemu_annual")
+        resp = client.post("/api/webhooks/revenuecat", json=payload, headers=_webhook_header())
+
+        assert resp.status_code == 200
+        with app.app_context():
+            user = db.session.get(User, user_id)
+            assert user.subscription_active is True
+            assert user.subscription_plan == "dawnotemu_annual"
+            assert user.credits_balance == 30  # yearly gets 30, not 26
+
+    def test_renewal_yearly_grants_30_credits(self, client, app):
+        user_id, _ = _create_user(
+            app, "webhook-yearly-renew@example.com",
+            trial_days=-1,
+            subscription_active=True,
+            subscription_plan="dawnotemu_annual",
+        )
+        with app.app_context():
+            user = db.session.get(User, user_id)
+            user.revenuecat_app_user_id = str(user_id)
+            db.session.commit()
+
+        payload = _make_payload("RENEWAL", user_id, product_id="dawnotemu_annual")
+        resp = client.post("/api/webhooks/revenuecat", json=payload, headers=_webhook_header())
+
+        assert resp.status_code == 200
+        with app.app_context():
+            user = db.session.get(User, user_id)
+            assert user.credits_balance == 30
+
+    def test_cancellation_sets_will_renew_false(self, client, app):
+        user_id, _ = _create_user(
+            app, "webhook-cancel@example.com",
+            subscription_active=True,
+            subscription_will_renew=True,
+        )
+        with app.app_context():
+            user = db.session.get(User, user_id)
+            user.revenuecat_app_user_id = str(user_id)
+            db.session.commit()
+
+        payload = _make_payload("CANCELLATION", user_id)
+        resp = client.post("/api/webhooks/revenuecat", json=payload, headers=_webhook_header())
+
+        assert resp.status_code == 200
+        with app.app_context():
+            user = db.session.get(User, user_id)
+            assert user.subscription_will_renew is False
+            assert user.subscription_active is True  # still active until period end
+
+    def test_expiration_deactivates(self, client, app):
+        user_id, _ = _create_user(
+            app, "webhook-expire@example.com",
+            subscription_active=True,
+        )
+        with app.app_context():
+            user = db.session.get(User, user_id)
+            user.revenuecat_app_user_id = str(user_id)
+            db.session.commit()
+
+        payload = _make_payload("EXPIRATION", user_id)
+        resp = client.post("/api/webhooks/revenuecat", json=payload, headers=_webhook_header())
+
+        assert resp.status_code == 200
+        with app.app_context():
+            user = db.session.get(User, user_id)
+            assert user.subscription_active is False
+
+    def test_invalid_auth_returns_401(self, client, app):
+        payload = _make_payload("TEST", "999")
+        resp = client.post(
+            "/api/webhooks/revenuecat",
+            json=payload,
+            headers={"Authorization": "wrong-secret", "Content-Type": "application/json"},
+        )
+        assert resp.status_code == 401
+
+    def test_duplicate_event_is_idempotent(self, client, app):
+        user_id, _ = _create_user(app, "webhook-dup@example.com", trial_days=-1)
+        with app.app_context():
+            user = db.session.get(User, user_id)
+            user.revenuecat_app_user_id = str(user_id)
+            db.session.commit()
+
+        event_id = str(uuid.uuid4())
+        payload = _make_payload("INITIAL_PURCHASE", user_id, event_id=event_id)
+
+        resp1 = client.post("/api/webhooks/revenuecat", json=payload, headers=_webhook_header())
+        resp2 = client.post("/api/webhooks/revenuecat", json=payload, headers=_webhook_header())
+
+        assert resp1.status_code == 200
+        assert resp2.status_code == 200
+
+        with app.app_context():
+            user = db.session.get(User, user_id)
+            # Credits should be granted only once (26, not 52)
+            assert user.credits_balance == 26
+
+    def test_test_event_returns_200(self, client, app):
+        payload = _make_payload("TEST", "999")
+        resp = client.post("/api/webhooks/revenuecat", json=payload, headers=_webhook_header())
+
+        assert resp.status_code == 200
+
+
+# ─── POST /api/credits/grant-addon ───────────────────────────────────────
+
+
+class TestGrantAddonRoute:
+
+    def _create_subscribed_user(self, app, email, credits=0):
+        user_id, token = _create_user(
+            app, email,
+            trial_days=-1,
+            subscription_active=True,
+            subscription_plan="monthly",
+            credits=credits,
+        )
+        return user_id, token
+
+    def test_grant_addon_success(self, client, app):
+        _, token = self._create_subscribed_user(app, "addon-ok@example.com", credits=10)
+        resp = client.post(
+            "/api/credits/grant-addon",
+            json={"receipt_token": "rc_route_ok", "product_id": "credits_10", "platform": "ios"},
+            headers=_auth_header(token),
+        )
+
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["credits_granted"] == 10
+        assert data["new_balance"] == 20
+
+    def test_grant_addon_idempotent(self, client, app):
+        _, token = self._create_subscribed_user(app, "addon-idem@example.com", credits=10)
+        body = {"receipt_token": "rc_route_idem", "product_id": "credits_10", "platform": "ios"}
+
+        client.post("/api/credits/grant-addon", json=body, headers=_auth_header(token))
+        resp = client.post("/api/credits/grant-addon", json=body, headers=_auth_header(token))
+
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["credits_granted"] == 10
+        assert data["new_balance"] == 20  # not 30
+
+    def test_grant_addon_non_subscriber_403(self, client, app):
+        _, token = _create_user(app, "addon-nosub@example.com", trial_days=-1)
+        resp = client.post(
+            "/api/credits/grant-addon",
+            json={"receipt_token": "rc_nosub", "product_id": "credits_10", "platform": "ios"},
+            headers=_auth_header(token),
+        )
+        assert resp.status_code == 403
+
+    def test_grant_addon_invalid_product_400(self, client, app):
+        _, token = self._create_subscribed_user(app, "addon-badprod@example.com")
+        resp = client.post(
+            "/api/credits/grant-addon",
+            json={"receipt_token": "rc_badprod", "product_id": "credits_999", "platform": "ios"},
+            headers=_auth_header(token),
+        )
+        assert resp.status_code == 400
+
+    def test_grant_addon_missing_fields_400(self, client, app):
+        _, token = self._create_subscribed_user(app, "addon-missing@example.com")
+        resp = client.post(
+            "/api/credits/grant-addon",
+            json={"receipt_token": "rc_miss"},
+            headers=_auth_header(token),
+        )
+        assert resp.status_code == 400
