@@ -59,6 +59,12 @@ def _validate_receipt_with_revenuecat(user, receipt_token, expected_product_id):
         logger.warning("User %s has no revenuecat_app_user_id; cannot validate receipt", user.id)
         return False
 
+    # TEMP DEBUG — remove after diagnosing mobile receipt_token mismatch
+    logger.info(
+        "DEBUG_RECEIPT_TOKEN: user=%s rc_user_id=%s expected_product=%s receipt_token=%r (len=%d)",
+        user.id, rc_user_id, expected_product_id, receipt_token, len(receipt_token or ""),
+    )
+
     _MAX_PAGES = 5  # Safety limit to prevent infinite pagination loops
 
     headers = {
@@ -86,6 +92,17 @@ def _validate_receipt_with_revenuecat(user, receipt_token, expected_product_id):
                 raise ReceiptValidationUnavailable("RevenueCat returned invalid response") from exc
 
             # v2 API returns {items: [{id, store_purchase_identifier, product_id, ...}]}
+            # TEMP DEBUG — dump every purchase RC returns so we can compare identifiers
+            _debug_items = data.get("items", [])
+            logger.info(
+                "DEBUG_RECEIPT_TOKEN: RC returned %d purchases for user %s",
+                len(_debug_items), user.id,
+            )
+            for _i, _p in enumerate(_debug_items):
+                logger.info(
+                    "DEBUG_RECEIPT_TOKEN: [item %d] id=%r store_purchase_identifier=%r product_id=%r",
+                    _i, _p.get("id"), _p.get("store_purchase_identifier"), _p.get("product_id"),
+                )
             for purchase in data.get("items", []):
                 store_id = str(purchase.get("store_purchase_identifier", ""))
                 purchase_id = purchase.get("id", "")
