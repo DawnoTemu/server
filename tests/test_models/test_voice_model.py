@@ -313,7 +313,9 @@ class TestVoiceModel:
 
         assert success is True
         assert fake_voice.recording_filesize == 1024
-        assert fake_voice.status == VoiceStatus.RECORDED
+        # process_voice_recording marks the voice READY so the mobile app's
+        # status polling resolves; remote slot allocation stays deferred.
+        assert fake_voice.status == VoiceStatus.READY
 
         event_types = [event.event_type for event in events]
         assert VoiceSlotEventType.RECORDING_PROCESSED in event_types
