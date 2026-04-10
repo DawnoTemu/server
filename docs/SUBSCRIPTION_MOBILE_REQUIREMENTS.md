@@ -355,7 +355,103 @@ ANNUAL_SUBSCRIPTION_CREDITS = int(os.getenv("ANNUAL_SUBSCRIPTION_CREDITS", "30")
 
 ---
 
-## 10. Mobile Contract Reference
+## 10. Subscription Gate Feature Flag (Rollout Safety)
+
+The audio synthesis gate in `controllers/audio_controller.py` is controlled
+by an environment variable so the server can be deployed with subscription
+infrastructure live but enforcement disabled. This is necessary because the
+mobile build without the subscription UI cannot handle a `403
+SUBSCRIPTION_REQUIRED` response — old clients in the App Store / Play Store
+would be bricked the moment the gate became active.
+
+### The flag
+
+```python
+Config.ENFORCE_SUBSCRIPTION_GATE  # env: ENFORCE_SUBSCRIPTION_GATE
+```
+
+Default: `false` (gate bypassed).
+Truthy values: `true`, `1`, `yes`, `on` (case-insensitive).
+
+### What the flag controls
+
+**Only one thing**: the subscription check in `AudioController.synthesize_audio()`.
+When OFF, the gate block is skipped entirely — no user lookup, no
+`can_generate` check, no 403 response. Old clients see identical behavior to
+pre-subscription-merge.
+
+### What the flag does NOT control
+
+All of this remains fully functional regardless of the flag state:
+
+- `GET /api/user/subscription-status` — still returns real trial/subscription state
+- `POST /api/user/link-revenuecat` — still binds users to RevenueCat
+- `POST /api/credits/grant-addon` — still grants add-on credits
+- `POST /api/webhooks/revenuecat` — still processes lifecycle events
+- Webhook credit grants (monthly / yearly subscribers)
+- Scheduled billing tasks (`grant_yearly_subscriber_monthly_credits`, `expire_credit_lots`)
+- `trial_expires_at` backfill on new signups
+- Migration `b7e8f9a0c1d2` (schema + historical trial backfill)
+
+The subscription state is always tracked correctly. The flag only affects
+**enforcement** in the audio endpoint.
+
+### Rollout plan
+
+1. Deploy server with `ENFORCE_SUBSCRIPTION_GATE` unset or `false`
+2. Old clients keep working; new clients on the updated build see the full
+   subscription experience because they pre-check `can_generate` via the
+   status endpoint and redirect to the paywall client-side
+3. Monitor App Store Connect / Play Console adoption metrics
+4. When ≥95% of daily-active users are on the new build, execute the
+   flip-day runbook below
+
+### Flip-day runbook
+
+**Step 1 — Refresh stale trials.** Users who signed up during the flag-off
+period had `trial_expires_at` set at registration, but the value is unused
+while the flag is off. By flip time some of those trials are already past.
+Run this SQL against the production database to give everyone without an
+active subscription a fresh 14-day trial window:
+
+```sql
+UPDATE users
+   SET trial_expires_at = NOW() + INTERVAL '14 days'
+ WHERE subscription_active = FALSE
+   AND revenuecat_app_user_id IS NULL;
+```
+
+Users who already subscribed keep their subscription. Users who linked
+RevenueCat (including trial users on the new app) keep their existing
+trial window.
+
+**Step 2 — Flip the flag.** Set `ENFORCE_SUBSCRIPTION_GATE=true` on the
+Render `dawnotemu-prod` env group. This triggers an auto-redeploy
+(~2 minutes).
+
+**Step 3 — Monitor.** Watch Sentry for `SUBSCRIPTION_REQUIRED` 403s and
+check the customer support inbox for the next hour.
+
+**Step 4 — Kill switch.** If anything breaks, set the flag back to `false`
+and redeploy. The rollback is instant and lossless: no subscription state
+is modified.
+
+### Testing
+
+The test suite defaults to `ENFORCE_SUBSCRIPTION_GATE = True` via a module-
+level assignment in `tests/conftest.py` so all existing gate tests exercise
+the fully-rolled-out behavior. Two dedicated tests in
+`tests/test_controllers/test_audio_controller.py` use `monkeypatch` to cover
+the flag-off path:
+
+- `test_synthesize_audio_flag_off_allows_unsubscribed` — unsubscribed user
+  with expired trial can still synthesize
+- `test_synthesize_audio_flag_off_skips_user_lookup` — `UserModel.get_by_id`
+  is never called (no new error paths leak through)
+
+---
+
+## 11. Mobile Contract Reference
 
 The mobile app's expectations are defined in these files (source of truth):
 

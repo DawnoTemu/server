@@ -1,6 +1,7 @@
 import logging
 from typing import Tuple
 
+from config import Config
 from database import db
 from models.audio_model import AudioModel, AudioStatus, AudioStory
 from models.story_model import StoryModel
@@ -90,13 +91,18 @@ class AudioController:
             if not voice:
                 return False, {"error": "Voice not found"}, 404
 
-            # Gate: verify the voice's owner has an active subscription or trial
-            gate_user = UserModel.get_by_id(voice.user_id)
-            if not gate_user:
-                logger.warning("Voice %s owned by non-existent user %s", voice_id, voice.user_id)
-                return False, {"error": "Voice owner account not found", "code": "USER_NOT_FOUND"}, 404
-            if not gate_user.can_generate:
-                return False, {"error": "Subscription required", "code": "SUBSCRIPTION_REQUIRED"}, 403
+            # Subscription gate. Controlled by Config.ENFORCE_SUBSCRIPTION_GATE so
+            # the server can be deployed with the gate OFF while old mobile builds
+            # (which cannot handle `SUBSCRIPTION_REQUIRED`) are still in the wild.
+            # Subscription state is still tracked elsewhere — only enforcement is
+            # gated here. See config.py for the rollout rationale.
+            if Config.ENFORCE_SUBSCRIPTION_GATE:
+                gate_user = UserModel.get_by_id(voice.user_id)
+                if not gate_user:
+                    logger.warning("Voice %s owned by non-existent user %s", voice_id, voice.user_id)
+                    return False, {"error": "Voice owner account not found", "code": "USER_NOT_FOUND"}, 404
+                if not gate_user.can_generate:
+                    return False, {"error": "Subscription required", "code": "SUBSCRIPTION_REQUIRED"}, 403
 
             story = StoryModel.get_story_by_id(story_id)
             if not story:

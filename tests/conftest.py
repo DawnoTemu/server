@@ -17,6 +17,12 @@ collect_ignore = [
 from config import Config
 from database import db
 
+# The subscription gate defaults to OFF in production until the mobile rollout
+# completes, but tests exercise the fully-rolled-out behavior by default.
+# Individual tests that need to cover the flag-off path use monkeypatch to flip
+# this back to False. See config.py::ENFORCE_SUBSCRIPTION_GATE for rationale.
+Config.ENFORCE_SUBSCRIPTION_GATE = True
+
 
 @pytest.fixture(scope="session", autouse=True)
 def setup_test_environment():
