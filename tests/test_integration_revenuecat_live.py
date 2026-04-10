@@ -164,7 +164,7 @@ class TestReceiptValidationWithRealAPI:
             db.session.commit()
 
             # Non-existent customer -> should return False (404 from API)
-            result = _validate_receipt_with_revenuecat(user, "fake_receipt_token_123")
+            result = _validate_receipt_with_revenuecat(user, "fake_receipt_token_123", "credits_10")
             assert result is False
 
     def test_missing_revenuecat_user_id_returns_false(self, app):
@@ -179,7 +179,7 @@ class TestReceiptValidationWithRealAPI:
             # No revenuecat_app_user_id set
             db.session.commit()
 
-            result = _validate_receipt_with_revenuecat(user, "any_receipt")
+            result = _validate_receipt_with_revenuecat(user, "any_receipt", "credits_10")
             assert result is False
 
     def test_missing_project_id_returns_false(self, app):
@@ -196,7 +196,7 @@ class TestReceiptValidationWithRealAPI:
             db.session.commit()
 
             with patch.object(Config, "REVENUECAT_PROJECT_ID", None):
-                result = _validate_receipt_with_revenuecat(user, "any_receipt")
+                result = _validate_receipt_with_revenuecat(user, "any_receipt", "credits_10")
                 assert result is False
 
 

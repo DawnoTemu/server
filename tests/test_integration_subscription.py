@@ -157,38 +157,51 @@ class TestGetSubscriptionStatus:
 
 class TestLinkRevenueCat:
 
-    def test_link_success(self, app):
+    def test_link_derives_id_from_authenticated_user(self, app):
+        """Server must derive RC id from user.id, not trust client input."""
         with app.app_context():
             user = _create_user()
-            ok, data, status = SubscriptionController.link_revenuecat(user, "rc_user_123")
+            ok, data, status = SubscriptionController.link_revenuecat(user, str(user.id))
             assert ok is True
             assert status == 200
-            assert data["revenuecat_app_user_id"] == "rc_user_123"
+            assert data["revenuecat_app_user_id"] == str(user.id)
             db.session.refresh(user)
-            assert user.revenuecat_app_user_id == "rc_user_123"
+            assert user.revenuecat_app_user_id == str(user.id)
 
-    def test_link_empty_id_rejected(self, app):
+    def test_link_accepts_missing_body(self, app):
+        """Empty / missing client input is fine — server uses user.id."""
         with app.app_context():
             user = _create_user()
+            ok, data, status = SubscriptionController.link_revenuecat(user, None)
+            assert ok is True
+            assert status == 200
+            assert data["revenuecat_app_user_id"] == str(user.id)
+
             ok, data, status = SubscriptionController.link_revenuecat(user, "  ")
+            assert ok is True
+            assert status == 200
+
+    def test_link_rejects_mismatched_client_id_hijack_attempt(self, app):
+        """SECURITY: client must not be able to claim an arbitrary RC id."""
+        with app.app_context():
+            attacker = _create_user("attacker@test.com")
+            # Attempt to claim victim's predictable RC id (str(victim_user.id))
+            victim_id = str(attacker.id + 999)
+            ok, data, status = SubscriptionController.link_revenuecat(attacker, victim_id)
             assert ok is False
             assert status == 400
+            # Attacker's RC id was NOT set to victim's id
+            db.session.refresh(attacker)
+            assert attacker.revenuecat_app_user_id != victim_id
 
-    def test_link_too_long_rejected(self, app):
+    def test_link_idempotent_when_already_linked(self, app):
         with app.app_context():
             user = _create_user()
-            ok, data, status = SubscriptionController.link_revenuecat(user, "x" * 101)
-            assert ok is False
-            assert status == 400
-
-    def test_link_conflict_with_other_user(self, app):
-        with app.app_context():
-            user1 = _create_user("a@test.com")
-            user2 = _create_user("b@test.com")
-            SubscriptionController.link_revenuecat(user1, "shared_id")
-            ok, data, status = SubscriptionController.link_revenuecat(user2, "shared_id")
-            assert ok is False
-            assert status == 409
+            SubscriptionController.link_revenuecat(user, None)
+            ok, data, status = SubscriptionController.link_revenuecat(user, None)
+            assert ok is True
+            assert status == 200
+            assert data["revenuecat_app_user_id"] == str(user.id)
 
 
 # ---------------------------------------------------------------------------
@@ -481,7 +494,35 @@ class TestSubscriptionStatusHTTPEndpoint:
 
 class TestLinkRevenueCatHTTPEndpoint:
 
-    def test_link_via_http(self, app, client):
+    def test_link_via_http_uses_authenticated_user_id(self, app, client):
+        with app.app_context():
+            user = _create_user()
+            expected_id = str(user.id)
+            headers = _auth_header(app, user)
+
+        resp = client.post(
+            "/api/user/link-revenuecat",
+            headers=headers,
+            data=json.dumps({"revenuecat_app_user_id": expected_id}),
+            content_type="application/json",
+        )
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["revenuecat_app_user_id"] == expected_id
+
+    def test_link_missing_body_uses_authenticated_user_id(self, app, client):
+        with app.app_context():
+            user = _create_user()
+            expected_id = str(user.id)
+            headers = _auth_header(app, user)
+
+        resp = client.post("/api/user/link-revenuecat", headers=headers)
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["revenuecat_app_user_id"] == expected_id
+
+    def test_link_rejects_mismatched_client_id(self, app, client):
+        """SECURITY: client cannot claim an arbitrary RC id via HTTP."""
         with app.app_context():
             user = _create_user()
             headers = _auth_header(app, user)
@@ -489,19 +530,9 @@ class TestLinkRevenueCatHTTPEndpoint:
         resp = client.post(
             "/api/user/link-revenuecat",
             headers=headers,
-            data=json.dumps({"revenuecat_app_user_id": "rc_http_test"}),
+            data=json.dumps({"revenuecat_app_user_id": "some_other_victim_id"}),
             content_type="application/json",
         )
-        assert resp.status_code == 200
-        body = resp.get_json()
-        assert body["revenuecat_app_user_id"] == "rc_http_test"
-
-    def test_link_missing_body_returns_400(self, app, client):
-        with app.app_context():
-            user = _create_user()
-            headers = _auth_header(app, user)
-
-        resp = client.post("/api/user/link-revenuecat", headers=headers)
         assert resp.status_code == 400
 
 
@@ -631,9 +662,12 @@ class TestFullLifecycle:
             assert user.trial_is_active is True
             assert user.can_generate is True
 
-            # Step 2: Link RevenueCat
-            ok, _, _ = SubscriptionController.link_revenuecat(user, "rc_journey")
+            # Step 2: Link RevenueCat (server derives RC id from user.id)
+            ok, _, _ = SubscriptionController.link_revenuecat(user, None)
             assert ok is True
+            db.session.refresh(user)
+            rc_id = user.revenuecat_app_user_id
+            assert rc_id == str(user.id)
 
             # Step 3: Trial expires
             user.trial_expires_at = datetime.utcnow() - timedelta(days=1)
@@ -642,7 +676,7 @@ class TestFullLifecycle:
             assert user.can_generate is False
 
             # Step 4: Initial purchase via webhook
-            payload = _webhook_payload("INITIAL_PURCHASE", "rc_journey")
+            payload = _webhook_payload("INITIAL_PURCHASE", rc_id)
             ok, _, status = SubscriptionController.handle_revenuecat_webhook(payload)
             assert ok is True
             db.session.refresh(user)
@@ -650,14 +684,14 @@ class TestFullLifecycle:
             assert user.can_generate is True
 
             # Step 5: Cancellation (still active until period ends)
-            payload = _webhook_payload("CANCELLATION", "rc_journey")
+            payload = _webhook_payload("CANCELLATION", rc_id)
             ok, _, _ = SubscriptionController.handle_revenuecat_webhook(payload)
             db.session.refresh(user)
             assert user.subscription_will_renew is False
             assert user.subscription_is_active is True  # Still active
 
             # Step 6: Expiration
-            payload = _webhook_payload("EXPIRATION", "rc_journey")
+            payload = _webhook_payload("EXPIRATION", rc_id)
             ok, _, _ = SubscriptionController.handle_revenuecat_webhook(payload)
             db.session.refresh(user)
             assert user.subscription_active is False

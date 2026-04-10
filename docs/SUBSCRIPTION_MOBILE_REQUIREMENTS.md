@@ -115,6 +115,14 @@ the user's subscription fields accordingly.
 the User model. The mobile app calls `Purchases.logIn(String(userId))` where `userId` is
 the DawnoTemu integer user ID, so `revenuecat_app_user_id` will be a stringified integer.
 
+**Security note — `/api/user/link-revenuecat` identity binding:** The server derives
+`revenuecat_app_user_id` authoritatively from the authenticated `user.id` and does NOT
+trust any client-supplied value. If the request body contains a
+`revenuecat_app_user_id`, it must equal `str(user.id)` or the request is rejected with
+`400`. This closes an account-hijack vector where a malicious client could pre-claim
+another user's predictable RC id before the victim's first link call and block or
+misroute their webhook events.
+
 **Subscriber data to store on User model:**
 
 ```python
@@ -184,10 +192,16 @@ numeric. If either is missing or non-numeric, the mobile treats the response as 
    - `credits_30` → 30 credits
 3. **Validate subscription** — user must have `subscription_active = True`. Add-ons are
    subscriber-only. Return 403 if not subscribed.
-4. **Grant credits** — use existing `credit_model.grant()` with `source="add_on"`.
-5. **Record transaction** — store `receipt_token`, `product_id`, `platform`, `user_id`,
+4. **Validate receipt against RevenueCat AND verify product match** — look up the user's
+   purchases in RevenueCat, find the one matching `receipt_token`, and verify its product's
+   `store_identifier` equals the client-supplied `product_id`. If the matched purchase is
+   for a different product, reject with 403. **Never trust the client's `product_id`
+   alone** — without this check, a valid receipt for `credits_10` can be redeemed as
+   `credits_30`, which is a billing bypass.
+5. **Grant credits** — use existing `credit_model.grant()` with `source="add_on"`.
+6. **Record transaction** — store `receipt_token`, `product_id`, `platform`, `user_id`,
    `credits_granted`, and `granted_at` to prevent replay.
-6. **Return** `credits_granted` and `new_balance` (read from `user.credits_balance`
+7. **Return** `credits_granted` and `new_balance` (read from `user.credits_balance`
    after grant).
 
 ### Idempotency (Critical)

@@ -18,10 +18,10 @@ def get_subscription_status(current_user):
 @token_required
 @limiter.limit("5 per minute")
 def link_revenuecat(current_user):
-    data = request.get_json(silent=True)
-    if not data:
-        return jsonify({"error": "Invalid request body"}), 400
-
-    revenuecat_id = (data.get("revenuecat_app_user_id") or "").strip()
+    # The RC app_user_id is authoritatively derived from the authenticated
+    # user's server-side id inside the controller. Client input is only used
+    # as a sanity check (must match) so we accept empty / missing bodies.
+    data = request.get_json(silent=True) or {}
+    revenuecat_id = data.get("revenuecat_app_user_id")
     success, result, status = SubscriptionController.link_revenuecat(current_user, revenuecat_id)
     return jsonify(result), status

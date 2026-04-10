@@ -259,27 +259,39 @@ class TestMobileSubscriptionStatus:
 
 
 class TestMobileLinkRevenueCat:
-    """POST /api/user/link-revenuecat — linking mobile user to RevenueCat."""
+    """POST /api/user/link-revenuecat — linking mobile user to RevenueCat.
 
-    def test_link_success(self, app, client):
+    Mobile calls Purchases.logIn(String(userId)) and then posts the same id
+    to this endpoint. The server derives the RC id authoritatively from the
+    authenticated user.id, so any other value is rejected.
+    """
+
+    def test_link_success_with_matching_id(self, app, client):
         user_id, token = _prepare_user(app, "link@test.com")
-        resp = _link_revenuecat(client, token, "rc_mobile_user_123")
+        resp = _link_revenuecat(client, token, str(user_id))
         assert resp.status_code == 200
         body = resp.get_json()
-        assert body["revenuecat_app_user_id"] == "rc_mobile_user_123"
+        assert body["revenuecat_app_user_id"] == str(user_id)
 
-    def test_link_empty_id_rejected(self, app, client):
+    def test_link_empty_body_succeeds(self, app, client):
         user_id, token = _prepare_user(app, "link_empty@test.com")
         resp = _link_revenuecat(client, token, "  ")
+        assert resp.status_code == 200
+        assert resp.get_json()["revenuecat_app_user_id"] == str(user_id)
+
+    def test_link_rejects_hijack_attempt(self, app, client):
+        """SECURITY: user A cannot claim user B's predictable RC id."""
+        user_a_id, token_a = _prepare_user(app, "link_a@test.com")
+        user_b_id, _token_b = _prepare_user(app, "link_b@test.com")
+
+        # User A tries to claim user B's id
+        resp = _link_revenuecat(client, token_a, str(user_b_id))
         assert resp.status_code == 400
 
-    def test_link_conflict_returns_409(self, app, client):
-        _user1_id, token1 = _prepare_user(app, "link_a@test.com")
-        _user2_id, token2 = _prepare_user(app, "link_b@test.com")
-
-        _link_revenuecat(client, token1, "shared_rc_id")
-        resp = _link_revenuecat(client, token2, "shared_rc_id")
-        assert resp.status_code == 409
+        # User A's RC id was NOT set to user B's id
+        with app.app_context():
+            user_a = db.session.get(User, user_a_id)
+            assert user_a.revenuecat_app_user_id != str(user_b_id)
 
 
 class TestMobileCredits:
@@ -592,8 +604,10 @@ class TestMobileFullJourney:
         assert body["can_generate"] is True
 
         # Step 2: Link RevenueCat (mobile does this after SDK login)
-        resp = _link_revenuecat(client, token, "rc_journey_mobile")
+        # Server derives RC id from user.id authoritatively
+        resp = _link_revenuecat(client, token, str(user_id))
         assert resp.status_code == 200
+        rc_id = str(user_id)
 
         # Step 3: Check initial credits
         resp = _get_credits(client, token)
@@ -609,7 +623,7 @@ class TestMobileFullJourney:
         assert resp.get_json()["can_generate"] is False
 
         # Step 5: User subscribes (webhook from RevenueCat)
-        wh_resp = _send_webhook(client, "INITIAL_PURCHASE", "rc_journey_mobile")
+        wh_resp = _send_webhook(client, "INITIAL_PURCHASE", rc_id)
         assert wh_resp.status_code == 200
 
         # Step 6: Mobile polls — subscription active
@@ -636,7 +650,7 @@ class TestMobileFullJourney:
         assert balance_after_addon > initial_balance
 
         # Step 10: User cancels (still active until period ends)
-        _send_webhook(client, "CANCELLATION", "rc_journey_mobile")
+        _send_webhook(client, "CANCELLATION", rc_id)
         resp = _get_subscription_status(client, token)
         body = resp.get_json()
         assert body["subscription"]["active"] is True
@@ -644,7 +658,7 @@ class TestMobileFullJourney:
         assert body["can_generate"] is True
 
         # Step 11: Subscription expires
-        _send_webhook(client, "EXPIRATION", "rc_journey_mobile")
+        _send_webhook(client, "EXPIRATION", rc_id)
         resp = _get_subscription_status(client, token)
         body = resp.get_json()
         assert body["subscription"]["active"] is False

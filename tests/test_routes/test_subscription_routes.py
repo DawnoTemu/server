@@ -425,50 +425,45 @@ class TestWebhookRoute:
 
 class TestLinkRevenueCatRoute:
 
-    def test_link_success(self, client, app):
-        _, token = _create_user(app, "link-ok@example.com")
+    def test_link_uses_authenticated_user_id(self, client, app):
+        user_id, token = _create_user(app, "link-ok@example.com")
         resp = client.post(
             "/api/user/link-revenuecat",
-            json={"revenuecat_app_user_id": "rc_user_123"},
+            json={"revenuecat_app_user_id": str(user_id)},
             headers=_auth_header(token),
         )
 
         assert resp.status_code == 200
         data = resp.get_json()
         assert data["status"] == "linked"
-        assert data["revenuecat_app_user_id"] == "rc_user_123"
+        assert data["revenuecat_app_user_id"] == str(user_id)
 
-    def test_link_missing_id_returns_400(self, client, app):
-        _, token = _create_user(app, "link-missing@example.com")
+    def test_link_empty_body_uses_authenticated_user_id(self, client, app):
+        user_id, token = _create_user(app, "link-missing@example.com")
         resp = client.post(
             "/api/user/link-revenuecat",
             json={"revenuecat_app_user_id": ""},
             headers=_auth_header(token),
         )
+        assert resp.status_code == 200
+        assert resp.get_json()["revenuecat_app_user_id"] == str(user_id)
+
+    def test_link_rejects_hijack_attempt(self, client, app):
+        """SECURITY: client cannot pre-claim another user's predictable RC id."""
+        user_id, token = _create_user(app, "link-hijack@example.com")
+        # Attempt to claim a different user's id
+        resp = client.post(
+            "/api/user/link-revenuecat",
+            json={"revenuecat_app_user_id": str(user_id + 999)},
+            headers=_auth_header(token),
+        )
         assert resp.status_code == 400
 
-    def test_link_conflict_returns_409(self, client, app):
-        user1_id, _ = _create_user(app, "link-conflict1@example.com")
-        _, token2 = _create_user(app, "link-conflict2@example.com")
-
-        with app.app_context():
-            user1 = db.session.get(User, user1_id)
-            user1.revenuecat_app_user_id = "rc_taken"
-            db.session.commit()
-
+    def test_link_rejects_arbitrary_id(self, client, app):
+        _, token = _create_user(app, "link-arbitrary@example.com")
         resp = client.post(
             "/api/user/link-revenuecat",
-            json={"revenuecat_app_user_id": "rc_taken"},
-            headers=_auth_header(token2),
-        )
-        assert resp.status_code == 409
-
-    def test_link_too_long_id_returns_400(self, client, app):
-        _, token = _create_user(app, "link-long@example.com")
-        long_id = "x" * 101
-        resp = client.post(
-            "/api/user/link-revenuecat",
-            json={"revenuecat_app_user_id": long_id},
+            json={"revenuecat_app_user_id": "some_arbitrary_id"},
             headers=_auth_header(token),
         )
         assert resp.status_code == 400

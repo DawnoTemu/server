@@ -24,15 +24,21 @@ class ReceiptValidationUnavailable(Exception):
     """Raised when receipt validation cannot be performed due to transient errors."""
 
 
-def _validate_receipt_with_revenuecat(user, receipt_token):
-    """Verify the transaction exists in RevenueCat for this user.
+def _validate_receipt_with_revenuecat(user, receipt_token, expected_product_id):
+    """Verify the transaction exists in RevenueCat for this user AND that the
+    matched purchase is for *expected_product_id*.
 
-    Returns True if validation passes.
+    Returns True only when both checks pass.
     Raises ReceiptValidationUnavailable on transient errors (network, timeout).
-    Returns False if the receipt is genuinely not found.
+    Returns False if the receipt is not found or the product does not match.
 
     When REVENUECAT_API_KEY is not configured, returns True only in
     non-production environments (allowing development without RevenueCat).
+
+    CRITICAL: This function MUST verify that the matched purchase is actually
+    for the claimed product. Without this check, any valid purchase token for
+    the customer can be redeemed as whichever add-on tier the caller names,
+    which is a billing bypass (e.g. pay for credits_10, claim credits_30).
     """
     api_key = Config.REVENUECAT_API_KEY
     project_id = Config.REVENUECAT_PROJECT_ID
@@ -55,12 +61,13 @@ def _validate_receipt_with_revenuecat(user, receipt_token):
 
     _MAX_PAGES = 5  # Safety limit to prevent infinite pagination loops
 
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
     try:
         url = f"https://api.revenuecat.com/v2/projects/{project_id}/customers/{rc_user_id}/purchases"
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        }
 
         for _page in range(_MAX_PAGES):
             resp = requests.get(url, headers=headers, timeout=10)
@@ -78,12 +85,33 @@ def _validate_receipt_with_revenuecat(user, receipt_token):
                 logger.error("RevenueCat returned non-JSON response (status=%s): %s", resp.status_code, resp.text[:200])
                 raise ReceiptValidationUnavailable("RevenueCat returned invalid response") from exc
 
-            # v2 API returns {items: [{id, store_purchase_identifier, ...}]}
+            # v2 API returns {items: [{id, store_purchase_identifier, product_id, ...}]}
             for purchase in data.get("items", []):
                 store_id = str(purchase.get("store_purchase_identifier", ""))
                 purchase_id = purchase.get("id", "")
-                if receipt_token in (store_id, purchase_id):
-                    return True
+                if receipt_token not in (store_id, purchase_id):
+                    continue
+
+                # Receipt matched — verify it's for the claimed product.
+                rc_product_id = purchase.get("product_id")
+                if not rc_product_id:
+                    logger.error(
+                        "Matched purchase has no product_id (user=%s receipt=%s)",
+                        user.id, receipt_token[:20],
+                    )
+                    return False
+
+                actual_store_id = _fetch_product_store_identifier(
+                    project_id, rc_product_id, headers
+                )
+                if actual_store_id != expected_product_id:
+                    logger.warning(
+                        "Receipt product mismatch: expected=%s actual=%s user=%s receipt=%s",
+                        expected_product_id, actual_store_id, user.id, receipt_token[:20],
+                    )
+                    return False
+
+                return True
 
             # Follow pagination if more pages exist
             next_page = data.get("next_page")
@@ -103,6 +131,39 @@ def _validate_receipt_with_revenuecat(user, receipt_token):
         raise ValueError(
             f"Receipt validation failed unexpectedly: {exc}"
         ) from exc
+
+
+def _fetch_product_store_identifier(project_id, rc_product_id, headers):
+    """Fetch a RevenueCat product by internal id and return its store_identifier.
+
+    Raises ReceiptValidationUnavailable on transient errors.
+    Returns None if the product cannot be resolved.
+    """
+    url = f"https://api.revenuecat.com/v2/projects/{project_id}/products/{rc_product_id}"
+    try:
+        resp = requests.get(url, headers=headers, timeout=10)
+    except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+        raise ReceiptValidationUnavailable(
+            f"Product lookup transient error: {exc}"
+        ) from exc
+
+    if resp.status_code != 200:
+        if resp.status_code >= 500 or resp.status_code == 429:
+            raise ReceiptValidationUnavailable(
+                f"Product lookup returned {resp.status_code}"
+            )
+        logger.error(
+            "Product lookup failed: %s %s (product=%s)",
+            resp.status_code, resp.text[:200], rc_product_id,
+        )
+        return None
+
+    try:
+        data = resp.json()
+    except (ValueError, requests.exceptions.JSONDecodeError) as exc:
+        raise ReceiptValidationUnavailable("Product lookup returned invalid JSON") from exc
+
+    return data.get("store_identifier")
 
 
 class AddonController:
@@ -134,7 +195,7 @@ class AddonController:
             return False, {"error": "Transaction already consumed by another account"}, 409
 
         try:
-            if not _validate_receipt_with_revenuecat(user, receipt_token):
+            if not _validate_receipt_with_revenuecat(user, receipt_token, product_id):
                 return False, {"error": "Receipt validation failed"}, 403
         except ReceiptValidationUnavailable:
             return False, {"error": "Receipt validation temporarily unavailable, please retry"}, 503

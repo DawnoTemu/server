@@ -168,22 +168,48 @@ class SubscriptionController:
 
     @staticmethod
     def link_revenuecat(user, revenuecat_app_user_id):
-        if not revenuecat_app_user_id or not revenuecat_app_user_id.strip():
-            return False, {"error": "Missing revenuecat_app_user_id"}, 400
+        """Bind the authenticated user's server-side ID as their RevenueCat
+        app_user_id.
 
-        revenuecat_app_user_id = revenuecat_app_user_id.strip()
+        SECURITY: The RC app_user_id is derived from the authenticated user's
+        server-side id, NOT from client input. Allowing the client to supply
+        an arbitrary value would let a malicious client pre-claim another
+        user's predictable RC id (e.g. str(user.id)) and hijack webhook
+        attribution for that account.
 
-        if len(revenuecat_app_user_id) > 100:
-            return False, {"error": "revenuecat_app_user_id too long (max 100 chars)"}, 400
+        If the client supplies a value, it must equal str(user.id); otherwise
+        the request is rejected so buggy clients surface the mismatch instead
+        of silently using the wrong id.
+        """
+        authoritative_id = str(user.id)
 
+        if revenuecat_app_user_id is not None:
+            client_supplied = (revenuecat_app_user_id or "").strip()
+            if client_supplied and client_supplied != authoritative_id:
+                logger.warning(
+                    "link_revenuecat: client supplied id=%r does not match authenticated user=%s",
+                    client_supplied[:50], user.id,
+                )
+                return False, {"error": "revenuecat_app_user_id must match authenticated user"}, 400
+
+        # Idempotent: already linked correctly
+        if user.revenuecat_app_user_id == authoritative_id:
+            return True, {"status": "linked", "revenuecat_app_user_id": authoritative_id}, 200
+
+        # A different user already holds this ID — should be impossible since
+        # authoritative_id is unique per user, but defend against corrupted state.
         conflict = User.query.filter(
-            User.revenuecat_app_user_id == revenuecat_app_user_id,
+            User.revenuecat_app_user_id == authoritative_id,
             User.id != user.id,
         ).first()
         if conflict:
+            logger.error(
+                "link_revenuecat: RC id %s already linked to user %s (current user=%s) — data corruption",
+                authoritative_id, conflict.id, user.id,
+            )
             return False, {"error": "RevenueCat ID already linked to another account"}, 409
 
-        user.revenuecat_app_user_id = revenuecat_app_user_id
+        user.revenuecat_app_user_id = authoritative_id
         try:
             db.session.commit()
         except Exception as exc:
@@ -191,7 +217,7 @@ class SubscriptionController:
             logger.error("Failed to link RevenueCat ID for user %s: %s", user.id, exc, exc_info=True)
             return False, {"error": "Failed to link account"}, 500
 
-        return True, {"status": "linked", "revenuecat_app_user_id": revenuecat_app_user_id}, 200
+        return True, {"status": "linked", "revenuecat_app_user_id": authoritative_id}, 200
 
 
 def _record_event(event_id, event_type):
