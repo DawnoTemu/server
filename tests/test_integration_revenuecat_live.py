@@ -49,13 +49,23 @@ class TestRevenueCatAPIConnectivity:
         assert "items" in data
 
     def test_project_exists(self):
-        """Our project ID should be found in the projects list."""
+        """Our project ID should be found in the projects list.
+
+        RevenueCat's v2 API returns project IDs with a ``proj`` prefix (e.g.
+        ``proj802211a0``), while the URL path and the env var accept the
+        unprefixed form (``802211a0``). Normalize both sides before comparing.
+        """
         resp = requests.get(f"{_BASE}/projects", headers=_HEADERS, timeout=10)
         assert resp.status_code == 200
         data = resp.json()
-        project_ids = [p["id"] for p in data.get("items", [])]
-        assert _PROJECT_ID in project_ids, (
-            f"Expected {_PROJECT_ID} in projects, got: {project_ids}"
+
+        def _strip(p):
+            return p[len("proj"):] if p.startswith("proj") else p
+
+        expected = _strip(_PROJECT_ID)
+        project_ids = [_strip(p["id"]) for p in data.get("items", [])]
+        assert expected in project_ids, (
+            f"Expected {expected} in projects, got: {project_ids}"
         )
 
     def test_v2_key_rejected_by_v1(self):
