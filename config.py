@@ -130,6 +130,24 @@ class Config:
     except Exception:
         _ic_val = 10
     INITIAL_CREDITS = _ic_val if _ic_val >= 0 else 10
+
+    # Subscription gate feature flag.
+    #
+    # When False (default), the audio synthesis gate in audio_controller is
+    # bypassed and old mobile clients that cannot handle the
+    # `SUBSCRIPTION_REQUIRED` error code keep working. Subscription data
+    # (trial_expires_at, subscription_active, webhooks, addon grants, etc.)
+    # is still recorded correctly; only enforcement is disabled.
+    #
+    # Flip to True only after >=95% of active users are on a mobile build
+    # that handles the gate. See SUBSCRIPTION_MOBILE_REQUIREMENTS.md for the
+    # flip-day runbook (includes a trial-refresh SQL to reset stale trial
+    # windows for users who signed up during the flag-off period).
+    ENFORCE_SUBSCRIPTION_GATE = (
+        os.getenv("ENFORCE_SUBSCRIPTION_GATE", "false").strip().lower()
+        in ("1", "true", "yes", "on")
+    )
+
     # RevenueCat / Subscription
     REVENUECAT_WEBHOOK_SECRET = os.getenv("REVENUECAT_WEBHOOK_SECRET")
     REVENUECAT_API_KEY = os.getenv("REVENUECAT_API_KEY")

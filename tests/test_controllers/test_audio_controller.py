@@ -648,3 +648,92 @@ def test_synthesize_audio_allows_with_subscription(monkeypatch, dummy_session):
 
     assert success is True
     assert status_code == 200
+
+
+# ─── Feature flag: ENFORCE_SUBSCRIPTION_GATE ────────────────────────────────
+
+
+def test_synthesize_audio_flag_off_allows_unsubscribed(monkeypatch, dummy_session):
+    """
+    When the subscription gate flag is OFF, a user with no subscription and
+    no active trial MUST still be able to synthesize audio. This is the
+    compatibility guarantee for old mobile builds that cannot handle the
+    SUBSCRIPTION_REQUIRED error code.
+    """
+    from config import Config
+    monkeypatch.setattr(Config, "ENFORCE_SUBSCRIPTION_GATE", False)
+
+    voice = make_voice()
+    story = {"content": "Flag off story"}
+    audio_record = make_audio_record(status=AudioStatus.READY.value, s3_key="s3://off.mp3")
+
+    # Simulate a user who would be blocked if the gate were enforced
+    monkeypatch.setattr(
+        "controllers.audio_controller.UserModel.get_by_id",
+        lambda uid: make_gate_user(subscription_active=False, trial_is_active=False),
+    )
+    monkeypatch.setattr(
+        "controllers.audio_controller.VoiceModel.get_voice_by_id", lambda voice_id: voice
+    )
+    monkeypatch.setattr(
+        "controllers.audio_controller.StoryModel.get_story_by_id", lambda story_id: story
+    )
+    monkeypatch.setattr(
+        "controllers.audio_controller.AudioModel.find_or_create_audio_record",
+        lambda story_id, voice_id, user_id: audio_record,
+    )
+    monkeypatch.setattr(
+        "controllers.audio_controller.AudioModel.get_audio_presigned_url",
+        lambda voice_id, story_id, expires_in=3600: (True, "https://cdn/off.mp3"),
+    )
+
+    success, data, status_code = AudioController.synthesize_audio(voice.id, 5)
+
+    assert success is True
+    assert status_code == 200
+    assert data.get("code") != "SUBSCRIPTION_REQUIRED"
+
+
+def test_synthesize_audio_flag_off_skips_user_lookup(monkeypatch, dummy_session):
+    """
+    When the flag is OFF, the gate block MUST NOT run at all — including the
+    user-lookup side effect. This guarantees no new error paths leak through
+    for old clients (e.g. a transient `UserModel.get_by_id` failure should
+    never surface as 404 while the flag is off).
+    """
+    from config import Config
+    monkeypatch.setattr(Config, "ENFORCE_SUBSCRIPTION_GATE", False)
+
+    voice = make_voice()
+    story = {"content": "No lookup story"}
+    audio_record = make_audio_record(status=AudioStatus.READY.value, s3_key="s3://nl.mp3")
+
+    lookup_calls = {"count": 0}
+
+    def sentinel_lookup(uid):
+        lookup_calls["count"] += 1
+        raise AssertionError("UserModel.get_by_id must not be called when flag is OFF")
+
+    monkeypatch.setattr(
+        "controllers.audio_controller.UserModel.get_by_id", sentinel_lookup
+    )
+    monkeypatch.setattr(
+        "controllers.audio_controller.VoiceModel.get_voice_by_id", lambda voice_id: voice
+    )
+    monkeypatch.setattr(
+        "controllers.audio_controller.StoryModel.get_story_by_id", lambda story_id: story
+    )
+    monkeypatch.setattr(
+        "controllers.audio_controller.AudioModel.find_or_create_audio_record",
+        lambda story_id, voice_id, user_id: audio_record,
+    )
+    monkeypatch.setattr(
+        "controllers.audio_controller.AudioModel.get_audio_presigned_url",
+        lambda voice_id, story_id, expires_in=3600: (True, "https://cdn/nl.mp3"),
+    )
+
+    success, _, status_code = AudioController.synthesize_audio(voice.id, 5)
+
+    assert success is True
+    assert status_code == 200
+    assert lookup_calls["count"] == 0
