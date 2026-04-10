@@ -1,3 +1,24 @@
+"""
+Addon credit pack grants.
+
+IMPORTANT — RevenueCat API version mismatch (see server#44):
+
+The mobile SDK (react-native-purchases v9) exposes
+``nonSubscriptionTransactions[i].transactionIdentifier`` as the
+*RevenueCat v1-format internal id* (e.g. ``o1_kSFvmriDAHzQ1wdJi0UAhg``).
+This is NOT the Apple store transaction id and NOT the RC v2 internal id.
+
+The v2 API (``/v2/projects/.../customers/.../purchases``) does not expose
+the v1 id as any field. Attempting to validate the mobile's receipt_token
+against v2 data always fails — which is exactly what happened in
+production before this file was fixed (see ``_validate_receipt_with_revenuecat``).
+
+If you are adding server-side code that consumes any field from
+``customerInfo.nonSubscriptionTransactions``, you MUST use RC v1
+(``/v1/subscribers/{app_user_id}``). Do not mix v1 and v2 in the same
+request path.
+"""
+
 import logging
 import os
 

@@ -192,12 +192,25 @@ numeric. If either is missing or non-numeric, the mobile treats the response as 
    - `credits_30` → 30 credits
 3. **Validate subscription** — user must have `subscription_active = True`. Add-ons are
    subscriber-only. Return 403 if not subscribed.
-4. **Validate receipt against RevenueCat AND verify product match** — look up the user's
-   purchases in RevenueCat, find the one matching `receipt_token`, and verify its product's
-   `store_identifier` equals the client-supplied `product_id`. If the matched purchase is
-   for a different product, reject with 403. **Never trust the client's `product_id`
-   alone** — without this check, a valid receipt for `credits_10` can be redeemed as
-   `credits_30`, which is a billing bypass.
+4. **Validate receipt against RevenueCat v1 API AND verify product match** — look up the
+   user's `non_subscriptions` via `/v1/subscribers/{app_user_id}` (not v2!), find the one
+   matching `receipt_token` under `non_subscriptions[expected_product_id]`. If the receipt
+   is not in the expected product's bucket, reject with 403. **Never trust the client's
+   `product_id` alone** — without this check, a valid receipt for `credits_10` can be
+   redeemed as `credits_30`, which is a billing bypass.
+
+   > **Why v1 and not v2** (see [server#44](https://github.com/DawnoTemu/server/issues/44)): the mobile SDK
+   > (`react-native-purchases` v9) exposes
+   > `nonSubscriptionTransactions[i].transactionIdentifier` as the RevenueCat
+   > **v1 internal id** (e.g. `o1_kSFvmriDAHzQ1wdJi0UAhg`). The v2 API does
+   > NOT expose this id. If you query v2, matching always fails. Always use
+   > v1 server-side when consuming data that originated from the mobile
+   > SDK's transaction objects.
+   >
+   > v1 API uses platform-specific public keys (`REVENUECAT_IOS_PUBLIC_KEY`,
+   > `REVENUECAT_ANDROID_PUBLIC_KEY`), not the v2 `sk_*` secret. Public keys
+   > are safe to use server-side — they're designed to be embedded in
+   > clients and have read-only scope for the specific app.
 5. **Grant credits** — use existing `credit_model.grant()` with `source="add_on"`.
 6. **Record transaction** — store `receipt_token`, `product_id`, `platform`, `user_id`,
    `credits_granted`, and `granted_at` to prevent replay.
