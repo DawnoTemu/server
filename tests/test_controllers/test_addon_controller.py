@@ -202,15 +202,34 @@ class TestAddonController:
             assert status == 500
 
 
+def _v1_response(non_subscriptions):
+    """Build a fake RevenueCat v1 /v1/subscribers response."""
+    return MagicMock(
+        status_code=200,
+        json=lambda: {
+            "subscriber": {
+                "non_subscriptions": non_subscriptions,
+            }
+        },
+    )
+
+
 class TestValidateReceiptWithRevenueCat:
+    """The validator talks to the RevenueCat v1 API (see addon_controller).
+
+    Why v1: the mobile SDK's ``nonSubscriptionTransactions[i].transactionIdentifier``
+    field returns the v1-format internal id (e.g. ``o1_kSFvmriDAHzQ1wdJi0UAhg``),
+    which the v2 API does not expose as any field. Matching against v2 always
+    failed in production. These tests mock the v1 response shape.
+    """
 
     def test_returns_true_when_api_key_missing_in_dev(self, app):
         with app.app_context():
             user = _create_subscribed_user("val-dev@example.com")
             user.revenuecat_app_user_id = "rc_dev"
-            with patch("controllers.addon_controller.Config.REVENUECAT_API_KEY", None), \
+            with patch("controllers.addon_controller.Config.REVENUECAT_IOS_PUBLIC_KEY", None), \
                  patch("controllers.addon_controller.os.getenv", return_value="development"):
-                result = _validate_receipt_with_revenuecat(user, "tok_123", "credits_10")
+                result = _validate_receipt_with_revenuecat(user, "tok_123", "credits_10", "ios")
             assert result is True
 
     def test_returns_false_when_api_key_missing_and_env_unknown(self, app):
@@ -218,155 +237,181 @@ class TestValidateReceiptWithRevenueCat:
         with app.app_context():
             user = _create_subscribed_user("val-ambiguous@example.com")
             user.revenuecat_app_user_id = "rc_ambiguous"
-            with patch("controllers.addon_controller.Config.REVENUECAT_API_KEY", None), \
+            with patch("controllers.addon_controller.Config.REVENUECAT_IOS_PUBLIC_KEY", None), \
                  patch("controllers.addon_controller.os.getenv", return_value=""):
-                result = _validate_receipt_with_revenuecat(user, "tok_123", "credits_10")
+                result = _validate_receipt_with_revenuecat(user, "tok_123", "credits_10", "ios")
             assert result is False
 
     def test_returns_false_when_api_key_missing_in_production(self, app):
         with app.app_context():
             user = _create_subscribed_user("val-prod@example.com")
             user.revenuecat_app_user_id = "rc_prod"
-            with patch("controllers.addon_controller.Config.REVENUECAT_API_KEY", None), \
+            with patch("controllers.addon_controller.Config.REVENUECAT_IOS_PUBLIC_KEY", None), \
                  patch("controllers.addon_controller.os.getenv", return_value="production"):
-                result = _validate_receipt_with_revenuecat(user, "tok_123", "credits_10")
+                result = _validate_receipt_with_revenuecat(user, "tok_123", "credits_10", "ios")
             assert result is False
 
-    @patch("controllers.addon_controller.Config.REVENUECAT_PROJECT_ID", "proj_test")
-    @patch("controllers.addon_controller.Config.REVENUECAT_API_KEY", "test-key")
+    def test_returns_false_for_unknown_platform(self, app):
+        with app.app_context():
+            user = _create_subscribed_user("val-unknown-plat@example.com")
+            user.revenuecat_app_user_id = "rc_unknown"
+            result = _validate_receipt_with_revenuecat(user, "tok_123", "credits_10", "web")
+            assert result is False
+
+    @patch("controllers.addon_controller.Config.REVENUECAT_IOS_PUBLIC_KEY", "test-ios-key")
     def test_returns_false_when_no_rc_user_id(self, app):
         with app.app_context():
             user = _create_subscribed_user("val-norc@example.com")
             # user has no revenuecat_app_user_id set
-            result = _validate_receipt_with_revenuecat(user, "tok_123", "credits_10")
+            result = _validate_receipt_with_revenuecat(user, "tok_123", "credits_10", "ios")
             assert result is False
 
     @patch("controllers.addon_controller.requests.get")
-    @patch("controllers.addon_controller.Config.REVENUECAT_PROJECT_ID", "proj_test")
-    @patch("controllers.addon_controller.Config.REVENUECAT_API_KEY", "test-key")
-    def test_returns_true_when_receipt_matches(self, mock_get, app):
+    @patch("controllers.addon_controller.Config.REVENUECAT_IOS_PUBLIC_KEY", "test-ios-key")
+    def test_returns_true_when_receipt_matches_by_v1_id(self, mock_get, app):
+        """Mobile SDK sends v1-format id; server should match on it."""
         with app.app_context():
-            user = _create_subscribed_user("val-match@example.com")
-            user.revenuecat_app_user_id = "rc_match"
+            user = _create_subscribed_user("val-match-v1@example.com")
+            user.revenuecat_app_user_id = "rc_match_v1"
             db.session.commit()
-            mock_get.side_effect = [
-                MagicMock(
-                    status_code=200,
-                    json=lambda: {
-                        "items": [
-                            {
-                                "store_purchase_identifier": "tok_match",
-                                "id": "purch_other",
-                                "product_id": "prod_credits_10",
-                            }
-                        ]
-                    },
-                ),
-                MagicMock(
-                    status_code=200,
-                    json=lambda: {"store_identifier": "credits_10"},
-                ),
-            ]
-            result = _validate_receipt_with_revenuecat(user, "tok_match", "credits_10")
+            mock_get.return_value = _v1_response({
+                "credits_10": [
+                    {
+                        "id": "o1_kSFvmriDAHzQ1wdJi0UAhg",
+                        "store_transaction_id": "2000001151372110",
+                        "store": "app_store",
+                        "is_sandbox": True,
+                    }
+                ]
+            })
+            result = _validate_receipt_with_revenuecat(
+                user, "o1_kSFvmriDAHzQ1wdJi0UAhg", "credits_10", "ios"
+            )
             assert result is True
 
     @patch("controllers.addon_controller.requests.get")
-    @patch("controllers.addon_controller.Config.REVENUECAT_PROJECT_ID", "proj_test")
-    @patch("controllers.addon_controller.Config.REVENUECAT_API_KEY", "test-key")
-    def test_returns_true_when_receipt_matches_by_id(self, mock_get, app):
+    @patch("controllers.addon_controller.Config.REVENUECAT_IOS_PUBLIC_KEY", "test-ios-key")
+    def test_returns_true_when_receipt_matches_by_store_transaction_id(self, mock_get, app):
+        """Fallback: server also matches on Apple/Google store_transaction_id."""
         with app.app_context():
-            user = _create_subscribed_user("val-match-id@example.com")
-            user.revenuecat_app_user_id = "rc_match_id"
+            user = _create_subscribed_user("val-match-store@example.com")
+            user.revenuecat_app_user_id = "rc_match_store"
             db.session.commit()
-            mock_get.side_effect = [
-                MagicMock(
-                    status_code=200,
-                    json=lambda: {
-                        "items": [
-                            {
-                                "store_purchase_identifier": "other",
-                                "id": "tok_by_id",
-                                "product_id": "prod_credits_10",
-                            }
-                        ]
-                    },
-                ),
-                MagicMock(
-                    status_code=200,
-                    json=lambda: {"store_identifier": "credits_10"},
-                ),
-            ]
-            result = _validate_receipt_with_revenuecat(user, "tok_by_id", "credits_10")
+            mock_get.return_value = _v1_response({
+                "credits_10": [
+                    {
+                        "id": "o1_differentv1id",
+                        "store_transaction_id": "2000001151372110",
+                        "store": "app_store",
+                    }
+                ]
+            })
+            result = _validate_receipt_with_revenuecat(
+                user, "2000001151372110", "credits_10", "ios"
+            )
             assert result is True
 
     @patch("controllers.addon_controller.requests.get")
-    @patch("controllers.addon_controller.Config.REVENUECAT_PROJECT_ID", "proj_test")
-    @patch("controllers.addon_controller.Config.REVENUECAT_API_KEY", "test-key")
+    @patch("controllers.addon_controller.Config.REVENUECAT_IOS_PUBLIC_KEY", "test-ios-key")
     def test_rejects_product_mismatch_billing_bypass(self, mock_get, app):
-        """Regression: a valid receipt for credits_10 must NOT be redeemable as credits_30."""
+        """Regression: a valid receipt for credits_10 must NOT be redeemable as credits_30.
+
+        With the v1 API this is enforced implicitly because transactions are
+        grouped by product_id. The validator looks up ``non_subscriptions[credits_30]``
+        when the client claims credits_30 — so a receipt filed under credits_10
+        is simply not there.
+        """
         with app.app_context():
             user = _create_subscribed_user("val-mismatch@example.com")
             user.revenuecat_app_user_id = "rc_mismatch"
             db.session.commit()
-            mock_get.side_effect = [
-                MagicMock(
-                    status_code=200,
-                    json=lambda: {
-                        "items": [
-                            {
-                                "store_purchase_identifier": "tok_cheap",
-                                "id": "purch_cheap",
-                                "product_id": "prod_credits_10",
-                            }
-                        ]
-                    },
-                ),
-                MagicMock(
-                    status_code=200,
-                    json=lambda: {"store_identifier": "credits_10"},
-                ),
-            ]
+            mock_get.return_value = _v1_response({
+                "credits_10": [
+                    {
+                        "id": "o1_cheapReceipt",
+                        "store_transaction_id": "2000000000000001",
+                        "store": "app_store",
+                    }
+                ]
+                # note: no credits_30 bucket
+            })
             # User paid for credits_10 but is trying to redeem as credits_30
-            result = _validate_receipt_with_revenuecat(user, "tok_cheap", "credits_30")
-            assert result is False
-
-    @patch("controllers.addon_controller.requests.get")
-    @patch("controllers.addon_controller.Config.REVENUECAT_PROJECT_ID", "proj_test")
-    @patch("controllers.addon_controller.Config.REVENUECAT_API_KEY", "test-key")
-    def test_rejects_purchase_with_no_product_id(self, mock_get, app):
-        with app.app_context():
-            user = _create_subscribed_user("val-noprod@example.com")
-            user.revenuecat_app_user_id = "rc_noprod"
-            db.session.commit()
-            mock_get.return_value = MagicMock(
-                status_code=200,
-                json=lambda: {
-                    "items": [
-                        {"store_purchase_identifier": "tok_noprod", "id": "purch"}
-                    ]
-                },
+            result = _validate_receipt_with_revenuecat(
+                user, "o1_cheapReceipt", "credits_30", "ios"
             )
-            result = _validate_receipt_with_revenuecat(user, "tok_noprod", "credits_10")
             assert result is False
 
     @patch("controllers.addon_controller.requests.get")
-    @patch("controllers.addon_controller.Config.REVENUECAT_PROJECT_ID", "proj_test")
-    @patch("controllers.addon_controller.Config.REVENUECAT_API_KEY", "test-key")
+    @patch("controllers.addon_controller.Config.REVENUECAT_IOS_PUBLIC_KEY", "test-ios-key")
+    def test_rejects_product_mismatch_when_both_products_exist(self, mock_get, app):
+        """Regression: claiming credits_30 when the receipt is in credits_10 bucket."""
+        with app.app_context():
+            user = _create_subscribed_user("val-mismatch-both@example.com")
+            user.revenuecat_app_user_id = "rc_mismatch_both"
+            db.session.commit()
+            mock_get.return_value = _v1_response({
+                "credits_10": [
+                    {"id": "o1_cheap", "store_transaction_id": "2001"},
+                ],
+                "credits_30": [
+                    {"id": "o1_expensive", "store_transaction_id": "2002"},
+                ],
+            })
+            # o1_cheap is under credits_10, not credits_30
+            result = _validate_receipt_with_revenuecat(
+                user, "o1_cheap", "credits_30", "ios"
+            )
+            assert result is False
+
+    @patch("controllers.addon_controller.requests.get")
+    @patch("controllers.addon_controller.Config.REVENUECAT_IOS_PUBLIC_KEY", "test-ios-key")
     def test_returns_false_when_receipt_not_found(self, mock_get, app):
         with app.app_context():
             user = _create_subscribed_user("val-nofind@example.com")
             user.revenuecat_app_user_id = "rc_nofind"
             db.session.commit()
-            mock_get.return_value = MagicMock(
-                status_code=200,
-                json=lambda: {"items": []},
+            mock_get.return_value = _v1_response({})
+            result = _validate_receipt_with_revenuecat(
+                user, "tok_missing", "credits_10", "ios"
             )
-            result = _validate_receipt_with_revenuecat(user, "tok_missing", "credits_10")
             assert result is False
 
     @patch("controllers.addon_controller.requests.get")
-    @patch("controllers.addon_controller.Config.REVENUECAT_PROJECT_ID", "proj_test")
-    @patch("controllers.addon_controller.Config.REVENUECAT_API_KEY", "test-key")
+    @patch("controllers.addon_controller.Config.REVENUECAT_IOS_PUBLIC_KEY", "test-ios-key")
+    def test_returns_false_when_product_bucket_empty(self, mock_get, app):
+        with app.app_context():
+            user = _create_subscribed_user("val-empty-bucket@example.com")
+            user.revenuecat_app_user_id = "rc_empty"
+            db.session.commit()
+            mock_get.return_value = _v1_response({"credits_10": []})
+            result = _validate_receipt_with_revenuecat(
+                user, "tok_anything", "credits_10", "ios"
+            )
+            assert result is False
+
+    @patch("controllers.addon_controller.requests.get")
+    @patch("controllers.addon_controller.Config.REVENUECAT_ANDROID_PUBLIC_KEY", "test-android-key")
+    def test_android_uses_android_public_key(self, mock_get, app):
+        """Android platform must select the Android public key."""
+        with app.app_context():
+            user = _create_subscribed_user("val-android@example.com")
+            user.revenuecat_app_user_id = "rc_android"
+            db.session.commit()
+            mock_get.return_value = _v1_response({
+                "credits_10": [
+                    {"id": "GPA.3312-1234-5678-90000", "store_transaction_id": "GPA.3312-1234-5678-90000"}
+                ]
+            })
+            result = _validate_receipt_with_revenuecat(
+                user, "GPA.3312-1234-5678-90000", "credits_10", "android"
+            )
+            assert result is True
+            # Verify the correct key was used in the Authorization header
+            _args, kwargs = mock_get.call_args
+            assert kwargs["headers"]["Authorization"] == "Bearer test-android-key"
+
+    @patch("controllers.addon_controller.requests.get")
+    @patch("controllers.addon_controller.Config.REVENUECAT_IOS_PUBLIC_KEY", "test-ios-key")
     def test_raises_on_timeout(self, mock_get, app):
         import requests as req
         with app.app_context():
@@ -376,11 +421,10 @@ class TestValidateReceiptWithRevenueCat:
             mock_get.side_effect = req.exceptions.Timeout("timed out")
             import pytest
             with pytest.raises(ReceiptValidationUnavailable):
-                _validate_receipt_with_revenuecat(user, "tok_timeout", "credits_10")
+                _validate_receipt_with_revenuecat(user, "tok_timeout", "credits_10", "ios")
 
     @patch("controllers.addon_controller.requests.get")
-    @patch("controllers.addon_controller.Config.REVENUECAT_PROJECT_ID", "proj_test")
-    @patch("controllers.addon_controller.Config.REVENUECAT_API_KEY", "test-key")
+    @patch("controllers.addon_controller.Config.REVENUECAT_IOS_PUBLIC_KEY", "test-ios-key")
     def test_raises_on_connection_error(self, mock_get, app):
         import requests as req
         with app.app_context():
@@ -390,11 +434,10 @@ class TestValidateReceiptWithRevenueCat:
             mock_get.side_effect = req.exceptions.ConnectionError("refused")
             import pytest
             with pytest.raises(ReceiptValidationUnavailable):
-                _validate_receipt_with_revenuecat(user, "tok_conn", "credits_10")
+                _validate_receipt_with_revenuecat(user, "tok_conn", "credits_10", "ios")
 
     @patch("controllers.addon_controller.requests.get")
-    @patch("controllers.addon_controller.Config.REVENUECAT_PROJECT_ID", "proj_test")
-    @patch("controllers.addon_controller.Config.REVENUECAT_API_KEY", "test-key")
+    @patch("controllers.addon_controller.Config.REVENUECAT_IOS_PUBLIC_KEY", "test-ios-key")
     def test_raises_on_server_error(self, mock_get, app):
         """5xx from RevenueCat should raise ReceiptValidationUnavailable, not return False."""
         import pytest
@@ -407,11 +450,10 @@ class TestValidateReceiptWithRevenueCat:
                 text="Internal Server Error",
             )
             with pytest.raises(ReceiptValidationUnavailable):
-                _validate_receipt_with_revenuecat(user, "tok_http", "credits_10")
+                _validate_receipt_with_revenuecat(user, "tok_http", "credits_10", "ios")
 
     @patch("controllers.addon_controller.requests.get")
-    @patch("controllers.addon_controller.Config.REVENUECAT_PROJECT_ID", "proj_test")
-    @patch("controllers.addon_controller.Config.REVENUECAT_API_KEY", "test-key")
+    @patch("controllers.addon_controller.Config.REVENUECAT_IOS_PUBLIC_KEY", "test-ios-key")
     def test_returns_false_on_client_error(self, mock_get, app):
         """4xx from RevenueCat should return False (genuinely not found)."""
         with app.app_context():
@@ -422,5 +464,5 @@ class TestValidateReceiptWithRevenueCat:
                 status_code=404,
                 text="Not Found",
             )
-            result = _validate_receipt_with_revenuecat(user, "tok_http", "credits_10")
+            result = _validate_receipt_with_revenuecat(user, "tok_http", "credits_10", "ios")
             assert result is False

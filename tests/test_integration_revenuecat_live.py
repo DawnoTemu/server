@@ -174,7 +174,9 @@ class TestReceiptValidationWithRealAPI:
             db.session.commit()
 
             # Non-existent customer -> should return False (404 from API)
-            result = _validate_receipt_with_revenuecat(user, "fake_receipt_token_123", "credits_10")
+            result = _validate_receipt_with_revenuecat(
+                user, "fake_receipt_token_123", "credits_10", "ios"
+            )
             assert result is False
 
     def test_missing_revenuecat_user_id_returns_false(self, app):
@@ -189,11 +191,13 @@ class TestReceiptValidationWithRealAPI:
             # No revenuecat_app_user_id set
             db.session.commit()
 
-            result = _validate_receipt_with_revenuecat(user, "any_receipt", "credits_10")
+            result = _validate_receipt_with_revenuecat(
+                user, "any_receipt", "credits_10", "ios"
+            )
             assert result is False
 
-    def test_missing_project_id_returns_false(self, app):
-        """If REVENUECAT_PROJECT_ID is not set, validation should fail."""
+    def test_missing_ios_public_key_returns_false(self, app):
+        """If REVENUECAT_IOS_PUBLIC_KEY is not set, validation should fail in prod."""
         from controllers.addon_controller import _validate_receipt_with_revenuecat
         from unittest.mock import patch
 
@@ -201,12 +205,15 @@ class TestReceiptValidationWithRealAPI:
             from database import db
             from models.user_model import UserModel
 
-            user = UserModel.create_user("noproj@example.com", "testpass123")
-            user.revenuecat_app_user_id = "rc_noproj"
+            user = UserModel.create_user("noios@example.com", "testpass123")
+            user.revenuecat_app_user_id = "rc_noios"
             db.session.commit()
 
-            with patch.object(Config, "REVENUECAT_PROJECT_ID", None):
-                result = _validate_receipt_with_revenuecat(user, "any_receipt", "credits_10")
+            with patch.object(Config, "REVENUECAT_IOS_PUBLIC_KEY", None), \
+                 patch("controllers.addon_controller.os.getenv", return_value="production"):
+                result = _validate_receipt_with_revenuecat(
+                    user, "any_receipt", "credits_10", "ios"
+                )
                 assert result is False
 
 

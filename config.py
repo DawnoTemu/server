@@ -152,6 +152,14 @@ class Config:
     REVENUECAT_WEBHOOK_SECRET = os.getenv("REVENUECAT_WEBHOOK_SECRET")
     REVENUECAT_API_KEY = os.getenv("REVENUECAT_API_KEY")
     REVENUECAT_PROJECT_ID = os.getenv("REVENUECAT_PROJECT_ID")
+    # Platform-specific public keys (appl_*, goog_*) used server-side to call
+    # the RevenueCat v1 API (/v1/subscribers/{id}). These are the SAME keys the
+    # mobile SDK uses — they are public by design and safe to store here.
+    # v1 API is needed because the mobile SDK's `transactionIdentifier` field
+    # returns the v1-format internal id (e.g. "o1_kSFvmriDAHzQ1wdJi0UAhg"),
+    # which the v2 API does not expose. See addon_controller for details.
+    REVENUECAT_IOS_PUBLIC_KEY = os.getenv("REVENUECAT_IOS_PUBLIC_KEY")
+    REVENUECAT_ANDROID_PUBLIC_KEY = os.getenv("REVENUECAT_ANDROID_PUBLIC_KEY")
     YEARLY_PRODUCT_IDS = frozenset(
         s.strip() for s in os.getenv("YEARLY_PRODUCT_IDS", "dawnotemu_annual,dawnotemu_yearly").split(",") if s.strip()
     )
@@ -196,7 +204,15 @@ class Config:
     # Validate configuration
     @classmethod
     def validate(cls):
-        _optional = {"VOICE_NAME", "DATABASE_URL", "REVENUECAT_WEBHOOK_SECRET", "REVENUECAT_API_KEY", "REVENUECAT_PROJECT_ID"}
+        _optional = {
+            "VOICE_NAME",
+            "DATABASE_URL",
+            "REVENUECAT_WEBHOOK_SECRET",
+            "REVENUECAT_API_KEY",
+            "REVENUECAT_PROJECT_ID",
+            "REVENUECAT_IOS_PUBLIC_KEY",
+            "REVENUECAT_ANDROID_PUBLIC_KEY",
+        }
         missing = [k for k, v in cls.__dict__.items()
                   if not k.startswith('__') and
                   v is None and
