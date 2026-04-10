@@ -44,6 +44,9 @@ celerybeat.pid
 .env.*.local
 .env.docker
 
+# Local secrets — never commit
+.secrets/
+
 # IDE & editor configs
 .vscode/
 .idea/
