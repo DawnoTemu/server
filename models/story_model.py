@@ -3,6 +3,7 @@ from datetime import datetime
 from config import Config
 from database import db
 from utils.credits import calculate_required_credits
+from utils.time_utils import utc_now
 
 # Database Model
 class Story(db.Model):
@@ -17,8 +18,8 @@ class Story(db.Model):
     cover_filename = db.Column(db.String(255), nullable=True)
     s3_cover_key = db.Column(db.String(512), nullable=True)
     position = db.Column(db.Integer, nullable=False, default=9999)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utc_now)
+    updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now)
     
     def __repr__(self):
         return f"<Story {self.id}: {self.title}>"

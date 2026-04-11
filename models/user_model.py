@@ -5,6 +5,7 @@ import logging
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask import current_app
 from database import db
+from utils.time_utils import utc_now
 
 
 logger = logging.getLogger(__name__)
@@ -22,8 +23,8 @@ class User(db.Model):
     # Credits balance for Story Points (Punkty Magii)
     credits_balance = db.Column(db.Integer, nullable=False, default=0)
     last_login = db.Column(db.DateTime, nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utc_now)
+    updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now)
 
     # Trial & Subscription
     trial_expires_at = db.Column(db.DateTime, nullable=True)
@@ -51,7 +52,7 @@ class User(db.Model):
         """Return True if the user's free trial has not yet expired."""
         if self.trial_expires_at is None:
             return False
-        return datetime.utcnow() < self.trial_expires_at
+        return utc_now() < self.trial_expires_at
 
     @property
     def subscription_is_active(self):
@@ -64,7 +65,7 @@ class User(db.Model):
             return False
         if self.subscription_expires_at is None:
             return False
-        return datetime.utcnow() < self.subscription_expires_at
+        return utc_now() < self.subscription_expires_at
 
     @property
     def can_generate(self):
@@ -124,8 +125,8 @@ class User(db.Model):
     def _generate_token(self, payload, expires_in):
         """Generate a JWT token with the given payload"""
         payload.update({
-            'exp': datetime.utcnow() + timedelta(seconds=expires_in),
-            'iat': datetime.utcnow(),
+            'exp': utc_now() + timedelta(seconds=expires_in),
+            'iat': utc_now(),
             'jti': str(uuid.uuid4())
         })
         return jwt.encode(
@@ -195,7 +196,7 @@ class UserModel:
             is_admin=is_admin,
             is_active=is_active,
             credits_balance=0,
-            trial_expires_at=datetime.utcnow() + timedelta(days=trial_days),
+            trial_expires_at=utc_now() + timedelta(days=trial_days),
         )
         user.set_password(password)
         
@@ -261,7 +262,7 @@ class UserModel:
         """Update user's last login timestamp"""
         user = UserModel.get_by_id(user_id)
         if user:
-            user.last_login = datetime.utcnow()
+            user.last_login = utc_now()
             db.session.commit()
     
     @staticmethod

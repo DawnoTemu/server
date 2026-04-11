@@ -6,6 +6,7 @@ import time
 from functools import wraps
 from datetime import datetime, timedelta
 
+from utils.time_utils import utc_now
 from flask import redirect, url_for, request, flash, session
 from flask_admin import Admin, AdminIndexView, BaseView, expose
 from flask_admin.contrib.sqla import ModelView
@@ -80,13 +81,13 @@ def is_authenticated():
     
     # Check session expiration
     last_activity = session.get('last_activity')
-    if not last_activity or (datetime.utcnow() - datetime.fromisoformat(last_activity) > 
+    if not last_activity or (utc_now() - datetime.fromisoformat(last_activity) > 
                             timedelta(seconds=int(os.getenv('SESSION_TIMEOUT', DEFAULT_SESSION_TIMEOUT)))):
         session.pop('admin_authenticated', None)
         return False
     
     # Update last activity time
-    session['last_activity'] = datetime.utcnow().isoformat()
+    session['last_activity'] = utc_now().isoformat()
     return True
 
 
@@ -102,7 +103,7 @@ def login_required(f):
 
 def check_rate_limit(ip_address):
     """Check if the IP has exceeded the login attempt rate limit."""
-    now = datetime.utcnow()
+    now = utc_now()
     
     # Clear old attempts
     for ip in list(login_attempts.keys()):
@@ -343,7 +344,7 @@ class VoiceSlotDashboardView(SecureBaseView):
             "slot_limit": slot_limit,
             "queue_length": VoiceSlotQueue.length(),
             "available_capacity": available_capacity,
-            "generated_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+            "generated_at": utc_now().strftime("%Y-%m-%d %H:%M:%S"),
         }
 
         events = VoiceModel.recent_slot_events(30)
@@ -381,7 +382,7 @@ class VoiceSlotDashboardView(SecureBaseView):
             voice.slot_lock_expires_at = None
             voice.allocation_status = VoiceAllocationStatus.RECORDED
             voice.status = VoiceStatus.RECORDED
-            voice.last_used_at = datetime.utcnow()
+            voice.last_used_at = utc_now()
             VoiceSlotEvent.log_event(
                 voice_id=voice.id,
                 user_id=voice.user_id,
@@ -429,7 +430,7 @@ class CustomAdminIndexView(AdminIndexView):
         from datetime import datetime, timedelta
         from sqlalchemy import func
 
-        today = datetime.utcnow().date()
+        today = utc_now().date()
 
         # User stats
         total_users = User.query.count()
@@ -512,7 +513,7 @@ class CustomAdminIndexView(AdminIndexView):
             
             if authenticated:
                 session['admin_authenticated'] = True
-                session['last_activity'] = datetime.utcnow().isoformat()
+                session['last_activity'] = utc_now().isoformat()
                 flash('Login successful', 'success')
                 return redirect(url_for('.index'))
             
@@ -1033,7 +1034,7 @@ class UserModelView(SecureModelView):
             flash('User not found', 'error')
             return redirect(url_for('.index_view'))
 
-        now = datetime.utcnow()
+        now = utc_now()
         lots = (
             CreditLot.query
             .filter(

@@ -13,6 +13,7 @@ from models.credit_model import (
     CreditTransactionAllocation,
     grant as credit_grant,
 )
+from utils.time_utils import utc_now
 
 logger = logging.getLogger('billing_tasks')
 
@@ -31,7 +32,7 @@ def grant_monthly_credits():
         logger.info('Monthly credit grants disabled (amount=%s). Skipping.', amount)
         return
 
-    now = datetime.utcnow()
+    now = utc_now()
     start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     # Compute next month start
     if start_of_month.month == 12:
@@ -100,7 +101,7 @@ def grant_yearly_subscriber_monthly_credits():
         logger.info('Yearly monthly credit grants disabled (amount=%s).', amount)
         return
 
-    now = datetime.utcnow()
+    now = utc_now()
     start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     if start_of_month.month == 12:
         next_month = start_of_month.replace(year=start_of_month.year + 1, month=1)
@@ -171,7 +172,7 @@ def expire_credit_lots():
     - Records ledger entries (CreditTransaction + allocations) describing each expiry.
     - Decreases users.credits_balance by the total amount removed per user (not below 0).
     """
-    now = datetime.utcnow()
+    now = utc_now()
     query = (
         db.session.query(CreditLot)
         .filter(
@@ -241,6 +242,50 @@ def expire_credit_lots():
         raise
 
 
+@celery_app.task(name='billing.cleanup_old_webhook_events', base=FlaskTask, ignore_result=True)
+def cleanup_old_webhook_events():
+    """Prune ``webhook_events`` rows older than ``WEBHOOK_EVENT_RETENTION_DAYS``.
+
+    The ``webhook_events`` table is append-only and used only for idempotency
+    on incoming RevenueCat webhook deliveries. Events that are older than the
+    retention window will never be re-delivered by RevenueCat (their retry
+    window is ~72 hours), so keeping them around is pure storage overhead.
+
+    Default retention: 90 days. Override via the
+    ``WEBHOOK_EVENT_RETENTION_DAYS`` environment variable. 0 disables the
+    task (useful for disabling pruning in environments that want full
+    historical data).
+
+    Uses a bulk ``DELETE`` keyed on the indexed ``processed_at`` column so
+    the operation is fast even on large tables. Commits in a single
+    transaction; rolls back cleanly on error.
+    """
+    # Local import to avoid a circular dependency at module load.
+    from models.webhook_event_model import WebhookEvent
+
+    retention_days = getattr(Config, 'WEBHOOK_EVENT_RETENTION_DAYS', 90)
+    if retention_days is None:
+        retention_days = 90
+    if retention_days <= 0:
+        logger.info('Webhook event cleanup disabled (retention_days=%s)', retention_days)
+        return
+
+    cutoff = utc_now() - timedelta(days=retention_days)
+    try:
+        deleted = db.session.query(WebhookEvent).filter(
+            WebhookEvent.processed_at < cutoff
+        ).delete(synchronize_session=False)
+        db.session.commit()
+        logger.info(
+            'Pruned %d webhook_events rows older than %s (retention=%d days)',
+            deleted, cutoff.isoformat(timespec='seconds'), retention_days,
+        )
+    except Exception as exc:
+        db.session.rollback()
+        logger.error('Failed to prune old webhook_events: %s', exc, exc_info=True)
+        raise
+
+
 # Schedule the expiration sweeper daily at 03:15 UTC
 _existing_schedule = getattr(celery_app.conf, 'beat_schedule', None) or {}
 celery_app.conf.beat_schedule = {
@@ -252,5 +297,9 @@ celery_app.conf.beat_schedule = {
     'yearly-subscriber-monthly-credits': {
         'task': 'billing.grant_yearly_subscriber_monthly_credits',
         'schedule': crontab(minute=30, hour=3),  # daily at 03:30 UTC
+    },
+    'cleanup-old-webhook-events': {
+        'task': 'billing.cleanup_old_webhook_events',
+        'schedule': crontab(minute=45, hour=3),  # daily at 03:45 UTC
     },
 }

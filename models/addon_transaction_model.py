@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from database import db
+from utils.time_utils import utc_now
 
 
 class ConsumedAddonTransaction(db.Model):
@@ -22,4 +23,4 @@ class ConsumedAddonTransaction(db.Model):
     product_id = db.Column(db.String(100), nullable=False)
     platform = db.Column(db.String(20), nullable=False)
     credits_granted = db.Column(db.Integer, nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    created_at = db.Column(db.DateTime, default=utc_now, nullable=False)

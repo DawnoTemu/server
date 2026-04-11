@@ -185,6 +185,21 @@ class Config:
         logging.getLogger(__name__).warning("Invalid YEARLY_SUBSCRIPTION_MONTHLY_CREDITS=%r, using default 30", os.getenv("YEARLY_SUBSCRIPTION_MONTHLY_CREDITS"))
     YEARLY_SUBSCRIPTION_MONTHLY_CREDITS = _ysc_val if _ysc_val > 0 else 30
 
+    # Webhook event retention (days). The webhook_events idempotency table is
+    # append-only and used to dedupe RevenueCat redeliveries, which retry for
+    # ~72h max. Anything older is pure storage overhead. Set to 0 to disable
+    # the daily cleanup task.
+    try:
+        _wer_raw = os.getenv("WEBHOOK_EVENT_RETENTION_DAYS", "90")
+        _wer_val = int(_wer_raw) if str(_wer_raw).strip() != "" else 90
+    except Exception:
+        _wer_val = 90
+        logging.getLogger(__name__).warning(
+            "Invalid WEBHOOK_EVENT_RETENTION_DAYS=%r, using default 90",
+            os.getenv("WEBHOOK_EVENT_RETENTION_DAYS"),
+        )
+    WEBHOOK_EVENT_RETENTION_DAYS = _wer_val if _wer_val >= 0 else 90
+
     # Consumption priority: event -> monthly -> referral -> add_on -> free
     _csp_raw = os.getenv("CREDIT_SOURCES_PRIORITY", "event,monthly,referral,add_on,free")
     CREDIT_SOURCES_PRIORITY = [s.strip() for s in _csp_raw.split(',') if s.strip()]
