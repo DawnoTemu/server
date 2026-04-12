@@ -10,6 +10,7 @@ from celery import Task
 
 from tasks import celery_app
 from database import db
+from utils.time_utils import utc_now
 
 # Configure logger
 logger = logging.getLogger("audio_tasks")
@@ -217,7 +218,7 @@ def synthesize_audio_task(self, audio_story_id, voice_id, story_id, text, attemp
         # Acquire warm-hold lock BEFORE synthesis to prevent eviction during the operation
         warm_hold_seconds = getattr(Config, "VOICE_WARM_HOLD_SECONDS", 900) or 0
         if warm_hold_seconds > 0:
-            now = datetime.utcnow()
+            now = utc_now()
             # Lock for duration of synthesis TTL + warm-hold window
             voice.slot_lock_expires_at = now + timedelta(seconds=limiter_ttl + warm_hold_seconds)
             db.session.commit()
@@ -303,7 +304,7 @@ def synthesize_audio_task(self, audio_story_id, voice_id, story_id, text, attemp
                 logger.error("Refund failed for audio %s: %s", audio_story_id, refund_exc)
             return False
 
-        now = datetime.utcnow()
+        now = utc_now()
         voice.last_used_at = now
         warm_hold_seconds = getattr(Config, "VOICE_WARM_HOLD_SECONDS", 900) or 0
         if warm_hold_seconds > 0:

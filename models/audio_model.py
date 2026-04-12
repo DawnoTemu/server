@@ -8,6 +8,7 @@ from datetime import datetime
 
 from database import db
 from utils.s3_client import S3Client
+from utils.time_utils import utc_now
 from config import Config
 from utils.voice_service import VoiceService
 
@@ -53,8 +54,8 @@ class AudioStory(db.Model):
     file_size_bytes = db.Column(db.Integer, nullable=True)
     
     # Metadata and tracking
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utc_now)
+    updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now)
     
     def __repr__(self):
         return f"<AudioStory {self.id}: Story {self.story_id}, Voice {self.voice_id}>"

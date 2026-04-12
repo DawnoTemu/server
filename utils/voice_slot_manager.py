@@ -13,6 +13,7 @@ from models.voice_model import (
     VoiceStatus,
     VoiceModel,
 )
+from utils.time_utils import utc_now
 from utils.voice_slot_queue import VoiceSlotQueue
 from utils.redis_client import RedisClient
 from sqlalchemy.exc import InvalidRequestError
@@ -119,7 +120,7 @@ class VoiceSlotManager:
     def _extend_slot_lock(cls, voice: Voice) -> None:
         """Extend slot_lock_expires_at to prevent eviction during active use."""
         warm_hold = getattr(Config, "VOICE_WARM_HOLD_SECONDS", 900) or 900
-        voice.slot_lock_expires_at = datetime.utcnow() + timedelta(seconds=warm_hold)
+        voice.slot_lock_expires_at = utc_now() + timedelta(seconds=warm_hold)
         try:
             db.session.commit()
         except Exception:
@@ -187,7 +188,7 @@ class VoiceSlotManager:
         voice.status = VoiceStatus.PROCESSING
         voice.allocation_status = VoiceAllocationStatus.ALLOCATING
         voice.error_message = None
-        voice.slot_lock_expires_at = datetime.utcnow() + timedelta(seconds=lock_seconds)
+        voice.slot_lock_expires_at = utc_now() + timedelta(seconds=lock_seconds)
 
         VoiceSlotEvent.log_event(
             voice_id=voice.id,

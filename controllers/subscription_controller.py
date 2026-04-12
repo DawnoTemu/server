@@ -8,6 +8,7 @@ from database import db
 from models.user_model import User
 from models.webhook_event_model import WebhookEvent
 from models.credit_model import grant as credit_grant
+from utils.time_utils import utc_now, utc_from_timestamp
 
 
 logger = logging.getLogger(__name__)
@@ -43,7 +44,7 @@ def _parse_expiration_ms(value):
     if ms < _MIN_EXPIRATION_MS or ms > _MAX_EXPIRATION_MS:
         logger.error("expiration_at_ms out of range: %s", ms)
         return None
-    return datetime.utcfromtimestamp(ms / 1000.0)
+    return utc_from_timestamp(ms / 1000.0)
 
 
 def _resolve_store_source(store):
@@ -69,7 +70,7 @@ class SubscriptionController:
 
         days_remaining = 0
         if user.trial_expires_at and user.trial_is_active:
-            delta = user.trial_expires_at - datetime.utcnow()
+            delta = user.trial_expires_at - utc_now()
             days_remaining = max(0, delta.days)
 
         return True, {
@@ -239,7 +240,7 @@ def _handle_initial_purchase(user, event):
     if parsed_expiry:
         user.subscription_expires_at = parsed_expiry
     else:
-        fallback = datetime.utcnow() + timedelta(days=35)
+        fallback = utc_now() + timedelta(days=35)
         user.subscription_expires_at = fallback
         logger.error(
             "INITIAL_PURCHASE for user %s has no valid expiration_at_ms — using 35-day fallback (%s)",
@@ -254,7 +255,7 @@ def _handle_renewal(user, event):
     if parsed_expiry:
         user.subscription_expires_at = parsed_expiry
     else:
-        fallback = datetime.utcnow() + timedelta(days=35)
+        fallback = utc_now() + timedelta(days=35)
         user.subscription_expires_at = fallback
         logger.error(
             "RENEWAL for user %s has no valid expiration_at_ms — using 35-day fallback (%s)",
@@ -286,7 +287,7 @@ def _handle_expiration(user, event):
 
 def _handle_billing_issue(user, event):
     logger.warning("Billing issue for user %s: %s", user.id, event.get("id"))
-    user.billing_issue_at = datetime.utcnow()
+    user.billing_issue_at = utc_now()
 
 
 def _handle_product_change(user, event):

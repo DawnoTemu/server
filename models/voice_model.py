@@ -12,6 +12,7 @@ from database import db
 from datetime import datetime
 from sqlalchemy import text
 from utils.voice_service import VoiceService
+from utils.time_utils import utc_now
 
 # Configure logger
 logger = logging.getLogger('voice_model_service')
@@ -99,8 +100,8 @@ class Voice(db.Model):
         lazy=True
     )
     
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utc_now)
+    updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now)
     
     def __repr__(self):
         return (
@@ -142,7 +143,7 @@ class VoiceSlotEvent(db.Model):
     event_type = db.Column(db.String(50), nullable=False)
     reason = db.Column(db.String(255), nullable=True)
     event_metadata = db.Column('metadata', db.JSON, nullable=True)
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, nullable=False, default=utc_now)
 
     voice = db.relationship('Voice', back_populates='slot_events')
     user = db.relationship('User', backref=db.backref('voice_slot_events', lazy=True))

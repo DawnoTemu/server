@@ -11,6 +11,8 @@ from urllib.parse import urlparse
 
 import requests
 
+from utils.time_utils import utc_now
+
 from database import db
 from models.story_model import Story
 from models.voice_model import VoiceModel, VoiceAllocationStatus
@@ -105,8 +107,8 @@ class AdminController:
                 content=story_data['content'],
                 cover_filename=story_data.get('cover_filename'),
                 s3_cover_key=story_data.get('s3_cover_key'),
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow()
+                created_at=utc_now(),
+                updated_at=utc_now()
             )
             
             db.session.add(new_story)
@@ -210,7 +212,7 @@ class AdminController:
                         story = Story.query.get(story_id)
                         if story:
                             story.s3_cover_key = s3_key
-                            story.updated_at = datetime.utcnow()
+                            story.updated_at = utc_now()
                             db.session.commit()
                             
                             result['story']['s3_cover_key'] = s3_key

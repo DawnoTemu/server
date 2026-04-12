@@ -17,6 +17,7 @@ from config import Config
 from sqlalchemy import or_
 from utils.voice_slot_queue import VoiceSlotQueue
 from utils.metrics import emit_metric
+from utils.time_utils import utc_now
 
 # Configure logger
 logger = logging.getLogger('voice_tasks')
@@ -136,7 +137,7 @@ def process_voice_recording(self, voice_id, s3_key, filename, user_id, voice_nam
         # synthesis request (just-in-time via VoiceSlotManager.ensure_active_voice),
         # but the voice is usable from the user's perspective.
         voice.status = VoiceStatus.READY
-        voice.updated_at = datetime.utcnow()
+        voice.updated_at = utc_now()
 
         VoiceSlotEvent.log_event(
             voice_id=voice.id,
@@ -273,7 +274,7 @@ def reclaim_idle_voices(self, max_to_reclaim: Optional[int] = None):
         voice.elevenlabs_voice_id = None
         voice.elevenlabs_allocated_at = None
         voice.slot_lock_expires_at = None
-        voice.last_used_at = datetime.utcnow()
+        voice.last_used_at = utc_now()
         VoiceSlotEvent.log_event(
             voice_id=voice.id,
             user_id=voice.user_id,
@@ -283,7 +284,7 @@ def reclaim_idle_voices(self, max_to_reclaim: Optional[int] = None):
         )
         return True
 
-    now = datetime.utcnow()
+    now = utc_now()
     queue_length = VoiceSlotQueue.length()
     reclaimed = 0
 
@@ -349,7 +350,7 @@ def reset_stuck_allocations(self, max_to_reset: Optional[int] = None, stale_afte
         VoiceStatus,
     )
 
-    now = datetime.utcnow()
+    now = utc_now()
     stale_seconds = stale_after_seconds
     if stale_seconds is None:
         stale_seconds = getattr(Config, "VOICE_ALLOCATION_STUCK_SECONDS", 600) or 600
@@ -585,8 +586,8 @@ def allocate_voice_slot(self, voice_id, s3_key, filename, user_id, voice_name=No
             voice.allocation_status = VoiceAllocationStatus.READY
             # Persist the provider used for this allocation to keep capacity accounting consistent
             voice.service_provider = provider
-            voice.elevenlabs_allocated_at = datetime.utcnow()
-            voice.last_used_at = datetime.utcnow()
+            voice.elevenlabs_allocated_at = utc_now()
+            voice.last_used_at = utc_now()
             VoiceSlotQueue.remove(voice.id)
 
             VoiceSlotEvent.log_event(

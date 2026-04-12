@@ -5,6 +5,7 @@ from models.user_model import UserModel, User
 from utils.email_service import EmailService
 from database import db
 from utils.validators import is_valid_email, validate_password
+from utils.time_utils import utc_now
 
 class AuthController:
     """Controller for authentication-related operations"""
@@ -273,7 +274,7 @@ class AuthController:
         Returns:
             str: JWT access token
         """
-        now = datetime.utcnow()
+        now = utc_now()
         payload = {
             'sub': user.id,
             'email': user.email,
@@ -300,7 +301,7 @@ class AuthController:
         Returns:
             str: JWT refresh token
         """
-        now = datetime.utcnow()
+        now = utc_now()
         payload = {
             'sub': user.id,
             'type': 'refresh',

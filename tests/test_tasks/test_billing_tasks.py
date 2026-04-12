@@ -273,3 +273,111 @@ class TestExpireCreditLotsReraise:
             billing_tasks.expire_credit_lots()
 
         assert session.rollback_called is True
+
+
+class TestCleanupOldWebhookEvents:
+    """Regression for server#40: prune old rows from webhook_events.
+
+    The idempotency table is append-only and used only to dedupe RevenueCat
+    webhook redeliveries (retry window ~72h). Anything past the retention
+    window (default 90d) is pure storage overhead.
+    """
+
+    def _seed(self, ages_days):
+        """Insert one WebhookEvent per age in ``ages_days``. Returns list of ids."""
+        from models.webhook_event_model import WebhookEvent
+
+        now = datetime.utcnow()
+        ids = []
+        for i, age in enumerate(ages_days):
+            ev = WebhookEvent(
+                event_id=f'test_evt_{i}_{age}d',
+                event_type='TEST',
+                processed_at=now - timedelta(days=age),
+            )
+            db.session.add(ev)
+            db.session.flush()
+            ids.append(ev.id)
+        db.session.commit()
+        return ids
+
+    def test_prunes_events_older_than_retention(self, app):
+        from models.webhook_event_model import WebhookEvent
+
+        with app.app_context():
+            # Mix of old (>90d) and recent (<90d) events
+            self._seed([1, 30, 89, 91, 120, 400])
+
+            billing_tasks.cleanup_old_webhook_events()
+
+            remaining = db.session.query(WebhookEvent).all()
+            ages = sorted(
+                int((datetime.utcnow() - e.processed_at).days) for e in remaining
+            )
+            # Only the 1, 30, 89 day events should remain (all <90 cutoff)
+            assert ages == [1, 30, 89]
+
+    def test_noop_when_no_old_events(self, app):
+        from models.webhook_event_model import WebhookEvent
+
+        with app.app_context():
+            self._seed([1, 5, 10])
+
+            billing_tasks.cleanup_old_webhook_events()
+
+            assert db.session.query(WebhookEvent).count() == 3
+
+    def test_custom_retention_via_config(self, app, monkeypatch):
+        from models.webhook_event_model import WebhookEvent
+
+        with app.app_context():
+            self._seed([5, 15, 30])
+            # Retention window of 10 days → 15d and 30d get pruned
+            monkeypatch.setattr(
+                billing_tasks.Config, 'WEBHOOK_EVENT_RETENTION_DAYS', 10
+            )
+
+            billing_tasks.cleanup_old_webhook_events()
+
+            remaining = db.session.query(WebhookEvent).all()
+            ages = sorted(int((datetime.utcnow() - e.processed_at).days) for e in remaining)
+            assert ages == [5]
+
+    def test_disabled_when_retention_zero(self, app, monkeypatch):
+        from models.webhook_event_model import WebhookEvent
+
+        with app.app_context():
+            self._seed([1, 100, 500])
+            monkeypatch.setattr(
+                billing_tasks.Config, 'WEBHOOK_EVENT_RETENTION_DAYS', 0
+            )
+
+            billing_tasks.cleanup_old_webhook_events()
+
+            # Task should no-op; all 3 rows still present
+            assert db.session.query(WebhookEvent).count() == 3
+
+    def test_rollback_on_commit_failure(self, app, monkeypatch):
+        from models.webhook_event_model import WebhookEvent
+
+        with app.app_context():
+            self._seed([100, 200])
+
+            real_commit = db.session.commit
+            commit_calls = {'count': 0}
+
+            def failing_commit():
+                commit_calls['count'] += 1
+                raise RuntimeError("db down")
+
+            monkeypatch.setattr(db.session, 'commit', failing_commit)
+
+            with pytest.raises(RuntimeError, match="db down"):
+                billing_tasks.cleanup_old_webhook_events()
+
+            # Restore real commit so the fixture cleanup works
+            monkeypatch.setattr(db.session, 'commit', real_commit)
+            db.session.rollback()
+
+            # Both rows should still be present (rollback restored them)
+            assert db.session.query(WebhookEvent).count() == 2

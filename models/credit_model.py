@@ -10,6 +10,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import db
 from models.user_model import User
+from utils.time_utils import utc_now
 
 
 class CreditTransaction(db.Model):
@@ -27,8 +28,8 @@ class CreditTransaction(db.Model):
     story_id: Mapped[Optional[int]] = mapped_column(db.Integer, db.ForeignKey('stories.id', ondelete='SET NULL'), index=True)
     status: Mapped[str] = mapped_column(db.String(20), nullable=False, default='applied')
     metadata_json: Mapped[Optional[dict]] = mapped_column('metadata', db.JSON)
-    created_at: Mapped[datetime] = mapped_column(db.DateTime, default=datetime.utcnow, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(db.DateTime, default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(db.DateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
     allocations = relationship('CreditTransactionAllocation', back_populates='transaction', cascade="all, delete-orphan")
 
@@ -42,8 +43,8 @@ class CreditLot(db.Model):
     amount_granted: Mapped[int] = mapped_column(db.Integer, nullable=False)
     amount_remaining: Mapped[int] = mapped_column(db.Integer, nullable=False)
     expires_at: Mapped[Optional[datetime]] = mapped_column(db.DateTime)
-    created_at: Mapped[datetime] = mapped_column(db.DateTime, default=datetime.utcnow, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(db.DateTime, default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(db.DateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
     allocations = relationship('CreditTransactionAllocation', back_populates='lot', cascade="all, delete-orphan")
 
@@ -64,7 +65,7 @@ class InsufficientCreditsError(Exception):
 
 
 def _active_lots_query(user_id: int):
-    now = datetime.utcnow()
+    now = utc_now()
     return (
         db.session.query(CreditLot)
         .filter(
@@ -101,7 +102,7 @@ ALLOWED_TRANSACTION_TYPES = {"credit", "debit", "refund", "expire"}
 
 
 def _serialize_lot(lot: CreditLot, now: Optional[datetime] = None) -> Dict[str, Optional[str | int | bool]]:
-    now = now or datetime.utcnow()
+    now = now or utc_now()
     is_active = (lot.amount_remaining or 0) > 0 and (
         lot.expires_at is None or lot.expires_at > now
     )
@@ -196,7 +197,7 @@ def get_user_credit_summary(
     user = db.session.get(User, user_id)
     balance_cached = int(user.credits_balance or 0) if user else 0
 
-    now = datetime.utcnow()
+    now = utc_now()
     lots_query = (
         CreditLot.query.filter(CreditLot.user_id == user_id)
         .order_by(
